@@ -7,56 +7,88 @@ import { showLoading, showMenu, MenuOptions } from './ui/menu';
 import { Audio } from './audio/audio';
 import { G } from './render/shaderPatch';
 
-const canvas = document.getElementById('c') as HTMLCanvasElement;
+let canvas = document.getElementById('c') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui')!;
 const params = new URLSearchParams(location.search);
+const num = (k: string, d: number) => {
+  const v = Number(params.get(k));
+  return params.has(k) && Number.isFinite(v) ? v : d;
+};
 
 const opts: MenuOptions = {
-  seed: Number(params.get('seed') ?? Math.floor(Math.random() * 99999) + 1),
-  size: Number(params.get('size') ?? 160),
-  players: Number(params.get('players') ?? 2),
-  ai: Number(params.get('ai') ?? 1),
+  seed: num('seed', Math.floor(Math.random() * 99999) + 1),
+  size: num('size', 160),
+  players: num('players', 2),
+  ai: num('ai', 1),
 };
 
 const audio = new Audio();
 let game: Game;
 let gr: GameRenderer;
 let hud: HUD | null = null;
+let menuEl: HTMLElement | null = null;
 let state: 'menu' | 'play' = 'menu';
 let speed = 1;
 let pausedSpeed = 1;
+let iconsReady = false;
 
-function reloadWith(o: MenuOptions, play = false) {
-  const p = new URLSearchParams({ seed: String(o.seed), size: String(o.size), players: String(o.players), ai: String(o.ai) });
-  if (play) p.set('play', '1');
-  location.search = p.toString();
-}
-
-async function boot() {
+/** Create (or re-create) the world in place — no page reloads, so it also works inside sandboxed frames. */
+async function buildWorld() {
   const loading = showLoading(uiRoot, 'Shaping the land…');
   await new Promise((r) => setTimeout(r, 30));
+  if (gr) {
+    gr.dispose();
+    const fresh = document.createElement('canvas');
+    fresh.id = 'c';
+    canvas.replaceWith(fresh);
+    canvas = fresh;
+  }
+  if (hud) { hud.root.remove(); hud = null; }
+  state = 'menu';
+  speed = pausedSpeed = 1;
   game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai });
   gr = new GameRenderer(canvas, game);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
-  generateIcons(game.local);
+  bindCanvas(canvas);
+  if (!iconsReady) { generateIcons(game.local); iconsReady = true; }
   (window as any).game = game;
   (window as any).gr = gr;
   loading.remove();
-  setupInput();
-  if (params.get('tod')) { gr.sky.timeOfDay = Number(params.get('tod')); }
+}
+
+function showMainMenu() {
+  G.uFogOn.value = 0;
+  gr.cam.cinematic = true;
+  gr.cam.zoomTo(46, true);
+  gr.sky.timeOfDay = params.has('tod') ? num('tod', 0.62) : 0.62;
+  menuEl?.remove();
+  menuEl = showMenu(uiRoot, opts, startGame, async (o) => {
+    Object.assign(opts, o);
+    menuEl?.remove();
+    menuEl = null;
+    await buildWorld();
+    showMainMenu();
+  }).el;
+}
+
+async function restart() {
+  opts.seed = Math.floor(Math.random() * 99999) + 1;
+  await buildWorld();
+  showMainMenu();
+}
+
+async function boot() {
+  await buildWorld();
+  setupGlobalInput();
+  if (params.has('tod')) gr.sky.timeOfDay = num('tod', 0.4);
   if (params.get('play') === '1') startGame();
-  else {
-    G.uFogOn.value = 0;
-    gr.cam.cinematic = true;
-    gr.cam.zoomTo(46, true);
-    gr.sky.timeOfDay = params.get('tod') ? Number(params.get('tod')) : 0.62;
-    showMenu(uiRoot, opts, startGame, (o) => reloadWith(o));
-  }
+  else showMainMenu();
   requestAnimationFrame(loop);
 }
 
 function startGame() {
   state = 'play';
+  menuEl = null;
   G.uFogOn.value = 1;
   gr.cam.cinematic = false;
   game.ai.forEach((a) => (a.level = opts.ai));
@@ -68,7 +100,7 @@ function startGame() {
   hud = new HUD(game, gr, audio, {
     getSpeed: () => speed,
     setSpeed: (s) => { speed = s; if (s > 0) pausedSpeed = s; },
-    restart: () => reloadWith({ ...opts, seed: Math.floor(Math.random() * 99999) + 1 }),
+    restart: () => { void restart(); },
   }, uiRoot);
   gr.onEvent = (e) => hud?.onEvent(e);
   (window as any).hud = hud;
@@ -77,46 +109,15 @@ function startGame() {
 }
 
 // ---------------------------------------------------------------- input
-function setupInput() {
-  let downX = 0, downY = 0, downBtn = -1;
-  const startAudio = () => { if (!audio.started) audio.start(); else if (audio.ctx?.state === 'suspended') audio.ctx.resume(); };
+function setupGlobalInput() {
+  const startAudio = () => {
+    try {
+      if (!audio.started) audio.start();
+      else if (audio.ctx?.state === 'suspended') void audio.ctx.resume();
+    } catch { /* audio unavailable */ }
+  };
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
-  canvas.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; downBtn = e.button; });
-  let tipT = 0;
-  canvas.addEventListener('pointermove', (e) => {
-    if (state !== 'play') return;
-    const p = gr.pickGround(e.clientX, e.clientY);
-    gr.hoverNode = gr.pickNode(p);
-    gr.hoverPoint = p;
-    // hover tooltip for buildings (throttled)
-    const now = performance.now();
-    if (!hud || gr.placing || e.buttons) { hud?.hideTip(); return; }
-    if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
-    tipT = now;
-    const b = gr.pickBuilding(e.clientX, e.clientY);
-    const w = game.world;
-    if (b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))]) {
-      const owner = game.players[b.owner];
-      const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
-      hud.showTip(e, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}`);
-      canvas.style.cursor = 'pointer';
-    } else {
-      hud.hideTip();
-      canvas.style.cursor = '';
-    }
-  });
-  canvas.addEventListener('pointerleave', () => hud?.hideTip());
-  canvas.addEventListener('pointerup', (e) => {
-    if (state !== 'play' || !hud) return;
-    const moved = Math.hypot(e.clientX - downX, e.clientY - downY) > 6;
-    if (moved || e.button !== downBtn) return;
-    if (e.button === 0) onClick(e);
-    else if (e.button === 2) {
-      if (gr.placing) hud.startPlacing(null);
-      else hud.select(null);
-    }
-  });
   window.addEventListener('keydown', (e) => {
     if (state !== 'play' || !hud) return;
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
@@ -138,6 +139,60 @@ function setupInput() {
       }
     }
   });
+}
+
+function bindCanvas(c: HTMLCanvasElement) {
+  let downX = 0, downY = 0, downBtn = -1, multiTouch = false;
+  const active = new Set<number>();
+  c.addEventListener('pointerdown', (e) => {
+    active.add(e.pointerId);
+    if (active.size > 1) multiTouch = true;
+    if (active.size === 1) { downX = e.clientX; downY = e.clientY; downBtn = e.button; multiTouch = false; }
+    if (e.pointerType === 'touch' && state === 'play') {
+      // update hover so taps place buildings where the finger is
+      const p = gr.pickGround(e.clientX, e.clientY);
+      gr.hoverNode = gr.pickNode(p);
+    }
+  });
+  let tipT = 0;
+  c.addEventListener('pointermove', (e) => {
+    if (state !== 'play') return;
+    const p = gr.pickGround(e.clientX, e.clientY);
+    gr.hoverNode = gr.pickNode(p);
+    gr.hoverPoint = p;
+    if (e.pointerType === 'touch') return;
+    // hover tooltip for buildings (throttled)
+    const now = performance.now();
+    if (!hud || gr.placing || e.buttons) { hud?.hideTip(); return; }
+    if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
+    tipT = now;
+    const b = gr.pickBuilding(e.clientX, e.clientY);
+    const w = game.world;
+    if (b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))]) {
+      const owner = game.players[b.owner];
+      const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
+      hud.showTip(e, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}`);
+      c.style.cursor = 'pointer';
+    } else {
+      hud.hideTip();
+      c.style.cursor = '';
+    }
+  });
+  c.addEventListener('pointerleave', () => hud?.hideTip());
+  const up = (e: PointerEvent) => {
+    active.delete(e.pointerId);
+    if (state !== 'play' || !hud) return;
+    if (multiTouch) { if (active.size === 0) multiTouch = false; return; }
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY) > (e.pointerType === 'touch' ? 12 : 6);
+    if (moved || e.button !== downBtn) return;
+    if (e.button === 0) onClick(e);
+    else if (e.button === 2) {
+      if (gr.placing) hud.startPlacing(null);
+      else hud.select(null);
+    }
+  };
+  c.addEventListener('pointerup', up);
+  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); });
 }
 
 function onClick(e: PointerEvent) {
@@ -167,17 +222,19 @@ function loop() {
   const now = performance.now();
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (state === 'play') {
-    game.update(dt * speed);
-    gr.handleEvents(game.events.splice(0));
-    gr.frame(dt, dt * speed);
-    hud?.update(dt);
-  } else {
-    game.events.length = 0;
-    gr.frame(dt, dt * 0.3);
+  if (game && gr) {
+    if (state === 'play') {
+      game.update(dt * speed);
+      gr.handleEvents(game.events.splice(0));
+      gr.frame(dt, dt * speed);
+      hud?.update(dt);
+    } else {
+      game.events.length = 0;
+      gr.frame(dt, dt * 0.3);
+    }
+    audio.setListener(gr.cam.target.x, gr.cam.target.z, gr.cam.dist);
+    audio.update(dt, gr.sky.night, gr.raining, 0);
   }
-  audio.setListener(gr.cam.target.x, gr.cam.target.z, gr.cam.dist);
-  audio.update(dt, gr.sky.night, gr.raining, 0);
   requestAnimationFrame(loop);
 }
 
@@ -191,4 +248,7 @@ function loop() {
   gr.frame(dt, dt * speed);
 };
 
-boot();
+boot().catch((err) => {
+  console.error(err);
+  uiRoot.innerHTML = `<div class="loading"><div>Could not start the game.</div><div class="muted" style="font-family:var(--font);letter-spacing:0">${String(err?.message ?? err)}. A browser with WebGL 2 is required.</div></div>`;
+});

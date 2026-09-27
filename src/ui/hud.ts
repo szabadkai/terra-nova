@@ -122,6 +122,11 @@ export class HUD {
   private buildLeft() {
     this.left = h('div', 'panel left');
     this.root.appendChild(this.left);
+    // on narrow screens the panel slides in from a toggle
+    const toggle = h('button', 'panel-toggle', '☰');
+    toggle.title = 'Show or hide the build panel';
+    toggle.onclick = () => { this.left.classList.toggle('open'); this.audio.play('ui'); };
+    this.root.appendChild(toggle);
     const mmWrap = h('div', 'mm-wrap');
     this.left.appendChild(mmWrap);
     this.minimap = new Minimap(this.game, this.gr.cam, mmWrap);
@@ -195,6 +200,7 @@ export class HUD {
 
   startPlacing(t: BuildingType | null) {
     this.gr.placing = t;
+    if (t && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (t) {
       this.hint.innerHTML = `Placing <b>${BUILDINGS[t].name}</b> — click a marker to build · <b>Shift</b> keeps placing · <b>Esc</b>/right-click cancels`;

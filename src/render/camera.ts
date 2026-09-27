@@ -45,19 +45,44 @@ export class RTSCamera {
     return this.dist * 1.1;
   }
 
+  private abort: AbortController | null = null;
+  private touches = new Map<number, { x: number; y: number }>();
+  private pinchDist = 0;
+
   attach(el: HTMLElement) {
+    this.abort?.abort();
+    const ac = new AbortController();
+    this.abort = ac;
+    const o = { signal: ac.signal };
     window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT') return;
       this.keys.add(e.key.toLowerCase());
-    });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
-    window.addEventListener('blur', () => this.keys.clear());
+    }, o);
+    window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()), o);
+    window.addEventListener('blur', () => this.keys.clear(), o);
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       const f = Math.exp(e.deltaY * 0.0012);
       this.goalDist = THREE.MathUtils.clamp(this.goalDist * f, this.minDist, this.maxDist);
-    }, { passive: false });
+    }, { passive: false, signal: ac.signal });
+    const pan = (dx: number, dy: number) => {
+      const s = this.dist * 0.0022;
+      const c = Math.cos(this.yaw), sn = Math.sin(this.yaw);
+      this.goal.x -= (dx * c + dy * sn) * s;
+      this.goal.z -= (-dx * sn + dy * c) * s;
+      this.target.copy(this.goal);
+    };
     el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch') {
+        this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        el.setPointerCapture(e.pointerId);
+        if (this.touches.size === 2) {
+          const [a, b] = [...this.touches.values()];
+          this.pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+        }
+        return;
+      }
       if (e.button === 1 || e.button === 2) {
         this.dragging = true;
         this.dragButton = e.button;
@@ -65,8 +90,21 @@ export class RTSCamera {
         this.lastY = e.clientY;
         el.setPointerCapture(e.pointerId);
       }
-    });
+    }, o);
     el.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch') {
+        const prev = this.touches.get(e.pointerId);
+        if (!prev) return;
+        if (this.touches.size === 1) pan(e.clientX - prev.x, e.clientY - prev.y);
+        this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this.touches.size === 2) {
+          const [a, b] = [...this.touches.values()];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (this.pinchDist > 0) this.goalDist = THREE.MathUtils.clamp(this.goalDist * (this.pinchDist / d), this.minDist, this.maxDist);
+          this.pinchDist = d;
+        }
+        return;
+      }
       const r = el.getBoundingClientRect();
       this.mouse.x = (e.clientX - r.left) / r.width;
       this.mouse.y = (e.clientY - r.top) / r.height;
@@ -79,17 +117,26 @@ export class RTSCamera {
         this.goalYaw += dx * 0.005;
         return;
       }
-      const s = this.dist * 0.0022;
-      const c = Math.cos(this.yaw), sn = Math.sin(this.yaw);
-      this.goal.x -= (dx * c + dy * sn) * s;
-      this.goal.z -= (-dx * sn + dy * c) * s;
-      this.target.copy(this.goal);
-    });
-    el.addEventListener('pointerup', (e) => {
+      pan(dx, dy);
+    }, o);
+    const up = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        this.touches.delete(e.pointerId);
+        this.pinchDist = 0;
+        return;
+      }
       if (e.button === this.dragButton) this.dragging = false;
-    });
-    el.addEventListener('pointerleave', () => { this.mouse.inside = false; });
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    };
+    el.addEventListener('pointerup', up, o);
+    el.addEventListener('pointercancel', up, o);
+    el.addEventListener('pointerleave', () => { this.mouse.inside = false; }, o);
+    el.addEventListener('contextmenu', (e) => e.preventDefault(), o);
+  }
+
+  detach() {
+    this.abort?.abort();
+    this.abort = null;
+    this.keys.clear();
   }
 
   get isDragging() {

@@ -203,7 +203,23 @@ export class GameRenderer {
       this.cam.zoomTo(30, true);
     }
     this.applyQuality();
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', this.onResize);
+  }
+
+  private onResize = () => this.resize();
+
+  /** Release GPU resources and listeners so a new world can be created on a fresh canvas. */
+  dispose() {
+    window.removeEventListener('resize', this.onResize);
+    this.cam.detach();
+    this.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+    });
+    this.fx.composer.dispose();
+    this.reflection.rt.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
 
   setSound(fn: (name: string, x?: number, z?: number, vol?: number) => void) {
