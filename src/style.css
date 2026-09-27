@@ -87,9 +87,11 @@ button { font-family: var(--font); cursor: pointer; }
 .kv b { font-weight: 600; display: flex; align-items: center; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
 .kv small { color: var(--muted); font-weight: 400; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3); }
-.slider-row { display: grid; grid-template-columns: auto 1fr 90px 34px; align-items: center; gap: 6px; padding: 3px 0; }
+.slider-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.slider-row input { flex: 1; min-width: 60px; }
 .slider-row label { color: var(--muted); font-size: 12px; }
-.slider-row span { text-align: right; font-variant-numeric: tabular-nums; }
+.slider-row span { text-align: right; font-variant-numeric: tabular-nums; min-width: 30px; }
+.slider-row label { min-width: 0; }
 input[type=range] { accent-color: var(--gold); width: 100%; }
 select { background: rgba(0, 0, 0, 0.4); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font-family: var(--font); }
 .toggle { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 8px; padding: 5px 0; cursor: pointer; }
@@ -129,7 +131,7 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
 .ibtns button { flex: 1; padding: 7px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.35); color: var(--text); font-weight: 600; }
 .ibtns button:hover { border-color: var(--gold); }
 .attack { margin-top: 8px; padding: 8px; border-radius: 8px; border: 1px solid rgba(255, 122, 100, 0.35); background: rgba(120, 20, 10, 0.18); }
-.attack .slider-row { grid-template-columns: auto 1fr 30px; }
+
 
 /* ------------------------------------------------ messages, tooltip, hint */
 .msgs { position: fixed; top: 64px; right: 12px; width: 340px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
@@ -181,3 +183,4 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
   .minimap { width: 218px; height: 218px; }
   .info { width: calc(100vw - 280px); }
 }
+.slider-row .ci + label { width: 92px; flex: none; }

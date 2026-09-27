@@ -19,6 +19,9 @@ export class WaterRenderer {
       uWaterLevel: { value: WATER_LEVEL },
       uSkyCol: { value: new THREE.Color(0.5, 0.7, 1.0) },
       uSunCol: { value: new THREE.Color(1, 1, 1) },
+      tReflect: { value: null },
+      uReflMat: { value: new THREE.Matrix4() },
+      uReflOn: { value: 0 },
     };
     const mat = new THREE.MeshStandardMaterial({
       color: 0xffffff, roughness: 0.06, metalness: 0.0, transparent: true, depthWrite: false,
@@ -34,7 +37,11 @@ uniform sampler2D tWaterN;
 uniform float uWaterLevel;
 uniform vec3 uSkyCol;
 uniform vec3 uSunCol;
+uniform sampler2D tReflect;
+uniform mat4 uReflMat;
+uniform float uReflOn;
 #define C(r,g,b) pow(vec3(float(r),float(g),float(b))/255.0, vec3(2.2))
+vec2 wSlope;
 float wFoam;
 float wDepth;
 vec3 wEmis;
@@ -76,6 +83,7 @@ vec3 wEmis;
     vec3 c = texture2D(tWaterN, p2 * 0.031 + uTime * vec2(-0.004, 0.005)).xyz * 2.0 - 1.0;
     float calm = mix(0.35, 1.0, smoothstep(0.0, 1.5, wDepth));
     vec2 slopeXY = (a.xy * 0.5 + b.xy * 0.35 + c.xy * 0.45) * calm;
+    wSlope = slopeXY;
     vec3 wn = normalize(vec3(slopeXY.x, 1.0, slopeXY.y));
     normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
   }
@@ -84,8 +92,18 @@ vec3 wEmis;
   {
     // fresnel sky boost + sun glints
     vec3 V = normalize(vViewPosition);
-    float fres = pow(1.0 - clamp(dot(normal, V), 0.0, 1.0), 4.0);
-    totalEmissiveRadiance += uSkyCol * fres * 0.25 * (1.0 - wFoam) + wEmis;
+    float ndv = clamp(dot(normal, V), 0.0, 1.0);
+    float fres = pow(1.0 - ndv, 4.0);
+    totalEmissiveRadiance += uSkyCol * fres * 0.25 * (1.0 - wFoam) * (1.0 - uReflOn) + wEmis;
+    if (uReflOn > 0.5) {
+      vec4 rc = uReflMat * vec4(vWPos, 1.0);
+      vec2 ruv = rc.xy / rc.w + wSlope * 0.06;
+      vec3 refl = texture2D(tReflect, ruv).rgb;
+      float k = clamp(0.1 + pow(1.0 - ndv, 3.0) * 0.6, 0.0, 1.0) * (1.0 - wFoam) * smoothstep(0.02, 0.35, wDepth);
+      diffuseColor.rgb *= 1.0 - k * 0.3;
+      totalEmissiveRadiance += refl * k * 0.5;
+      diffuseColor.a = max(diffuseColor.a, k * 0.95);
+    }
   }
 `,
     });

@@ -48,6 +48,8 @@ export class Sky {
   private envT = 0;
   private lastEnvTod = -1;
   weather = 0; // 0 clear .. 1 overcast/rain
+  dome: THREE.Mesh;
+  private domeMat: THREE.ShaderMaterial;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene) {
     this.sun = new THREE.DirectionalLight(0xffffff, 3);
@@ -92,6 +94,51 @@ export class Sky {
     });
     const dome = new THREE.Mesh(new THREE.SphereGeometry(50, 32, 16), this.skyMat);
     this.skyScene.add(dome);
+    // visible sky dome with drifting clouds (seen at the horizon and in water reflections)
+    this.domeMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        uZenith: { value: new THREE.Color() },
+        uHorizon: { value: new THREE.Color() },
+        uSunDir: { value: new THREE.Vector3() },
+        uSunCol: { value: new THREE.Color() },
+        uTime: G.uTime,
+        tNoise: G.tNoise,
+        uCloud: G.uCloud,
+        uCloudSpeed: G.uCloudSpeed,
+        uNight: G.uNight,
+      },
+      vertexShader: `varying vec3 vDir; void main(){ vDir = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }`,
+      fragmentShader: `
+        uniform vec3 uZenith, uHorizon, uSunDir, uSunCol; uniform float uTime; uniform sampler2D tNoise;
+        uniform float uCloud; uniform vec2 uCloudSpeed; uniform float uNight;
+        varying vec3 vDir;
+        void main(){
+          vec3 d = normalize(vDir);
+          float h = max(d.y, 0.0);
+          vec3 col = mix(uHorizon, uZenith, pow(h, 0.55));
+          float s = max(dot(d, uSunDir), 0.0);
+          col += uSunCol * (pow(s, 900.0) * 40.0 + pow(s, 16.0) * 0.35);
+          // clouds projected on a flat layer
+          vec2 cp = d.xz / max(0.08, d.y) * 0.6 + uCloudSpeed * uTime * 0.004;
+          float n = texture2D(tNoise, cp * 0.35).r * 0.65 + texture2D(tNoise, cp * 0.9 + 0.3).g * 0.35;
+          float cl = smoothstep(0.42, 0.7, n) * smoothstep(0.0, 0.25, d.y) * (0.6 + uCloud);
+          vec3 cloudCol = mix(uHorizon * 1.15 + uSunCol * 0.25, vec3(0.08, 0.1, 0.16), uNight * 0.8);
+          col = mix(col, cloudCol, clamp(cl, 0.0, 0.85));
+          // stars at night
+          float st = step(0.9985, texture2D(tNoise, d.xz / max(0.1, d.y) * 3.0).a) * uNight * h;
+          col += vec3(st) * 2.0;
+          // below the horizon fade to deep sea colour
+          col = mix(col, uHorizon * 0.35 + vec3(0.02, 0.06, 0.1), smoothstep(0.0, -0.15, d.y) * 0.0 + (1.0 - smoothstep(-0.12, 0.0, d.y)));
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+    });
+    this.dome = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 16), this.domeMat);
+    this.dome.frustumCulled = false;
+    this.dome.renderOrder = -10;
+    scene.add(this.dome);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.update(0, new THREE.Vector3(), 40);
   }
@@ -161,6 +208,14 @@ export class Sky {
     this.sun.target.position.set(tx, target.y, tz);
     this.sun.position.set(tx + lightDir.x * 90, target.y + lightDir.y * 90, tz + lightDir.z * 90);
     this.sun.target.updateMatrixWorld();
+
+    // visible dome follows the camera target
+    const du = this.domeMat.uniforms;
+    (du.uZenith.value as THREE.Color).copy(this.zenith);
+    (du.uHorizon.value as THREE.Color).copy(this.horizon);
+    (du.uSunDir.value as THREE.Vector3).copy(sunVec);
+    (du.uSunCol.value as THREE.Color).setRGB(sunC[0], sunC[1], sunC[2]).multiplyScalar(isNight ? 0 : horizonDip);
+    this.dome.position.set(target.x, 0, target.z);
 
     // environment map refresh
     this.envT -= dt;

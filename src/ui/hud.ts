@@ -331,6 +331,7 @@ export class HUD {
     toggle('Ambient occlusion (GTAO)', 'ao', 'soft contact shadows, heavier');
     toggle('Colour grading', 'grade', 'filmic tone, vignette');
     toggle('Grass tufts', 'grass', 'wind-swept grass blades');
+    toggle('Water reflections', 'reflections', 'real-time mirrored scene in lakes and sea');
     toggle('Day & night cycle', 'dayCycle');
     toggle('Territory borders', 'borders');
     const w = h('div', 'kv');

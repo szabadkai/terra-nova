@@ -9,13 +9,15 @@ import { RTSCamera } from './camera';
 import { Sky } from './sky';
 import { TerrainRenderer } from './terrain';
 import { WaterRenderer } from './water';
-import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, SettlersRenderer, StonesRenderer, TreesRenderer, buildGoodGeos } from './entities';
+import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, buildGoodGeos } from './entities';
+import { SettlersRenderer } from './settlers';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
 import { PostFX } from './postfx';
 import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
 import { setWindowGlow } from './materials';
+import { PlanarReflection } from './reflection';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -29,6 +31,7 @@ export interface RenderSettings {
   dayCycle: boolean;
   weather: 'auto' | 'clear' | 'rain';
   borders: boolean;
+  reflections: boolean;
 }
 
 class Birds {
@@ -112,8 +115,9 @@ export class GameRenderer {
   birds: Birds;
   time = 0;
   settings: RenderSettings = {
-    quality: 'high', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true,
+    quality: 'high', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
   };
+  reflection: PlanarReflection;
   // interaction state
   placing: BuildingType | null = null;
   hoverNode = -1;
@@ -186,6 +190,8 @@ export class GameRenderer {
     this.scene.add(this.markers);
 
     this.fx = new PostFX(r, this.scene, this.cam.camera, w, h);
+    this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
+    this.water.uniforms.tReflect.value = this.reflection.rt.texture;
     const hq = game.buildings.get(game.players[game.local].hq);
     if (hq) {
       this.cam.jumpTo(hq.cx, hq.cz + 4, true);
@@ -231,6 +237,7 @@ export class GameRenderer {
     this.cam.camera.updateProjectionMatrix();
     this.fx.setSize(w, h);
     const pr = this.renderer.getPixelRatio();
+    this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
     this.particles.setScale((h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360)));
   }
 
@@ -549,7 +556,34 @@ export class GameRenderer {
       }
     } else U.uSel.value.w = 0;
 
+    // planar water reflections (only when water is on screen)
+    const U2 = this.water.uniforms;
+    if (this.settings.reflections && this.waterInView()) {
+      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.markers, this.arrows.mesh]);
+      (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
+      U2.uReflOn.value = 1;
+    } else U2.uReflOn.value = 0;
+
     this.fx.render(this.time, zoom01, night);
+  }
+
+  private waterCheckT = 0;
+  private waterVisible = false;
+  private waterInView() {
+    this.waterCheckT -= 1;
+    if (this.waterCheckT > 0) return this.waterVisible;
+    this.waterCheckT = 10;
+    const w = this.game.world;
+    const t = this.cam.target, R = this.cam.viewSize * 1.2;
+    let n = 0;
+    for (let gy = -6; gy <= 6; gy++)
+      for (let gx = -6; gx <= 6; gx++) {
+        const x = Math.round(t.x + (gx / 6) * R), z = Math.round(t.z + (gy / 6) * R);
+        if (x < 0 || z < 0 || x >= w.W || z >= w.H) { n++; continue; }
+        if (w.isWater(w.idx(x, z))) n++;
+      }
+    this.waterVisible = n > 0;
+    return this.waterVisible;
   }
 }
 
