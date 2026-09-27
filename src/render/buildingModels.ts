@@ -265,6 +265,47 @@ function pigModel(b: MB, x: number, z: number, ry: number) {
   for (const [dx, dz] of [[-0.05, -0.06], [0.05, -0.06], [-0.05, 0.06], [0.05, 0.06]]) b.add('pig', box(0.03, 0.08, 0.03), x + dx, 0.04, z + dz);
 }
 
+function amphora(mb: MB, x: number, y: number, z: number, s = 1, tilt = 0) {
+  const prof = [[0.0, 0.0], [0.05, 0.02], [0.1, 0.09], [0.12, 0.18], [0.11, 0.27], [0.07, 0.34], [0.045, 0.38], [0.048, 0.43], [0.06, 0.44]]
+    .map(([r, yy]) => new THREE.Vector2(r * s, yy * s));
+  mb.add('terracotta', new THREE.LatheGeometry(prof, 12), x, y, z, 0, 0, tilt);
+  for (const sx of [-1, 1]) mb.add('terracotta', new THREE.TorusGeometry(0.05 * s, 0.012 * s, 5, 8, Math.PI), x + sx * 0.065 * s, y + 0.34 * s, z, 0, 0, sx > 0 ? -Math.PI / 2 : Math.PI / 2);
+}
+
+function column(mb: MB, x: number, y: number, z: number, h: number, r = 0.06, mat = 'marble') {
+  mb.add(mat, box(r * 2.9, 0.05, r * 2.9, 3), x, y + 0.025, z);
+  mb.add(mat, cyl(r * 0.88, r * 1.1, h - 0.11, 10, 2), x, y + 0.05, z);
+  mb.add(mat, box(r * 3.1, 0.06, r * 3.1, 3), x, y + h - 0.03, z);
+}
+
+function brazier(mb: MB, x: number, z: number, h = 0.5) {
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2;
+    mb.add('iron', box(0.022, h, 0.022), x + Math.sin(a) * 0.06, h / 2, z + Math.cos(a) * 0.06, a, 0, 0.12 * (k === 0 ? 1 : -1));
+  }
+  mb.add('iron', cyl(0.11, 0.06, 0.08, 10), x, h, z);
+  mb.add('glowHoly', cyl(0.09, 0.09, 0.02, 10), x, h + 0.065, z);
+  mb.anchors.fires.push(new THREE.Vector3(x, h + 0.12, z));
+}
+
+function vineRow(mb: MB, x0: number, z0: number, x1: number, z1: number, seed: number) {
+  const len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
+  const posts = Math.max(2, Math.round(len / 0.45) + 1);
+  for (let p = 0; p < posts; p++) {
+    const t = p / (posts - 1);
+    mb.add('timber', box(0.035, 0.5, 0.035), x0 + (x1 - x0) * t, 0.25, z0 + (z1 - z0) * t);
+  }
+  mb.add('iron', box(len, 0.008, 0.008), (x0 + x1) / 2, 0.42, (z0 + z1) / 2, -ang);
+  const n = Math.round(len / 0.16);
+  for (let k = 0; k < n; k++) {
+    const t = (k + 0.5) / n;
+    const px = x0 + (x1 - x0) * t, pz = z0 + (z1 - z0) * t;
+    const r = 0.085 + 0.03 * Math.abs(Math.sin(k * 3.7 + seed));
+    mb.add('leaf', sphere(r, 7, 5), px, 0.36 + 0.04 * Math.sin(k * 2.3 + seed), pz, 0, 0, 0, 1);
+    if ((k + seed) % 2 === 0) mb.add('grape', sphere(0.04, 6, 4), px + 0.06 * Math.sin(ang + 1.57), 0.3, pz + 0.06 * Math.cos(ang + 1.57));
+  }
+}
+
 // ------------------------------------------------------------------ building designs
 type Design = (mb: MB, owner: number) => void;
 
@@ -533,6 +574,137 @@ const designs: Partial<Record<BuildingType, Design>> = {
     // swords rack
     for (let k = 0; k < 3; k++) mb.add('metal', box(0.025, 0.36, 0.01), 0.35 + k * 0.08, 0.2, 0.62, 0, 0, 0.1);
     mb.anchors.piles.push(new THREE.Vector3(-0.9, 0, 0.75));
+  },
+  vineyard(mb, owner) {
+    house(mb, { w: 1.5, d: 1.1, wallH: 0.85, roofH: 0.55, x: -0.5, z: -0.55, wall: 'plasterWarm', timber: true, doorX: 0.25, win: 2, chim: null, roof: `roof${owner}` });
+    // cellar door on the side
+    mb.add('stoneDark', box(0.4, 0.2, 0.3, 3), -1.42, 0.1, -0.4, 0, 0, 0.35);
+    mb.add('planks', box(0.36, 0.02, 0.26, 3), -1.39, 0.2, -0.4, 0, 0, 0.35);
+    // wine press
+    const px = 0.72, pz = 0.5;
+    mb.add('wood', cyl(0.27, 0.3, 0.24, 14, 3), px, 0, pz);
+    for (const yy of [0.05, 0.18]) mb.add('iron', cyl(0.285, 0.305, 0.025, 14), px, yy, pz);
+    mb.add('wine', cyl(0.25, 0.25, 0.01, 14), px, 0.22, pz);
+    mb.add('timber', cyl(0.24, 0.24, 0.05, 12), px, 0.3, pz);
+    mb.add('iron', cyl(0.035, 0.035, 0.6, 8), px, 0.3, pz);
+    for (const sx of [-1, 1]) mb.add('timber', box(0.07, 0.95, 0.07), px + sx * 0.36, 0.47, pz);
+    mb.add('timber', box(0.84, 0.08, 0.09), px, 0.92, pz);
+    mb.add('timber', box(0.04, 0.04, 0.5), px, 0.72, pz, 0.4);
+    // barrels
+    barrel(mb, 1.15, 0, -0.05, 1.1);
+    barrel(mb, 1.15, 0, -0.35, 1.1);
+    mb.add('wood', cyl(0.11, 0.11, 0.26, 10, 3), 1.05, 0.11, 0.9, 0, 0, Math.PI / 2);
+    mb.add('wood', cyl(0.11, 0.11, 0.26, 10, 3), 1.05, 0.11, 1.14, 0, 0, Math.PI / 2);
+    // a few showcase vines
+    vineRow(mb, -1.3, 0.35, -1.3, 1.25, 1);
+    vineRow(mb, -0.85, 0.45, -0.85, 1.25, 2);
+    amphora(mb, 0.3, 0, 0.95, 0.9);
+    amphora(mb, 0.1, 0, 1.08, 0.85, 0.2);
+    mb.anchors.piles.push(new THREE.Vector3(0.45, 0, 1.25));
+  },
+  temple(mb, owner) {
+    foundation(mb, 2.36, 1.96, 0, -0.15, 0.14, 'marbleDark');
+    mb.add('marble', box(2.2, 0.12, 1.8, 1.2), 0, 0.2, -0.15);
+    // steps
+    [[0.26, 0.85], [0.17, 1.05], [0.09, 1.25]].forEach(([hh, zz]) => mb.add('marbleDark', box(1.25, hh, 0.2, 1.5), 0, hh / 2, zz));
+    const y0 = 0.26;
+    // cella
+    mb.add('marble', box(1.25, 1.0, 1.1, 1.2), 0, y0 + 0.5, -0.3);
+    mb.add('dark', box(0.38, 0.64, 0.03), 0, y0 + 0.32, 0.26);
+    mb.add('dark', new THREE.CylinderGeometry(0.19, 0.19, 0.03, 12, 1, false, 0, Math.PI), 0, y0 + 0.64, 0.26, 0, Math.PI / 2, 0);
+    mb.add('gold', box(0.46, 0.04, 0.05), 0, y0 + 0.86, 0.27);
+    // peristyle
+    const ch = 1.05;
+    for (const cx of [-0.95, -0.57, -0.19, 0.19, 0.57, 0.95]) { column(mb, cx, y0, 0.58, ch); column(mb, cx, y0, -0.95, ch); }
+    for (const cz of [-0.57, -0.19, 0.2]) { column(mb, -0.95, y0, cz, ch); column(mb, 0.95, y0, cz, ch); }
+    const y1 = y0 + ch;
+    mb.add('marble', box(2.14, 0.1, 1.74, 1.2), 0, y1 + 0.05, -0.19);
+    mb.add(`trim${owner}`, box(2.16, 0.06, 1.76), 0, y1 + 0.13, -0.19);
+    mb.add('marble', box(2.2, 0.04, 1.8, 1.2), 0, y1 + 0.18, -0.19);
+    const r = gableRoof(1.8, 2.2, 0.42, 0.05, 1.2);
+    mb.add(`roof${owner}`, r.roof, 0, y1 + 0.2, -0.19, Math.PI / 2);
+    mb.add('marble', r.gable, 0, y1 + 0.2, -0.19, Math.PI / 2);
+    // golden sun on the pediment and acroteria
+    mb.add('glowHoly', new THREE.CircleGeometry(0.09, 16), 0, y1 + 0.34, 0.715);
+    for (const zz of [0.74, -1.12]) {
+      mb.add('gold', cone(0.06, 0.16, 8), 0, y1 + 0.6, zz);
+      for (const sx of [-1, 1]) mb.add('gold', sphere(0.045, 8, 6), sx * 1.08, y1 + 0.24, zz);
+    }
+    brazier(mb, -0.78, 1.1, 0.46);
+    brazier(mb, 0.78, 1.1, 0.46);
+    amphora(mb, -1.25, 0, 0.95, 0.8);
+    amphora(mb, -1.12, 0, 1.18, 0.75, -0.15);
+    mb.anchors.piles.push(new THREE.Vector3(1.2, 0, 1.2));
+    mb.anchors.top = y1 + 0.8;
+  },
+  greattemple(mb, owner) {
+    mb.add('marbleDark', cyl(1.9, 1.95, 0.5, 32, 1.2), 0, -0.36, -0.15);
+    mb.add('marble', cyl(1.7, 1.75, 0.12, 32, 1.2), 0, 0.14, -0.15);
+    mb.add('marble', cyl(1.5, 1.55, 0.1, 32, 1.2), 0, 0.26, -0.15);
+    const y0 = 0.36, cz = -0.15;
+    // portico platform and steps
+    mb.add('marble', box(1.7, 0.86, 1.0, 1.2), 0, y0 - 0.43, 1.25);
+    [[0.27, 1.85], [0.18, 2.03], [0.09, 2.21]].forEach(([hh, zz]) => mb.add('marbleDark', box(1.3, hh, 0.19, 1.5), 0, hh / 2, zz));
+    // drum
+    mb.add('marble', cyl(0.95, 0.95, 1.36, 28, 1.2), 0, y0, cz);
+    mb.add('dark', box(0.42, 0.78, 0.03), 0, y0 + 0.39, cz + 0.955);
+    mb.add('dark', new THREE.CylinderGeometry(0.21, 0.21, 0.03, 12, 1, false, 0, Math.PI), 0, y0 + 0.78, cz + 0.955, 0, Math.PI / 2, 0);
+    // colonnade
+    const ch = 1.22;
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2;
+      if (Math.cos(a) > 0.8) continue; // the portico takes the front
+      column(mb, Math.sin(a) * 1.3, y0, cz + Math.cos(a) * 1.3, ch, 0.065);
+    }
+    mb.add('marble', cyl(1.43, 1.43, 0.12, 32, 1.2), 0, y0 + ch, cz);
+    mb.add(`trim${owner}`, cyl(1.44, 1.44, 0.05, 32), 0, y0 + ch + 0.12, cz);
+    mb.add('marble', cyl(1.46, 1.46, 0.04, 32, 1.2), 0, y0 + ch + 0.17, cz);
+    // upper drum with clerestory windows
+    const yd = y0 + ch + 0.2;
+    mb.add('marble', cyl(1.0, 1.0, 0.42, 28, 1.2), 0, yd, cz);
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * Math.PI * 2 + 0.3;
+      mb.add('window', box(0.1, 0.2, 0.03), Math.sin(a) * 1.005, yd + 0.21, cz + Math.cos(a) * 1.005, a);
+      mb.anchors.windows.push(new THREE.Vector3(Math.sin(a) * 1.2, yd + 0.21, cz + Math.cos(a) * 1.2));
+    }
+    // dome with golden ribs
+    const yDome = yd + 0.42;
+    const dome = sphere(1.02, 28, 14, Math.PI * 2, Math.PI / 2);
+    const duv = dome.getAttribute('uv') as THREE.BufferAttribute;
+    for (let i = 0; i < duv.count; i++) duv.setXY(i, duv.getX(i) * 6.4 * 1.2, duv.getY(i) * 3.2 * 1.2);
+    mb.add(`roof${owner}`, dome, 0, yDome, cz);
+    for (let k = 0; k < 8; k++) {
+      const rib = new THREE.TorusGeometry(1.035, 0.022, 4, 18, Math.PI / 2);
+      mb.add('gold', rib, 0, yDome, cz, (k / 8) * Math.PI * 2, 0, 0);
+    }
+    mb.add('gold', cyl(1.04, 1.04, 0.05, 28), 0, yDome - 0.02, cz);
+    // lantern with a glowing crystal
+    const yl = yDome + 0.98;
+    mb.add('marble', cyl(0.22, 0.24, 0.06, 12), 0, yl, cz);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      mb.add('marble', cyl(0.02, 0.02, 0.28, 6), Math.sin(a) * 0.17, yl + 0.06, cz + Math.cos(a) * 0.17);
+    }
+    mb.add('glowHoly', new THREE.OctahedronGeometry(0.09, 0), 0, yl + 0.2, cz);
+    mb.add(`roof${owner}`, cone(0.25, 0.26, 12, 1.2), 0, yl + 0.34, cz);
+    mb.add('gold', sphere(0.05, 8, 6), 0, yl + 0.63, cz);
+    // portico
+    for (const px of [-0.6, -0.2, 0.2, 0.6]) column(mb, px, y0, 1.6, ch, 0.06);
+    mb.add('marble', box(1.56, 0.12, 0.95, 1.2), 0, y0 + ch + 0.06, 1.28);
+    mb.add(`trim${owner}`, box(1.58, 0.05, 0.97), 0, y0 + ch + 0.14, 1.28);
+    const r = gableRoof(1.0, 1.62, 0.4, 0.04, 1.2);
+    mb.add(`roof${owner}`, r.roof, 0, y0 + ch + 0.17, 1.28, Math.PI / 2);
+    mb.add('marble', r.gable, 0, y0 + ch + 0.17, 1.28, Math.PI / 2);
+    mb.add('glowHoly', new THREE.CircleGeometry(0.09, 16), 0, y0 + ch + 0.3, 1.79);
+    mb.add('gold', cone(0.06, 0.16, 8), 0, y0 + ch + 0.57, 1.8);
+    brazier(mb, -0.95, 1.9, 0.5);
+    brazier(mb, 0.95, 1.9, 0.5);
+    brazier(mb, -1.62, -1.25, 0.5);
+    brazier(mb, 1.62, -1.25, 0.5);
+    amphora(mb, 1.45, 0, 1.2, 0.85);
+    amphora(mb, 1.62, 0, 0.98, 0.8, 0.2);
+    mb.anchors.piles.push(new THREE.Vector3(-1.5, 0, 1.4));
+    mb.anchors.top = yl + 0.7;
   },
   barracks(mb, owner) {
     house(mb, { w: 2.3, d: 1.2, wallH: 0.95, roofH: 0.6, x: -0.1, z: -0.45, wall: 'stone', doorX: 0.0, win: 3, chim: 0.8, roof: `roof${owner}` });

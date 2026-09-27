@@ -4,7 +4,7 @@ import { GOODS, Good, T_FOREST, T_GRASS, T_MEADOW } from '../game/defs';
 import type { Game } from '../game/game';
 import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
-import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildWheatGeo } from './models';
+import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { leafTexture } from './textures';
 
@@ -191,6 +191,7 @@ export class FieldsRenderer {
     let n = 0;
     const green = new THREE.Color(0x6a9a38), gold = new THREE.Color(0xe0b850);
     for (const f of g.fields.values()) {
+      if (f.kind !== 'grain') continue;
       const x = w.nx(f.node), z = w.ny(f.node);
       const y = w.heightAt(x, z);
       const s = 0.2 + 0.8 * f.growth;
@@ -204,6 +205,51 @@ export class FieldsRenderer {
     this.mesh.count = n;
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+}
+
+// ------------------------------------------------------------------ vineyards
+export class VinesRenderer {
+  group = new THREE.Group();
+  private plants: THREE.InstancedMesh;
+  private grapes: THREE.InstancedMesh;
+  private version = -1;
+  constructor(private game: Game) {
+    const geos = buildVineGeos();
+    this.plants = inst(geos.plant, vcMat({ roughness: 0.85 }, 'grass', 0.12, { snow: 0.5, key: 'vine' }), 1200, true);
+    this.grapes = inst(geos.grapes, vcMat({ roughness: 0.35 }, 'grass', 0.1, { key: 'grape' }), 1200, true);
+    this.group.add(this.plants, this.grapes);
+  }
+  update() {
+    const g = this.game;
+    if (g.fieldsVersion === this.version) return;
+    this.version = g.fieldsVersion;
+    const w = g.world;
+    let n = 0, m = 0;
+    const young = new THREE.Color(0x9ac860), unripe = new THREE.Color(0x8aa040), ripe = new THREE.Color(0x4a1848);
+    for (const f of g.fields.values()) {
+      if (f.kind !== 'vine') continue;
+      const x = w.nx(f.node), z = w.ny(f.node);
+      const y = w.heightAt(x, z);
+      const s = Math.min(1, 0.3 + f.growth * 1.4);
+      tmpQ.setFromAxisAngle(UP, (hash2(f.node, 1, 9) - 0.5) * 0.2);
+      tmpM.compose(tmpS.set(x, y - 0.02, z), tmpQ, tmpV.set(s, s, 1));
+      this.plants.setMatrixAt(n, tmpM);
+      tmpC.set(0xffffff).lerp(young, Math.max(0, 0.5 - f.growth));
+      this.plants.setColorAt(n, tmpC);
+      n++;
+      if (f.growth > 0.7) {
+        this.grapes.setMatrixAt(m, tmpM);
+        tmpC.copy(unripe).lerp(ripe, Math.min(1, (f.growth - 0.7) / 0.28));
+        this.grapes.setColorAt(m, tmpC);
+        m++;
+      }
+    }
+    for (const [mesh, count] of [[this.plants, n], [this.grapes, m]] as const) {
+      mesh.count = count;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
   }
 }
 

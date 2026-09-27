@@ -122,7 +122,7 @@ function setupGlobalInput() {
     if (state !== 'play' || !hud) return;
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
     const k = e.key;
-    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else hud.select(null); }
+    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else if (gr.casting) hud.startCasting(null); else hud.select(null); }
     else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
     else if (k === '1') speed = pausedSpeed = 1;
     else if (k === '2') speed = pausedSpeed = 2;
@@ -163,7 +163,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (e.pointerType === 'touch') return;
     // hover tooltip for buildings (throttled)
     const now = performance.now();
-    if (!hud || gr.placing || e.buttons) { hud?.hideTip(); return; }
+    if (!hud || gr.placing || gr.casting || e.buttons) { hud?.hideTip(); return; }
     if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
     tipT = now;
     const b = gr.pickBuilding(e.clientX, e.clientY);
@@ -188,6 +188,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (e.button === 0) onClick(e);
     else if (e.button === 2) {
       if (gr.placing) hud.startPlacing(null);
+      else if (gr.casting) hud.startCasting(null);
       else hud.select(null);
     }
   };
@@ -197,6 +198,11 @@ function bindCanvas(c: HTMLCanvasElement) {
 
 function onClick(e: PointerEvent) {
   if (!hud) return;
+  if (gr.casting) {
+    const p = gr.pickGround(e.clientX, e.clientY);
+    if (p) hud.castAt(p.x, p.z, e.shiftKey);
+    return;
+  }
   if (gr.placing) {
     const node = gr.hoverNode;
     if (node < 0) return;

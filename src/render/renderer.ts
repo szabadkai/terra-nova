@@ -9,7 +9,7 @@ import { RTSCamera } from './camera';
 import { Sky } from './sky';
 import { TerrainRenderer } from './terrain';
 import { WaterRenderer } from './water';
-import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, buildGoodGeos } from './entities';
+import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
 import { SettlersRenderer } from './settlers';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
@@ -19,6 +19,8 @@ import { buildingBuilder } from './buildingModels';
 import { setWindowGlow } from './materials';
 import { PlanarReflection } from './reflection';
 import { BordersRenderer } from './borders';
+import { SpellFX } from './spells';
+import { SPELLS, SpellId, castError } from '../game/faith';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -105,6 +107,7 @@ export class GameRenderer {
   trees: TreesRenderer;
   stones: StonesRenderer;
   fields: FieldsRenderer;
+  vines: VinesRenderer;
   grass: GrassRenderer;
   settlers: SettlersRenderer;
   animals: AnimalsRenderer;
@@ -120,8 +123,12 @@ export class GameRenderer {
   };
   reflection: PlanarReflection;
   borders: BordersRenderer;
+  spells: SpellFX;
   // interaction state
   placing: BuildingType | null = null;
+  casting: SpellId | null = null;
+  private castCheckT = 0;
+  private castOk = true;
   hoverNode = -1;
   hoverPoint: THREE.Vector3 | null = null;
   selected: { kind: 'building' | 'settler'; id: number } | null = null;
@@ -167,6 +174,8 @@ export class GameRenderer {
     this.scene.add(this.stones.group);
     this.fields = new FieldsRenderer(game);
     this.scene.add(this.fields.mesh);
+    this.vines = new VinesRenderer(game);
+    this.scene.add(this.vines.group);
     this.grass = new GrassRenderer(game);
     this.scene.add(this.grass.mesh);
     this.settlers = new SettlersRenderer(game, goodGeos);
@@ -195,6 +204,11 @@ export class GameRenderer {
     this.scene.add(this.markers);
 
     this.fx = new PostFX(r, this.scene, this.cam.camera, w, h);
+    this.spells = new SpellFX(game, this.particles, this.terrain.uniforms, (flash, shake) => {
+      this.fx.flash(flash);
+      this.cam.shake = Math.max(this.cam.shake, shake);
+    });
+    this.scene.add(this.spells.group);
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
     const hq = game.buildings.get(game.players[game.local].hq);
@@ -335,7 +349,7 @@ export class GameRenderer {
     if (!this.placing) {
       if (this.ghost) this.ghost.visible = false;
       this.markers.count = 0;
-      U.uRange.value.w = 0;
+      if (!this.casting) U.uRange.value.w = 0;
       return;
     }
     const type = this.placing;
@@ -387,6 +401,25 @@ export class GameRenderer {
     if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
   }
 
+  private updateCasting(dt: number) {
+    const U = this.terrain.uniforms;
+    if (!this.casting || !this.hoverPoint) {
+      this.spells.preview = null;
+      if (!this.placing) (U.uRangeCol.value as THREE.Color).setRGB(0.45, 0.85, 1.0);
+      return;
+    }
+    const def = SPELLS[this.casting];
+    const p = this.hoverPoint;
+    this.castCheckT -= dt;
+    if (this.castCheckT <= 0) {
+      this.castCheckT = 0.2;
+      this.castOk = castError(this.game, this.game.local, this.casting, p.x, p.z) === null;
+    }
+    this.spells.preview = { x: p.x, z: p.z, r: def.radius, col: new THREE.Color(...def.color), ok: this.castOk };
+    (U.uRangeCol.value as THREE.Color).setRGB(...(this.castOk ? def.color : [1, 0.3, 0.2] as [number, number, number]));
+    (U.uRange.value as THREE.Vector4).set(p.x, 0, p.z, def.radius);
+  }
+
   // ------------------------------------------------------------ events -> effects
   handleEvents(events: GameEvent[]) {
     const w = this.game.world;
@@ -397,8 +430,9 @@ export class GameRenderer {
       const x = e.x ?? 0, z = e.z ?? 0;
       const y = e.x !== undefined ? w.heightAt(x, z) : 0;
       if (this.onEvent) this.onEvent(e);
-      if (!near(e.x, e.z)) continue;
       const snd = (n: string, v = 1) => this.sound?.(n, x, z, v);
+      this.spells.onEvent(e, snd);
+      if (!near(e.x, e.z)) continue;
       switch (e.type) {
         case 'chop': P.chips(x, y, z); snd('chop'); break;
         case 'treefall': P.leaves(x, y, z, 18); setTimeout(() => P.dust(x, y, z, 10, [0.5, 0.45, 0.35]), 1100); snd('treefall'); break;
@@ -452,6 +486,14 @@ export class GameRenderer {
         continue;
       }
       if (b.state !== 'done' || !tick) continue;
+      if (b.def.mana) {
+        // holy fire burns in the braziers while a priest serves
+        if (b.worker) for (const f of v.anchors.fires) {
+          if (Math.random() < 0.6) P.emit({ x: b.cx + f.x, y: by + f.y, z: b.cz + f.z, vy: 0.9, spread: 0.12, life: 0.6, size: 0.18, grow: -0.5, color: [2.2, 1.5, 0.6], color2: [1.2, 0.45, 0.1], alpha: 0.8, drag: 1.2, jitter: 0.12, additive: true, kind: 3 });
+          if (b.working && Math.random() < 0.25) P.emit({ x: b.cx + f.x, y: by + f.y + 0.2, z: b.cz + f.z, vy: 0.8, spread: 0.3, life: 1.6, size: 0.04, color: [2.2, 1.9, 1.0], alpha: 1, gravity: -0.2, drag: 0.5, additive: true, kind: 1 });
+        }
+        continue;
+      }
       const active = b.working || (b.def.residence && b.spawned > 0) || b.type === 'hq' || (b.def.military && b.occupied && Math.random() < 0.3);
       if (active) {
         for (const c of v.anchors.chimneys) {
@@ -471,6 +513,14 @@ export class GameRenderer {
         }
         if (b.type === 'sawmill' && Math.random() < 0.4) P.emit({ x: b.cx + 0.97, y: by + 0.4, z: b.cz + 0.15, vy: 0.5, spread: 0.8, life: 0.8, size: 0.04, color: [0.9, 0.78, 0.55], gravity: 2, count: 3, kind: 1 });
         if (b.type === 'sawmill' && Math.random() < 0.07) this.sound?.('saw', b.cx, b.cz, 0.5);
+      }
+    }
+    // blessed soldiers shimmer
+    if (tick) {
+      for (const s of g.settlers.values()) {
+        if (s.hidden || s.dead || g.time >= s.blessUntil) continue;
+        if (Math.abs(s.x - t.x) > R || Math.abs(s.z - t.z) > R || Math.random() > 0.35) continue;
+        P.emit({ x: s.x, y: w.heightAt(s.x, s.z) + 0.95, z: s.z, vy: 0.3, spread: 0.35, life: 0.8, size: 0.05, color: [2.0, 1.8, 0.9], alpha: 1, drag: 1, additive: true, kind: 1 });
       }
     }
     // fireflies near forests at night & butterflies by day
@@ -583,6 +633,7 @@ export class GameRenderer {
     this.trees.update(this.time);
     this.stones.update();
     this.fields.update();
+    this.vines.update();
     this.grass.update(dt);
     this.buildings.update(dt, this.time);
     this.settlers.update(dt, this.time, this.cam.camera);
@@ -590,6 +641,8 @@ export class GameRenderer {
     this.arrows.update();
     this.birds.update(dt, night);
     this.updatePlacement(dt);
+    this.updateCasting(dt);
+    this.spells.update(dt);
     this.continuousEffects(dt);
     this.particles.update(dt, G.uWind.value);
 

@@ -30,6 +30,7 @@ export interface Field {
   node: number;
   owner: number;
   farm: number;
+  kind: 'grain' | 'vine';
   growth: number;
   reserved: boolean;
 }
@@ -86,6 +87,7 @@ export interface Settler {
   deadT: number;
   wanderT: number;
   seed: number;
+  blessUntil: number; // game time until which a Healing Light blessing lasts
 }
 
 export type BState = 'leveling' | 'building' | 'done' | 'burning';

@@ -48,6 +48,7 @@ export function workerThink(g: Game, s: Settler, b: Building) {
     case 'hunter': return hunter(g, s, b);
     case 'farm': return farmer(g, s, b);
     case 'waterworks': return waterman(g, s, b);
+    case 'vineyard': return vintner(g, s, b);
     default:
       // indoor workers simply stay inside
       plan(s, [A.wait(1.5)]);
@@ -381,6 +382,72 @@ function farmer(g: Game, s: Settler, b: Building) {
     }
   }
   b.status = count ? 'Waiting for the grain to ripen' : 'No space for fields';
+  plan(s, [A.wait(3)]);
+}
+
+function vintner(g: Game, s: Settler, b: Building) {
+  const w = g.world;
+  const R = b.def.radius! + b.size / 2;
+  let ripe = null as import('./types').Field | null, rd = Infinity;
+  let count = 0;
+  for (const f of g.fields.values()) {
+    if (f.farm !== b.id) continue;
+    count++;
+    if (f.growth >= 1 && !f.reserved) {
+      const d2 = (w.nx(f.node) - b.cx) ** 2 + (w.ny(f.node) - b.cz) ** 2;
+      if (d2 < rd) { rd = d2; ripe = f; }
+    }
+  }
+  if (ripe && !outFull(b)) {
+    // pick the grapes; the vine stays and fruits again
+    const f = ripe;
+    f.reserved = true;
+    b.status = 'Picking grapes';
+    plan(s, [
+      A.do(() => { exit(g, s); }),
+      A.walk(f.node, true),
+      A.anim('harvest', 3.6, f.node, (t) => { if (t < 0.05) g.emit({ type: 'grapes', x: w.nx(f.node), z: w.ny(f.node) }); }),
+      A.do(() => {
+        if (!g.fields.has(f.id)) return false;
+        f.growth = 0.3;
+        f.reserved = false;
+        g.fieldsVersion++;
+        s.carrying = 'wine';
+      }),
+      ...returnHome(g, s, b, true),
+      A.wait(2.5),
+    ], () => { if (g.fields.has(f.id)) f.reserved = false; s.carrying = null; });
+    return;
+  }
+  if (count < 10) {
+    // vines go in rows: every other column around the press house
+    let spot = -1, sd = Infinity;
+    w.forRadius(b.cx, b.cz, R, (i, x, y, d2) => {
+      if (w.owner[i] !== b.owner || (x & 1)) return;
+      const t = w.terrain[i];
+      if (t !== T_GRASS && t !== T_MEADOW && t !== T_DIRT) return;
+      if (!plantable(g, i, false)) return;
+      const sc = d2 + g.rng.next() * 2;
+      if (sc < sd) { sd = sc; spot = i; }
+    });
+    if (spot >= 0) {
+      b.status = 'Planting vines';
+      plan(s, [
+        A.do(() => { exit(g, s); }),
+        A.walk(spot, true),
+        A.anim('plant', 2.6, spot),
+        A.do(() => {
+          if (w.field[spot] || !plantable(g, spot, false)) return;
+          g.addField(spot, b.owner, b.id, 'vine');
+          g.emit({ type: 'plant', x: w.nx(spot), z: w.ny(spot) });
+        }),
+        ...returnHome(g, s, b, false),
+        A.wait(1.5),
+      ]);
+      return;
+    }
+  }
+  b.status = count ? 'Waiting for the grapes to ripen' : 'No space for vines';
   plan(s, [A.wait(3)]);
 }
 

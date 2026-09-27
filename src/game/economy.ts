@@ -4,9 +4,10 @@ import {
 } from './defs';
 import type { Game } from './game';
 import { OUT_CAP } from './game';
-import { A, claim, enter, exit, plan } from './settlers';
+import { A, abortPlan, claim, enter, exit, plan } from './settlers';
 import type { Building, Settler } from './types';
 import { recomputeTerritory, isSoldier, sendSoldierTo } from './military';
+import { offer } from './faith';
 
 const SITE_DIGGERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 const SITE_BUILDERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
@@ -124,10 +125,10 @@ function updateProduction(g: Game, b: Building, dt: number) {
   }
   if (!b.working) {
     // choose output
-    let out: Good;
+    let out: Good | null;
     if (b.type === 'toolsmith') out = chooseTool(g, b);
     else if (b.type === 'weaponsmith') out = g.rng.next() < g.players[b.owner].swordRatio ? 'sword' : 'bow';
-    else out = def.outputs![0];
+    else out = def.outputs?.[0] ?? null;
     let outCount = 0;
     for (const o of def.outputs ?? []) outCount += b.stock[o];
     if (outCount >= OUT_CAP) { b.status = 'Output storage full'; return; }
@@ -144,11 +145,17 @@ function updateProduction(g: Game, b: Building, dt: number) {
     b.working = true;
     b.workT = 0;
     (b as any).curOut = out;
-    b.status = 'Working';
+    b.status = def.mana ? 'Offering wine to the gods' : 'Working';
   } else {
     b.workT += dt;
     if (b.workT >= def.cycle) {
       b.working = false;
+      if (def.mana) {
+        offer(g, b);
+        b.prodCount++;
+        b.lastProd = g.time;
+        return;
+      }
       const out: Good = (b as any).curOut ?? def.outputs![0];
       if (def.mine) {
         // consume ore from a node in range
@@ -531,7 +538,12 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
     const tool = JOB_TOOL[job];
     if (tool) {
       const src = findToolSource(g, owner, tool, b.cx, b.cz);
-      if (!src) { b.status = `Missing tool: ${GOOD_NAMES[tool].replace(/s$/, '').toLowerCase()}`; continue; }
+      if (!src) {
+        b.status = `Missing tool: ${GOOD_NAMES[tool].replace(/s$/, '').toLowerCase()}`;
+        // iron and coal keep the toolsmith going: borrow a miner from a gold or stone mine rather than deadlock
+        if (b.type === 'ironmine' || b.type === 'coalmine') reassignMiner(g, owner, b, mine);
+        continue;
+      }
       const c = nearestCarrier(carriers, src.cx, src.cz);
       if (!c) continue;
       equip(g, c, src, tool, job, b);
@@ -551,6 +563,22 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
         b.workerIncoming = 0;
       })], () => { if (b.workerIncoming === c.id) b.workerIncoming = 0; c.home = 0; });
     }
+  }
+}
+
+function reassignMiner(g: Game, owner: number, b: Building, mine: Building[]) {
+  for (const o of mine) {
+    if (o.type !== 'goldmine' && o.type !== 'stonemine' && !(b.type === 'ironmine' && o.type === 'coalmine' && g.totalStock(owner).coal > 6)) continue;
+    const w = o.worker ? g.settlers.get(o.worker) : null;
+    if (!w || w.dead) continue;
+    o.worker = 0;
+    o.working = false;
+    abortPlan(g, w);
+    exit(g, w);
+    w.home = 0;
+    w.idle = true;
+    o.status = `Miner sent to the ${b.def.name}`;
+    return;
   }
 }
 

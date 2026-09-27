@@ -23,6 +23,9 @@ uniform float uWaterLevel;
 uniform vec3 uPlayerCols[4];
 uniform vec4 uSel;
 uniform vec4 uRange;
+uniform vec3 uRangeCol;
+uniform vec4 uSpell;
+uniform vec3 uSpellCol;
 uniform float uBorderOn;
 uniform float uSunI;
 varying vec3 vWNormal;
@@ -236,7 +239,38 @@ const TERRAIN_MAP = /* glsl */ `
     float dash = step(0.5, fract(ang * uRange.w * 0.8 / 6.2831 * 2.0 + uTime * 0.2));
     float ring = (1.0 - smoothstep(0.0, 0.1, abs(d - uRange.w))) * dash;
     float fill = (1.0 - smoothstep(uRange.w - 0.2, uRange.w, d)) * 0.05;
-    tEmis += vec3(0.45, 0.85, 1.0) * (ring * 0.9 + fill);
+    tEmis += uRangeCol * (ring * 0.9 + fill);
+  }
+  // divine rune circle
+  if (uSpell.w > 0.0) {
+    vec2 q = p - uSpell.xy;
+    float d = length(q);
+    float R = uSpell.z;
+    if (d < R + 0.6) {
+      float a = atan(q.y, q.x);
+      float rot = uTime * 0.35;
+      float aw = fwidth(d) + 0.02;
+      float ring1 = 1.0 - smoothstep(0.0, aw + 0.05, abs(d - R));
+      float ring2 = 1.0 - smoothstep(0.0, aw + 0.035, abs(d - R * 0.84));
+      float ring3 = 1.0 - smoothstep(0.0, aw + 0.03, abs(d - R * 0.3));
+      // rune glyphs in the band between the outer rings
+      float seg = (a + rot) / 6.2831853 * 28.0;
+      float cellId = floor(seg);
+      float cu = fract(seg), cv = (d - R * 0.86) / (R * 0.12);
+      float h1 = fract(sin(cellId * 91.7 + 3.1) * 43758.5);
+      float h2 = fract(sin(cellId * 47.3 + 7.7) * 24634.6);
+      float inBand = step(0.0, cv) * step(cv, 1.0) * step(0.18, cu) * step(cu, 0.82);
+      float stroke = 0.0;
+      stroke += (1.0 - smoothstep(0.0, 0.09, abs(cu - 0.5))) * step(0.25, h1);
+      stroke += (1.0 - smoothstep(0.0, 0.09, abs(cv - mix(0.2, 0.8, h2)))) * step(0.4, h2);
+      stroke += (1.0 - smoothstep(0.0, 0.1, abs((cu - 0.18) / 0.64 - cv))) * step(0.6, h1);
+      float glyph = inBand * min(1.0, stroke);
+      // a rotating star between the inner rings
+      float star = (1.0 - smoothstep(0.0, 0.05 + aw, abs(sin((a - rot * 1.6) * 2.5)) * d)) * step(R * 0.3, d) * step(d, R * 0.84);
+      float fill = (1.0 - smoothstep(R * 0.2, R, d)) * 0.12;
+      float pulse = 0.8 + 0.2 * sin(uTime * 3.0 - d * 1.5);
+      tEmis += uSpellCol * (ring1 * 1.3 + ring2 + ring3 * 0.8 + glyph * 1.1 + star * 0.55 + fill) * uSpell.w * pulse;
+    }
   }
 
   tBump = bump;
@@ -329,6 +363,9 @@ export class TerrainRenderer {
       uPlayerCols: { value: game.players.map((p) => new THREE.Color(p.color)).concat([new THREE.Color(), new THREE.Color(), new THREE.Color(), new THREE.Color()]).slice(0, 4) },
       uSel: { value: new THREE.Vector4(0, 0, 0, 0) },
       uRange: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uRangeCol: { value: new THREE.Color(0.45, 0.85, 1.0) },
+      uSpell: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uSpellCol: { value: new THREE.Color(1, 0.8, 0.3) },
       uBorderOn: { value: 1 },
       uSunI: { value: 1 },
     };

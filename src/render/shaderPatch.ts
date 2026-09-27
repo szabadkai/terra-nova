@@ -22,6 +22,9 @@ export const G = {
   tNoise: { value: getNoiseTexture() as THREE.Texture },
   uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
   uSnow: { value: 0 },
+  // one bright transient light (lightning, divine pillars): xyz + intensity, colour
+  uFlash: { value: new THREE.Vector4(0, -100, 0, 0) },
+  uFlashCol: { value: new THREE.Color(0.7, 0.8, 1.0) },
 };
 
 export interface PatchOpts {
@@ -63,6 +66,14 @@ uniform float uFogOn;
 uniform float uWet;
 uniform vec3 uSunDir;
 uniform float uSnow;
+uniform vec4 uFlash;
+uniform vec3 uFlashCol;
+
+vec3 flashLight(vec3 wp) {
+  if (uFlash.w <= 0.0) return vec3(0.0);
+  vec3 d = wp - uFlash.xyz;
+  return uFlashCol * (uFlash.w / (1.0 + dot(d, d) * 0.07));
+}
 
 float cloudShadow(vec3 wp) {
   vec2 p = wp.xz + uCloudSpeed * uTime;
@@ -114,7 +125,7 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
       uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
       uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
       tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
-      uSnow: G.uSnow, uClip, uWindAmp,
+      uSnow: G.uSnow, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp,
       ...(o.uniforms ?? {}),
     });
     // ---------------- vertex
@@ -210,7 +221,7 @@ ${o.fragEmissive}`);
     if (o.fragAO) fs = fs.replace('#include <aomap_fragment>', `${o.fragAO}
 #include <aomap_fragment>`);
     let post = o.fragPost ?? '';
-    if (o.lights) post += `\n  outgoingLight += diffuseColor.rgb * nightLights(vWPos) * uNight;`;
+    if (o.lights) post += `\n  outgoingLight += diffuseColor.rgb * (nightLights(vWPos) * uNight + flashLight(vWPos));`;
     if (o.fog) post += `\n  outgoingLight = applyFog(outgoingLight, vWPos);`;
     fs = fs.replace('#include <opaque_fragment>', `${post}
 #include <opaque_fragment>`);

@@ -3,7 +3,7 @@
 export const GOODS = [
   'log', 'board', 'stone', 'grain', 'flour', 'bread', 'fish', 'meat', 'pig', 'water',
   'coal', 'ironore', 'goldore', 'iron', 'gold',
-  'sword', 'bow',
+  'sword', 'bow', 'wine',
   'axe', 'pickaxe', 'saw', 'hammer', 'shovel', 'scythe', 'rod',
 ] as const;
 export type Good = (typeof GOODS)[number];
@@ -11,7 +11,7 @@ export type Good = (typeof GOODS)[number];
 export const GOOD_NAMES: Record<Good, string> = {
   log: 'Logs', board: 'Boards', stone: 'Stone', grain: 'Grain', flour: 'Flour', bread: 'Bread',
   fish: 'Fish', meat: 'Meat', pig: 'Pigs', water: 'Water', coal: 'Coal', ironore: 'Iron Ore',
-  goldore: 'Gold Ore', iron: 'Iron', gold: 'Gold', sword: 'Swords', bow: 'Bows', axe: 'Axes',
+  goldore: 'Gold Ore', iron: 'Iron', gold: 'Gold', sword: 'Swords', bow: 'Bows', wine: 'Wine', axe: 'Axes',
   pickaxe: 'Pickaxes', saw: 'Saws', hammer: 'Hammers', shovel: 'Shovels', scythe: 'Scythes', rod: 'Fishing Rods',
 };
 
@@ -30,6 +30,7 @@ export type Job =
   | 'woodcutter' | 'forester' | 'stonecutter' | 'sawyer'
   | 'fisher' | 'hunter' | 'farmer' | 'miller' | 'baker' | 'butcher' | 'pigfarmer' | 'waterman'
   | 'miner' | 'smelter' | 'toolsmith' | 'weaponsmith'
+  | 'vintner' | 'priest'
   | 'swordsman' | 'bowman';
 
 export const JOB_NAMES: Record<Job, string> = {
@@ -37,7 +38,7 @@ export const JOB_NAMES: Record<Job, string> = {
   stonecutter: 'Stonecutter', sawyer: 'Sawyer', fisher: 'Fisher', hunter: 'Hunter', farmer: 'Farmer',
   miller: 'Miller', baker: 'Baker', butcher: 'Butcher', pigfarmer: 'Pig Farmer', waterman: 'Water Carrier',
   miner: 'Miner', smelter: 'Smelter', toolsmith: 'Toolsmith', weaponsmith: 'Weaponsmith',
-  swordsman: 'Swordsman', bowman: 'Bowman',
+  vintner: 'Vintner', priest: 'Priest', swordsman: 'Swordsman', bowman: 'Bowman',
 };
 
 export const JOB_TOOL: Partial<Record<Job, Good>> = {
@@ -51,9 +52,10 @@ export type BuildingType =
   | 'fisher' | 'hunter' | 'farm' | 'mill' | 'bakery' | 'waterworks' | 'pigfarm' | 'slaughter'
   | 'coalmine' | 'ironmine' | 'goldmine' | 'stonemine'
   | 'ironsmelter' | 'goldsmelter' | 'toolsmith' | 'weaponsmith'
+  | 'vineyard' | 'temple' | 'greattemple'
   | 'barracks' | 'tower_s' | 'tower_l' | 'castle';
 
-export type Category = 'basic' | 'food' | 'industry' | 'military';
+export type Category = 'basic' | 'food' | 'industry' | 'military' | 'faith';
 
 export interface InputSpec {
   goods: Good[]; // any of these satisfies the slot
@@ -75,6 +77,7 @@ export interface BuildingDef {
   military?: { capacity: number; radius: number };
   residence?: number; // number of carriers spawned
   storage?: boolean;
+  mana?: number; // mana gained per production cycle (temples)
   desc: string;
   buildable?: boolean;
 }
@@ -135,6 +138,13 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   weaponsmith: D({ type: 'weaponsmith', name: 'Weaponsmith', size: 3, category: 'industry', cost: { board: 4, stone: 3 },
     worker: 'weaponsmith', inputs: [{ goods: ['iron'], cap: 6 }, { goods: ['coal'], cap: 6 }], outputs: ['sword', 'bow'], cycle: 10, desc: 'Forges swords and bows.' }),
 
+  vineyard: D({ type: 'vineyard', name: 'Vineyard', size: 3, category: 'faith', cost: { board: 3, stone: 2 },
+    worker: 'vintner', outputs: ['wine'], radius: 5, desc: 'Tends rows of vines and presses the grapes into wine.' }),
+  temple: D({ type: 'temple', name: 'Temple', size: 3, category: 'faith', cost: { board: 4, stone: 6 },
+    worker: 'priest', inputs: [{ goods: ['wine'], cap: 6 }], cycle: 9, mana: 3, desc: 'A priest offers wine to the gods, earning mana for divine spells.' }),
+  greattemple: D({ type: 'greattemple', name: 'Great Temple', size: 4, category: 'faith', cost: { board: 8, stone: 14 },
+    worker: 'priest', inputs: [{ goods: ['wine'], cap: 8 }], cycle: 8, mana: 6, desc: 'A domed sanctuary. Earns more mana and unlocks the mightiest spells.' }),
+
   barracks: D({ type: 'barracks', name: 'Barracks', size: 3, category: 'military', cost: { board: 4, stone: 4 },
     inputs: [{ goods: ['sword'], cap: 4 }, { goods: ['bow'], cap: 4 }], cycle: 6, desc: 'Trains carriers into soldiers using weapons.' }),
   tower_s: D({ type: 'tower_s', name: 'Guard Tower', size: 2, category: 'military', cost: { board: 3, stone: 2 },
@@ -150,10 +160,11 @@ export const BUILD_ORDER: Record<Category, BuildingType[]> = {
   food: ['fisher', 'hunter', 'farm', 'waterworks', 'mill', 'bakery', 'pigfarm', 'slaughter'],
   industry: ['coalmine', 'ironmine', 'goldmine', 'stonemine', 'ironsmelter', 'goldsmelter', 'toolsmith', 'weaponsmith'],
   military: ['tower_s', 'tower_l', 'castle', 'barracks'],
+  faith: ['vineyard', 'temple', 'greattemple'],
 };
 
 export const CATEGORY_NAMES: Record<Category, string> = {
-  basic: 'Basic', food: 'Food', industry: 'Industry', military: 'Military',
+  basic: 'Basic', food: 'Food', industry: 'Industry', military: 'Military', faith: 'Faith',
 };
 
 export const PLAYER_COLORS = [0xc8342a, 0x2f6fd0, 0xe0b020, 0x8a3fd0];

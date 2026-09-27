@@ -47,6 +47,12 @@ def('goldore', () => std({ color: 0xc8a040, roughness: 0.5, metalness: 0.4 }));
 def('window', () => std({ color: 0x1a1612, roughness: 0.3, emissive: new THREE.Color(1.0, 0.62, 0.28), emissiveIntensity: 0 }));
 def('glowFire', () => std({ color: 0x331100, emissive: new THREE.Color(1.0, 0.45, 0.12), emissiveIntensity: 3.5, roughness: 1 }));
 def('glowGold', () => std({ color: 0x331100, emissive: new THREE.Color(1.0, 0.75, 0.2), emissiveIntensity: 2.5, roughness: 1 }));
+def('glowHoly', () => std({ color: 0x332a10, emissive: new THREE.Color(1.0, 0.72, 0.38), emissiveIntensity: 2.2, roughness: 1 }));
+def('marble', () => { const t = plasterTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.2, 0.2), color: 0xfff9ee, roughness: 0.38 }); });
+def('marbleDark', () => { const t = stoneTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.6, 0.6), color: 0xd6cec0, roughness: 0.7 }); });
+def('grape', () => std({ color: 0x4a1a4c, roughness: 0.3 }));
+def('wine', () => std({ color: 0x4a0c24, roughness: 0.12 }));
+def('terracotta', () => std({ color: 0xb4643a, roughness: 0.8 }));
 for (let p = 0; p < 4; p++) {
   def(`roof${p}`, () => { const t = roofTex(); return std({ map: t.map, normalMap: t.normal, color: ROOF_COLORS[p], roughness: 0.72, side: THREE.DoubleSide }); });
   def(`banner${p}`, () => { const t = clothTex(); return std({ map: t.map, color: BANNER_COLORS[p], roughness: 0.85, side: THREE.DoubleSide }); });
@@ -55,7 +61,7 @@ for (let p = 0; p < 4; p++) {
 
 const WIND_MATS = new Set(['banner0', 'banner1', 'banner2', 'banner3', 'canvasFlag']);
 
-const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'water', 'metal', 'iron', 'gold']);
+const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'glowHoly', 'water', 'wine', 'metal', 'iron', 'gold']);
 function patchOpts(key: string, clip: boolean) {
   const snow = NO_SNOW.has(key) || WIND_MATS.has(key) ? 0 : 1;
   return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), key: `bld_${key}`, snow };

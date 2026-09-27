@@ -12,6 +12,7 @@ import { abortPlan, updateSettler } from './settlers';
 import { updateEconomy, updateBuilding, onBuildingComplete } from './economy';
 import { updateMilitary, recomputeTerritory, updateProjectiles } from './military';
 import { AIController } from './ai';
+import { updateFaith } from './faith';
 
 export interface PlayerState {
   id: number;
@@ -27,6 +28,9 @@ export interface PlayerState {
   produced: Record<Good, number>;
   history: { t: number; pop: number; soldiers: number; buildings: number; goods: number }[];
   hq: number;
+  mana: number;
+  spellCd: number;
+  spellsCast: number;
 }
 
 export interface GameOptions {
@@ -88,7 +92,7 @@ export class Game {
       this.players.push({
         id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
         swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
-        produced: emptyStock(), history: [], hq: 0,
+        produced: emptyStock(), history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0,
       });
       this.setupStart(p, gen.starts[p].x, gen.starts[p].y);
       if (p !== 0) this.ai.push(new AIController(this, p, opts.aiLevel));
@@ -199,8 +203,8 @@ export class Game {
     if (!this.world.building[s.node]) this.world.blocked[s.node] = 0;
     this.stonesVersion++;
   }
-  addField(node: number, owner: number, farm: number): Field {
-    const f: Field = { id: this.id(), node, owner, farm, growth: 0, reserved: false };
+  addField(node: number, owner: number, farm: number, kind: Field['kind'] = 'grain'): Field {
+    const f: Field = { id: this.id(), node, owner, farm, kind, growth: 0, reserved: false };
     this.fields.set(f.id, f);
     this.world.field[node] = f.id;
     this.fieldsVersion++;
@@ -231,7 +235,7 @@ export class Game {
       anim: 'idle', animT: this.rng.range(0, 10), carrying: null, actions: [], onAbort: null, idle: true,
       home: 0, task: '', hp: 100, maxHp: 100, level: 0, sstate: 'idle', target: 0, targetB: 0, engaged: 0,
       cooldown: 0, scanT: this.rng.range(0, 0.3), dead: false, deadT: 0, wanderT: this.rng.range(0, 6),
-      seed: this.rng.next(),
+      seed: this.rng.next(), blessUntil: 0,
     };
     if (job === 'bowman') { s.hp = s.maxHp = 80; }
     this.settlers.set(s.id, s);
@@ -445,7 +449,7 @@ export class Game {
       if (s.home === b.id || s.inside === b.id || s.targetB === b.id) releaseSettler(s.id, s.job === 'swordsman' || s.job === 'bowman');
     }
     // fields of farm
-    if (b.type === 'farm') for (const f of [...this.fields.values()]) if (f.farm === b.id) this.removeField(f);
+    if (b.type === 'farm' || b.type === 'vineyard') for (const f of [...this.fields.values()]) if (f.farm === b.id) this.removeField(f);
     b.worker = 0;
     b.stock = emptyStock();
     b.incoming = emptyStock();
@@ -565,6 +569,7 @@ export class Game {
     // animals
     this.updateAnimals(dt);
     updateProjectiles(this, dt);
+    updateFaith(this, dt);
     // economy dispatch per player
     for (const p of this.players) {
       if (!p.alive) continue;
@@ -615,7 +620,7 @@ export class Game {
     }
     for (const f of this.fields.values()) {
       if (f.growth < 1) {
-        f.growth = Math.min(1, f.growth + step / 90);
+        f.growth = Math.min(1, f.growth + step / (f.kind === 'vine' ? 110 : 90));
         this.fieldsVersion++;
       }
     }

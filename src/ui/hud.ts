@@ -8,6 +8,7 @@ import type { Building, GameEvent, Settler } from '../game/types';
 import type { GameRenderer, Quality } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import { attackableSoldiers, launchAttack } from '../game/military';
+import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
@@ -21,7 +22,7 @@ const h = (tag: string, cls = '', html = '') => {
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
-type Tab = 'build' | 'goods' | 'military' | 'stats' | 'settings';
+type Tab = 'build' | 'goods' | 'military' | 'faith' | 'stats' | 'settings';
 
 export interface HudHooks {
   getSpeed(): number;
@@ -101,6 +102,7 @@ export class HUD {
       ${item(this.icon('coal'), st.coal, 'Coal')}
       ${item(this.icon('iron'), st.iron, 'Iron')}
       ${item(this.icon('gold'), st.gold, 'Gold — raises soldier morale')}
+      ${g.players[g.local].mana > 0 || g.countBuildings(g.local, 'temple') + g.countBuildings(g.local, 'greattemple') > 0 ? item('<span class="emo mana">✦</span>', Math.floor(g.players[g.local].mana), 'Mana — offered wine, spent on divine spells') : ''}
       ${item(this.icon('hammer'), tools, 'Tools in stock')}
       <div class="sep"></div>
       ${item('<span class="emo">⚔</span>', pop.soldiers, 'Soldiers')}
@@ -131,7 +133,7 @@ export class HUD {
     this.left.appendChild(mmWrap);
     this.minimap = new Minimap(this.game, this.gr.cam, mmWrap);
     const tabs = h('div', 'tabs');
-    const defs: [Tab, string, string][] = [['build', '⚒', 'Build'], ['goods', '⚖', 'Economy'], ['military', '⚔', 'Military'], ['stats', '📈', 'Statistics'], ['settings', '⚙', 'Settings']];
+    const defs: [Tab, string, string][] = [['build', '⚒', 'Build'], ['goods', '⚖', 'Economy'], ['military', '⚔', 'Military'], ['faith', '✦', 'Faith'], ['stats', '📈', 'Statistics'], ['settings', '⚙', 'Settings']];
     for (const [id, ic, label] of defs) {
       const b = h('button', 'tab' + (id === this.tab ? ' on' : ''), `<span>${ic}</span>`);
       b.title = label;
@@ -156,6 +158,7 @@ export class HUD {
       case 'build': return this.renderBuild(c);
       case 'goods': return this.renderGoods(c);
       case 'military': return this.renderMilitary(c);
+      case 'faith': return this.renderFaith(c);
       case 'stats': return this.renderStats(c);
       case 'settings': return this.renderSettings(c);
     }
@@ -199,6 +202,7 @@ export class HUD {
   }
 
   startPlacing(t: BuildingType | null) {
+    if (t) this.gr.casting = null;
     this.gr.placing = t;
     if (t && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
@@ -264,6 +268,58 @@ export class HUD {
     }
     c.appendChild(list);
     c.appendChild(h('p', 'note', 'To attack, select an enemy tower or castle within reach of your own military buildings and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>.'));
+  }
+
+  private renderFaith(c: HTMLElement) {
+    const g = this.game;
+    const p = g.players[g.local];
+    const st = faithStatus(g, g.local);
+    c.appendChild(h('h3', '', 'Favour of the gods'));
+    c.appendChild(h('div', 'mana-gauge', `<div class="mana-orb">✦</div><div class="mana-body"><div class="kv"><span>Mana</span><b>${Math.floor(p.mana)} / ${MANA_MAX}</b></div><div class="bar mana"><i style="width:${Math.round((p.mana / MANA_MAX) * 100)}%"></i></div></div>`));
+    c.appendChild(h('div', 'kv', `<span>Temples · priests serving</span><b>${st.temples} · ${st.priests}</b></div>`));
+    c.appendChild(h('div', 'kv', `<span>Great Temple</span><b>${st.great ? 'Consecrated' : '<span class="muted">none</span>'}</b>`));
+    c.appendChild(h('h3', '', 'Divine spells'));
+    const list = h('div', 'spells');
+    for (const id of SPELL_ORDER) {
+      const d = SPELLS[id];
+      const lock = !st.temples ? 'Needs a Temple' : d.great && !st.great ? 'Needs a Great Temple' : !st.priests ? 'No priest serving' : p.mana < d.cost ? `${Math.floor(p.mana)}/${d.cost} mana` : '';
+      const col = `rgb(${d.color.map((v) => Math.round(Math.min(1, v) * 255)).join(',')})`;
+      const card = h('button', 'spell' + (lock ? ' locked' : '') + (this.gr.casting === id ? ' on' : ''), `
+        <div class="sglyph" style="--sc:${col}">${d.glyph}</div>
+        <div class="sbody"><div class="sname">${d.name}<span class="scost">✦ ${d.cost}</span></div><div class="sdesc">${d.desc}</div>${lock ? `<div class="slock">${lock}</div>` : ''}</div>`);
+      card.onclick = () => {
+        if (lock) { this.message(lock, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+        this.startCasting(this.gr.casting === id ? null : id);
+      };
+      list.appendChild(card);
+    }
+    c.appendChild(list);
+    c.appendChild(h('p', 'note', 'A <b>Vineyard</b> makes wine. Carriers take it to a <b>Temple</b>, where the priest offers it to the gods as mana. Pick a spell, then click the ground within reach of your strongholds.'));
+  }
+
+  startCasting(id: SpellId | null) {
+    this.gr.casting = id;
+    if (id) this.gr.placing = null;
+    if (id && window.innerWidth <= 700) this.left.classList.remove('open');
+    this.audio.play('ui');
+    if (id) {
+      this.hint.innerHTML = `Casting <b>${SPELLS[id].name}</b> — click the ground to call it down · <b>Shift</b> keeps casting · <b>Esc</b>/right-click cancels`;
+      this.hint.classList.remove('hidden');
+    } else if (!this.gr.placing) this.hint.classList.add('hidden');
+    if (this.tab === 'faith') this.renderTab();
+  }
+
+  /** Cast the active spell at a ground point. Returns true on success. */
+  castAt(x: number, z: number, keep: boolean) {
+    const id = this.gr.casting;
+    if (!id) return false;
+    const g = this.game;
+    const err = castError(g, g.local, id, x, z);
+    if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); return false; }
+    castSpell(g, g.local, id, x, z);
+    if (!keep || g.players[g.local].mana < SPELLS[id].cost) this.startCasting(null);
+    else if (this.tab === 'faith') this.renderTab();
+    return true;
   }
 
   private renderStats(c: HTMLElement) {
@@ -606,7 +662,7 @@ export class HUD {
           const d = BUILDINGS[t];
           card.classList.toggle('poor', !(st.board >= d.cost.board && st.stone >= d.cost.stone));
         });
-      } else if (this.tab === 'military' || this.tab === 'goods') {
+      } else if (this.tab === 'military' || this.tab === 'goods' || this.tab === 'faith') {
         if (!this.content.matches(':hover')) this.renderTab();
       }
     }

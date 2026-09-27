@@ -29,6 +29,9 @@ export const OBJECTIVES: Objective[] = [
     progress: (g) => `${['ironsmelter', 'weaponsmith'].filter((t) => has(g, t as BuildingType)).length}/2` },
   { id: 'army', text: 'Train an army of 12 soldiers', hint: 'Barracks turn a carrier and a weapon into a soldier.', done: (g) => g.population(g.local).soldiers >= 12,
     progress: (g) => `${g.population(g.local).soldiers}/12` },
+  { id: 'faith', text: 'Win the favour of the gods', hint: 'Build a Vineyard and a Temple. The priest offers wine as mana — then cast a spell from the ✦ Faith tab.',
+    done: (g) => g.players[g.local].spellsCast > 0,
+    progress: (g) => `${[has(g, 'vineyard'), hasAny(g, ['temple', 'greattemple']), g.players[g.local].spellsCast > 0].filter(Boolean).length}/3` },
   { id: 'capture', text: 'Capture an enemy military building', hint: 'Select an enemy tower within reach and press Attack.', done: (g) => (g as any).__captured === true },
   { id: 'win', text: 'Conquer every rival kingdom', hint: 'Destroy or capture all enemy military buildings.', done: (g) => g.over && g.winner === g.local },
 ];

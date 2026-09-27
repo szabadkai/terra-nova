@@ -348,6 +348,60 @@ export class Audio {
       case 'ui':
         this.tone(t, 660, 0.06, 'triangle', 0.1, out, 880);
         break;
+      case 'chant': {
+        // a soft choir chord: detuned voices through a vowel-ish lowpass with vibrato
+        const ctx = this.ctx;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.value = 1100;
+        lp.Q.value = 0.7;
+        lp.connect(out);
+        const vib = ctx.createOscillator();
+        vib.frequency.value = 5.2;
+        const vibG = ctx.createGain();
+        vibG.gain.value = 3;
+        vib.connect(vibG);
+        vib.start(t);
+        vib.stop(t + 3.6);
+        for (const f of [220, 277.2, 329.6, 440, 554.4]) {
+          for (const det of [-6, 5]) {
+            const o = ctx.createOscillator();
+            o.type = 'sawtooth';
+            o.frequency.value = f;
+            o.detune.value = det;
+            vibG.connect(o.frequency);
+            const g = ctx.createGain();
+            g.gain.setValueAtTime(0.0001, t);
+            g.gain.linearRampToValueAtTime(0.018, t + 0.7);
+            g.gain.setValueAtTime(0.018, t + 1.8);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 3.4);
+            o.connect(g).connect(lp);
+            o.start(t);
+            o.stop(t + 3.5);
+          }
+        }
+        life = 4;
+        break;
+      }
+      case 'thunder':
+        this.noise(t, 0.09, 'highpass', 1800, 0.8, 0.7, out);
+        this.noise(t + 0.02, 0.35, 'bandpass', 700, 0.6, 0.5, out, 200);
+        this.noise(t + 0.05, 2.6, 'lowpass', 260, 0.9, 0.9, out, 50);
+        this.tone(t + 0.03, 55, 1.1, 'sine', 0.55, out, 32, 0.02);
+        life = 3.5;
+        break;
+      case 'chime':
+        [880, 1318.5, 1760].forEach((f, k) => {
+          this.tone(t + k * 0.09, f, 1.4, 'sine', 0.09, out);
+          this.tone(t + k * 0.09, f * 2.76, 0.6, 'sine', 0.03, out);
+        });
+        life = 2.5;
+        break;
+      case 'heal':
+        this.tone(t, 523.3, 0.9, 'triangle', 0.1, out, 1046.5, 0.05);
+        [659.3, 784, 1046.5, 1318.5].forEach((f, k) => this.tone(t + 0.15 + k * 0.08, f, 1.1, 'sine', 0.06, out));
+        life = 2.5;
+        break;
     }
     setTimeout(() => { try { out.disconnect(); pan.disconnect(); } catch { /* */ } }, life * 1000);
   }

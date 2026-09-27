@@ -118,6 +118,8 @@ const JOB_LOOK: Record<Job, JobLook> = {
   smelter: { hat: 'bandana', hatCol: 0x4a4a4a, apron: 0x6a4a30, beardy: 0.4 },
   toolsmith: { hat: 'cap', hatCol: 0x4a4a4a, apron: 0x6a4a30, beardy: 0.4 },
   weaponsmith: { hat: 'bandana', hatCol: 0x6a2a2a, apron: 0x6a4a30, beardy: 0.5 },
+  vintner: { hat: 'straw', hatCol: 0x9a6ab0, apron: 0x5a2448 },
+  priest: { hat: 'hood', hatCol: 0xf4efe2, apron: 0xf8f2e0, beardy: 0.6 },
   swordsman: { hat: 'helmet', hatCol: 0xb8bcc4 },
   bowman: { hat: 'hood', hatCol: 0x4a5a2a },
 };
@@ -453,7 +455,7 @@ export class SettlersRenderer {
       const pc = this.playerCols[s.owner] ?? this.white;
       const soldier = s.job === 'swordsman' || s.job === 'bowman';
       const tunic = this.cTunic.copy(pc);
-      if (!soldier && s.job !== 'carrier') tunic.lerp(this.cJob.set(JOB_LOOK[s.job].hatCol), 0.15);
+      if (!soldier && s.job !== 'carrier') tunic.lerp(this.cJob.set(JOB_LOOK[s.job].hatCol), s.job === 'priest' ? 0.8 : 0.15);
       tunic.multiplyScalar(L.tunicK);
       const sleeve = this.cSleeve.copy(tunic);
 

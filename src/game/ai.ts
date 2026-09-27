@@ -2,6 +2,7 @@
 import { BUILDINGS, BuildingType, MINE_ORE } from './defs';
 import type { Game } from './game';
 import { attackableSoldiers, launchAttack } from './military';
+import { SPELLS, castSpell, faithStatus } from './faith';
 import type { Building } from './types';
 
 interface Want { type: BuildingType; n: number; cond?: () => boolean; }
@@ -21,6 +22,8 @@ export class AIController {
   }
 
   private garrisonT = 5;
+  private castT = 8;
+  private unmannedSince = new Map<number, number>();
 
   update(dt: number) {
     const g = this.g;
@@ -32,6 +35,11 @@ export class AIController {
     if (this.garrisonT <= 0) {
       this.garrisonT = 10;
       this.manageGarrisons();
+    }
+    this.castT -= dt;
+    if (this.castT <= 0) {
+      this.castT = [6, 3, 2][this.level] ?? 3;
+      this.castStep();
     }
     if (this.t > 0) return;
     this.t = this.interval;
@@ -70,6 +78,7 @@ export class AIController {
       { type: 'fisher', n: 1, cond: () => this.waterInTerritory() > 8 },
       { type: 'hunter', n: 1 },
       { type: 'tower_s', n: 3, cond: () => t > 200 },
+      { type: 'stonecutter', n: 2, cond: () => t > 400 && this.stonesInTerritory() > 8 },
       { type: 'weaponsmith', n: 1 },
       { type: 'barracks', n: 1 },
       { type: 'farm', n: 1 },
@@ -89,21 +98,29 @@ export class AIController {
       { type: 'coalmine', n: 2, cond: () => hasOre('coal') },
       { type: 'goldmine', n: 1, cond: () => hasOre('gold') },
       { type: 'goldsmelter', n: 1, cond: () => c('goldmine') > 0 },
+      { type: 'vineyard', n: 1, cond: () => t > 1100 && c('weaponsmith') > 0 && stock.stone > 6 },
+      { type: 'temple', n: 1, cond: () => t > 1250 && c('vineyard') > 0 && stock.stone > 12 },
       { type: 'sawmill', n: 2 },
-      { type: 'stonemine', n: 1, cond: () => this.stonesInTerritory() < 3 && hasOre('stone') },
+      { type: 'stonemine', n: 1, cond: () => (this.stonesInTerritory() < 3 || (t > 1200 && stock.stone < 10)) && hasOre('stone') },
+      { type: 'stonecutter', n: 3, cond: () => t > 1200 && stock.stone < 12 && this.stonesInTerritory() > 12 },
       { type: 'residence_s', n: 3, cond: () => pop.idle < 5 },
       { type: 'tower_s', n: 6, cond: () => t > 500 },
       { type: 'tower_l', n: 3, cond: () => t > 800 },
       { type: 'ironmine', n: 2, cond: () => hasOre('iron') },
       { type: 'weaponsmith', n: 2, cond: () => t > 900 },
       { type: 'castle', n: 1, cond: () => t > 1200 },
+      { type: 'greattemple', n: 1, cond: () => this.level > 0 && t > 1800 && c('temple') > 0 && stock.stone > 20 },
+      { type: 'vineyard', n: 2, cond: () => t > 1900 && c('greattemple') > 0 },
     ];
     // expansion pressure (towards the enemy once an army exists)
-    if (this.expandT <= 0 && stock.board > 6 && stock.stone > 4) {
+    if (this.expandT <= 0 && stock.board >= 4 && stock.stone >= 2) {
       const army = this.enemyPressure();
       this.aggressive = army >= [16, 12, 8][this.level];
       this.expandT = (this.aggressive ? [150, 90, 60] : [240, 160, 100])[this.level] ?? 160;
-      if (this.tryPlace(g.time > 700 && g.rng.chance(0.4) ? 'tower_l' : 'tower_s', this.aggressive ? 'enemy' : undefined)) return;
+      // out of rocks and no quarry possible: grow towards the nearest outcrops first
+      const stoneStarved = stock.stone < 8 && this.stonesInTerritory() < 3;
+      const big = g.time > 700 && stock.stone >= 10 && g.rng.chance(0.4);
+      if (this.tryPlace(big ? 'tower_l' : 'tower_s', stoneStarved ? 'stone' : this.aggressive ? 'enemy' : undefined)) return;
     }
     // residences when out of carriers
     if (pop.idle < 2 && c('residence_s') + c('residence_m') < 8 && sites < maxSites) {
@@ -114,6 +131,8 @@ export class AIController {
       if (w.cond && !w.cond()) continue;
       const def = BUILDINGS[w.type];
       if (stock.board < def.cost.board * 0.5 && w.type !== 'sawmill' && w.type !== 'woodcutter') continue;
+      // keep a little stone back so the border can always move
+      if (!def.military && def.cost.stone > 0 && t > 600 && stock.stone - def.cost.stone < 3) continue;
       if (this.tryPlace(w.type)) return;
       // could not place: if it's a mine or water building, try expanding instead
       if (def.mine || w.type === 'fisher') {
@@ -185,7 +204,13 @@ export class AIController {
     for (const b of g.buildings.values()) {
       if (b.owner !== this.p || !b.def.military) continue;
       if (b.state !== 'done') { unmanned++; continue; }
-      if (!b.occupied) unmanned++;
+      if (!b.occupied) {
+        // a tower nobody can reach would block expansion forever: give up on it
+        const since = this.unmannedSince.get(b.id) ?? g.time;
+        this.unmannedSince.set(b.id, since);
+        if (g.time - since > 150 && !b.soldiersIncoming) { g.destroyBuilding(b, true); this.unmannedSince.delete(b.id); continue; }
+        unmanned++;
+      } else this.unmannedSince.delete(b.id);
       if (b.type === 'hq') reserve += Math.max(0, b.garrison.length - 2);
       else reserve += Math.max(0, b.garrison.length - b.desiredSoldiers);
     }
@@ -193,7 +218,7 @@ export class AIController {
     return unmanned === 0 && reserve > 0;
   }
 
-  private tryPlace(type: BuildingType, bias?: 'mountain' | 'water' | 'enemy'): boolean {
+  private tryPlace(type: BuildingType, bias?: 'mountain' | 'water' | 'enemy' | 'stone'): boolean {
     const g = this.g;
     if (BUILDINGS[type].military && !this.canExpand()) return false;
     const w = g.world;
@@ -253,13 +278,16 @@ export class AIController {
           if (bias === 'enemy' && ed < Infinity) score = -Math.hypot(cx - ex, cz - ez) * 1.6 - border * 1.5 - milNear * 12;
           if (bias === 'mountain') score += this.countMountain(cx, cz, 10) * 0.5;
           if (bias === 'water') score += this.countWater(cx, cz, 10, false) * 0.3;
+          if (bias === 'stone') score += this.countStones(cx, cz, 14) * 0.6;
           break;
         }
-        case 'farm': case 'pigfarm': score = -dHQ * 0.4 + this.freeLand(cx, cz, 5) * 0.4 - this.countTrees(cx, cz, 5); break;
+        case 'farm': case 'pigfarm': case 'vineyard': score = -dHQ * 0.4 + this.freeLand(cx, cz, 5) * 0.4 - this.countTrees(cx, cz, 5); break;
       }
       if (score > bs) { bs = score; best = a; }
     }
     if (!best) return false;
+    // settlers must be able to walk there from the headquarters
+    if (hq && def.military && !g.path.find(hq.door, g.doorOf(def.size, best.x, best.y), false, 12000)) return false;
     const b = g.placeBuilding(type, this.p, best.x, best.y);
     return !!b;
   }
@@ -316,6 +344,58 @@ export class AIController {
       }
     }
     return 16;
+  }
+
+  /** Priests at work: smite attackers, heal the wounded, speed up the forests. */
+  private castStep() {
+    const g = this.g;
+    const p = g.players[this.p];
+    if (p.mana < SPELLS.harvest.cost || p.spellCd > 0) return;
+    const st = faithStatus(g, this.p);
+    if (!st.priests) return;
+    if (st.great && this.level > 0) {
+      const foe = this.enemyCluster();
+      if (foe) {
+        if (this.level >= 2 && foe.n >= 3 && castSpell(g, this.p, 'convert', foe.x, foe.z)) return;
+        if (foe.n >= (this.level >= 2 ? 2 : 3) && castSpell(g, this.p, 'wrath', foe.x, foe.z)) return;
+      }
+    }
+    // heal wounded soldiers fighting in the field
+    let wx = 0, wz = 0, wn = 0;
+    for (const s of g.settlers.values()) {
+      if (s.owner !== this.p || s.hidden || s.dead || (s.job !== 'swordsman' && s.job !== 'bowman')) continue;
+      if (s.hp > s.maxHp * 0.6 || !s.engaged) continue;
+      wx += s.x; wz += s.z; wn++;
+    }
+    if (wn >= 2 && castSpell(g, this.p, 'heal', wx / wn, wz / wn)) return;
+    // spare mana: ripen a forest when wood runs low
+    const reserve = st.great ? SPELLS.wrath.cost + SPELLS.harvest.cost : SPELLS.heal.cost + SPELLS.harvest.cost;
+    const stock = g.totalStock(this.p);
+    if (p.mana >= reserve && stock.log + stock.board < 12) {
+      for (const b of g.buildings.values()) {
+        if (b.owner === this.p && b.type === 'forester' && b.state === 'done' && castSpell(g, this.p, 'harvest', b.cx, b.cz)) return;
+      }
+    }
+  }
+
+  /** The densest group of enemy soldiers marching on (or standing in) our land. */
+  private enemyCluster(): { x: number; z: number; n: number } | null {
+    const g = this.g;
+    const w = g.world;
+    const foes = [];
+    for (const s of g.settlers.values()) {
+      if (s.owner === this.p || s.hidden || s.dead || (s.job !== 'swordsman' && s.job !== 'bowman')) continue;
+      const i = w.idx(Math.round(s.x), Math.round(s.z));
+      if (w.owner[i] !== this.p && s.sstate !== 'attack') continue;
+      foes.push(s);
+    }
+    let best: { x: number; z: number; n: number } | null = null;
+    for (const a of foes) {
+      let n = 0, sx = 0, sz = 0;
+      for (const b of foes) if ((a.x - b.x) ** 2 + (a.z - b.z) ** 2 < 16) { n++; sx += b.x; sz += b.z; }
+      if (!best || n > best.n) best = { x: sx / n, z: sz / n, n };
+    }
+    return best;
   }
 
   private attackStep() {

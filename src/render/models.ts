@@ -400,6 +400,46 @@ export function buildWheatGeo(): THREE.BufferGeometry {
   return twoSidedUp(geo);
 }
 
+// ------------------------------------------------------------------ vines (one stake per node, rows run along z)
+export function buildVineGeos(): { plant: THREE.BufferGeometry; grapes: THREE.BufferGeometry } {
+  const wood = lin(0x6a4a2c), leafA = lin(0x4a7a26), leafB = lin(0x6e9a30);
+  const parts: THREE.BufferGeometry[] = [];
+  const stake = new THREE.BoxGeometry(0.035, 0.64, 0.035);
+  stake.translate(0, 0.32, 0);
+  parts.push(colorize(prep(stake), () => wood));
+  const wire = new THREE.BoxGeometry(0.01, 0.01, 1.0);
+  wire.translate(0, 0.52, 0);
+  parts.push(colorize(prep(wire), () => [0.28, 0.27, 0.25]));
+  const trunk = new THREE.CylinderGeometry(0.016, 0.03, 0.46, 5);
+  trunk.rotateZ(0.14);
+  trunk.translate(0.035, 0.23, 0.02);
+  parts.push(colorize(prep(trunk), () => wood));
+  for (let k = 0; k < 5; k++) {
+    const z = -0.4 + k * 0.2 + (hash2(k, 1, 33) - 0.5) * 0.06;
+    const y = 0.44 + hash2(k, 2, 33) * 0.1;
+    const b = blob(0.1 + hash2(k, 3, 33) * 0.04, (hash2(k, 4, 33) - 0.5) * 0.07, y, z, k + 3, 1, 0.85);
+    colorize(b, (x, yy, zz) => {
+      const c = hash2(Math.round(x * 50), Math.round(yy * 50) + Math.round(zz * 50) * 3, 7) < 0.5 ? leafA : leafB;
+      const kk = 0.7 + (yy - 0.34) * 1.4;
+      return [c[0] * kk, c[1] * kk, c[2] * kk];
+    });
+    parts.push(b);
+  }
+  const plant = merge(parts);
+  const gp: THREE.BufferGeometry[] = [];
+  for (let c = 0; c < 5; c++) {
+    const cz = -0.36 + c * 0.18 + (hash2(c, 5, 34) - 0.5) * 0.06;
+    const cx = (hash2(c, 6, 34) > 0.5 ? 1 : -1) * (0.11 + hash2(c, 7, 34) * 0.03);
+    for (let k = 0; k < 8; k++) {
+      const row = k < 3 ? 0 : k < 6 ? 1 : 2;
+      const sp = new THREE.IcosahedronGeometry(0.029, 0);
+      sp.translate(cx + (hash2(c, k, 35) - 0.5) * (0.07 - row * 0.016), 0.41 - row * 0.045, cz + (hash2(c, k, 37) - 0.5) * (0.07 - row * 0.016));
+      gp.push(colorize(prep(sp), () => [0.9, 0.9, 0.9]));
+    }
+  }
+  return { plant, grapes: merge(gp) };
+}
+
 export function buildGrassTuft(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   for (let k = 0; k < 7; k++) {
@@ -545,6 +585,21 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
   const hammer = merge([handle(0.26), metal(0.08, 0.05, 0.05, 0, 0.27, 0, 0x606468)]);
   const shovel = merge([handle(0.36), metal(0.08, 0.1, 0.012, 0, 0.4, 0)]);
   const scythe = merge([handle(0.42), metal(0.2, 0.02, 0.012, 0.09, 0.42, 0)]);
+  const amphora = (() => {
+    const prof = [[0.0, 0.0], [0.035, 0.012], [0.07, 0.06], [0.085, 0.12], [0.078, 0.18], [0.05, 0.23], [0.03, 0.26], [0.032, 0.29], [0.042, 0.3]]
+      .map(([r, y]) => new THREE.Vector2(r, y));
+    const body = new THREE.LatheGeometry(prof, 12);
+    const bc = lin(0xb4643a), band = lin(0x3a1c14);
+    colorize(body, (_x, y) => (y > 0.13 && y < 0.16 ? band : [bc[0] * (0.85 + y), bc[1] * (0.85 + y), bc[2] * (0.85 + y)]));
+    const hs: THREE.BufferGeometry[] = [];
+    for (const sx of [-1, 1]) {
+      const hdl = new THREE.TorusGeometry(0.035, 0.009, 5, 8, Math.PI);
+      hdl.rotateZ(sx > 0 ? -Math.PI / 2 : Math.PI / 2);
+      hdl.translate(sx * 0.045, 0.235, 0);
+      hs.push(c(hdl, 0xa85a34));
+    }
+    return merge([body, ...hs]);
+  })();
   const rod = merge([(() => { const g = new THREE.CylinderGeometry(0.006, 0.012, 0.6, 4); g.translate(0, 0.3, 0); return c(g, 0x9a7a50); })()]);
 
   return {
@@ -553,7 +608,7 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
     fish: merge([c(fish, 0xa8b8c0), c(fishTail, 0x8898a0)]), meat: merge([c(meat, 0xb03a30), c(bone, 0xf0e8d8)]),
     pig: merge([c(pig, 0xe8a898), c(pigHead, 0xe8a090)]), water: merge([c(bucket, 0x8a6a48), c(waterTop, 0x4a8ab0, 0.02)]),
     coal: lump(0x222224, 0), ironore: lump(0x8a4a30, 1), goldore: lump(0xc8a040, 2),
-    iron: bar(0x5a5e64), gold: bar(0xe8b840), sword, bow,
+    iron: bar(0x5a5e64), gold: bar(0xe8b840), sword, bow, wine: amphora,
     axe, pickaxe, saw, hammer, shovel, scythe, rod,
   };
 }

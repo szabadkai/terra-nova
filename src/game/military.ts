@@ -256,7 +256,7 @@ function enemySoldierNear(g: Game, s: Settler, range: number): Settler | null {
 
 function strength(g: Game, s: Settler) {
   const morale = g.players[s.owner]?.morale ?? 0;
-  return 1 + morale * 0.6 + s.level * 0.25;
+  return (1 + morale * 0.6 + s.level * 0.25) * (g.time < s.blessUntil ? 1.4 : 1);
 }
 
 function hit(g: Game, attacker: Settler, victim: Settler, dmg: number) {
