@@ -60,6 +60,7 @@ export class Game {
   stonesVersion = 1;
   fieldsVersion = 1;
   territoryDirty = true;
+  ownerVersion = 0;
   exploreT = 0;
   checkT = 0;
   deerT = 0;

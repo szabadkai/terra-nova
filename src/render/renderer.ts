@@ -18,6 +18,7 @@ import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
 import { setWindowGlow } from './materials';
 import { PlanarReflection } from './reflection';
+import { BordersRenderer } from './borders';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -118,6 +119,7 @@ export class GameRenderer {
     quality: 'high', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
   };
   reflection: PlanarReflection;
+  borders: BordersRenderer;
   // interaction state
   placing: BuildingType | null = null;
   hoverNode = -1;
@@ -180,6 +182,8 @@ export class GameRenderer {
     this.scene.add(this.particles.group);
     this.birds = new Birds(game.world.W, game.world.H);
     this.scene.add(this.birds.mesh);
+    this.borders = new BordersRenderer(game);
+    this.scene.add(this.borders.posts, this.borders.caps);
 
     this.ghostMat = new THREE.MeshStandardMaterial({ color: 0x66ff88, transparent: true, opacity: 0.55, emissive: new THREE.Color(0x114422), roughness: 0.6, depthWrite: false });
     const mg = new THREE.CylinderGeometry(0.13, 0.17, 0.05, 8);
@@ -223,6 +227,7 @@ export class GameRenderer {
     this.fx.enableAO(s.ao);
     this.sky.cycle = s.dayCycle;
     this.terrain.uniforms.uBorderOn.value = s.borders ? 1 : 0;
+    if (this.borders) { this.borders.posts.visible = s.borders; this.borders.caps.visible = s.borders; }
     this.resize();
   }
 
@@ -462,6 +467,21 @@ export class GameRenderer {
         if (night > 0.5 && (w.tree[i] || w.terrain[i] === 2 || w.terrain[i] === 1)) P.firefly(x, w.h[i] + 0.3 + Math.random() * 0.8, z);
       }
     }
+    // fish jumping out of lakes now and then
+    if (tick && Math.random() < 0.06) {
+      const x = Math.round(t.x + (Math.random() - 0.5) * R * 1.4), z = Math.round(t.z + (Math.random() - 0.5) * R * 1.2);
+      if (w.inBounds(x, z)) {
+        const i = w.idx(x, z);
+        if (w.isWater(i) && w.fish[i] > 0 && w.h[i] < WATER_LEVEL - 0.5 && w.explored[i]) {
+          const dir = Math.random() * Math.PI * 2;
+          P.splash(x, WATER_LEVEL, z);
+          P.emit({ x, y: WATER_LEVEL + 0.05, z, vx: Math.cos(dir) * 0.9, vz: Math.sin(dir) * 0.9, vy: 2.6, life: 0.62, size: 0.09, color: [0.85, 0.9, 0.95], alpha: 1, gravity: 8.2, drag: 0, kind: 1 });
+          const ex = x + Math.cos(dir) * 0.55, ez = z + Math.sin(dir) * 0.55;
+          setTimeout(() => P.splash(ex, WATER_LEVEL, ez), 600);
+          this.sound?.('splash', x, z, 0.35);
+        }
+      }
+    }
     // rain
     if (this.rainAmount > 0.02) {
       const n = Math.floor(this.rainAmount * 60 * dt * 60);
@@ -525,6 +545,7 @@ export class GameRenderer {
     this.particles.setAmbient(new THREE.Color(1, 1, 1).lerp(new THREE.Color(0.35, 0.4, 0.6), night));
 
     this.terrain.update(dt);
+    this.borders.update();
     this.trees.update(this.time);
     this.stones.update();
     this.fields.update();

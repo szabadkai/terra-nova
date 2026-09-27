@@ -31,6 +31,7 @@ export function recomputeTerritory(g: Game) {
     });
   }
   w.ownerDirty = true;
+  g.ownerVersion++;
   // buildings on foreign land burn down
   for (const b of g.buildings.values()) {
     if (b.state === 'burning') continue;
