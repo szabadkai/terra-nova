@@ -10,6 +10,7 @@ export class AIController {
   private t: number;
   private attackT: number;
   private expandT = 0;
+  private aggressive = false;
   constructor(private g: Game, public p: number, public level: number) {
     this.t = 2 + p;
     this.attackT = [600, 420, 280][level] ?? 420;
@@ -19,12 +20,19 @@ export class AIController {
     return [6, 4, 2.6][this.level] ?? 4;
   }
 
+  private garrisonT = 5;
+
   update(dt: number) {
     const g = this.g;
     if (!g.players[this.p].alive) return;
     this.t -= dt;
     this.attackT -= dt;
     this.expandT -= dt;
+    this.garrisonT -= dt;
+    if (this.garrisonT <= 0) {
+      this.garrisonT = 10;
+      this.manageGarrisons();
+    }
     if (this.t > 0) return;
     this.t = this.interval;
     this.buildStep();
@@ -90,10 +98,12 @@ export class AIController {
       { type: 'weaponsmith', n: 2, cond: () => t > 900 },
       { type: 'castle', n: 1, cond: () => t > 1200 },
     ];
-    // expansion pressure
+    // expansion pressure (towards the enemy once an army exists)
     if (this.expandT <= 0 && stock.board > 6 && stock.stone > 4) {
-      this.expandT = [240, 160, 100][this.level] ?? 160;
-      if (this.tryPlace(g.time > 700 && g.rng.chance(0.4) ? 'tower_l' : 'tower_s')) return;
+      const army = this.enemyPressure();
+      this.aggressive = army >= [16, 12, 8][this.level];
+      this.expandT = (this.aggressive ? [150, 90, 60] : [240, 160, 100])[this.level] ?? 160;
+      if (this.tryPlace(g.time > 700 && g.rng.chance(0.4) ? 'tower_l' : 'tower_s', this.aggressive ? 'enemy' : undefined)) return;
     }
     // residences when out of carriers
     if (pop.idle < 2 && c('residence_s') + c('residence_m') < 8 && sites < maxSites) {
@@ -147,6 +157,27 @@ export class AIController {
     return n;
   }
 
+  /** Interior towers keep a single guard; towers facing an enemy get a full garrison. */
+  private manageGarrisons() {
+    const g = this.g;
+    const enemyMil: { x: number; z: number }[] = [];
+    for (const b of g.buildings.values()) if (b.owner !== this.p && b.def.military && b.state === 'done') enemyMil.push({ x: b.cx, z: b.cz });
+    for (const b of g.buildings.values()) {
+      if (b.owner !== this.p || !b.def.military || b.type === 'hq' || b.state !== 'done') continue;
+      let d = Infinity;
+      for (const e of enemyMil) d = Math.min(d, Math.hypot(e.x - b.cx, e.z - b.cz));
+      const cap = b.def.military.capacity;
+      b.desiredSoldiers = d < 40 ? cap : d < 60 ? Math.max(1, Math.ceil(cap / 2)) : 1;
+    }
+  }
+
+  private enemyPressure(): number {
+    const g = this.g;
+    let mySoldiers = 0;
+    for (const s of g.settlers.values()) if (s.owner === this.p && (s.job === 'swordsman' || s.job === 'bowman') && !s.dead) mySoldiers++;
+    return mySoldiers;
+  }
+
   /** Only expand when a soldier can actually man the new tower. */
   private canExpand(): boolean {
     const g = this.g;
@@ -156,12 +187,13 @@ export class AIController {
       if (b.state !== 'done') { unmanned++; continue; }
       if (!b.occupied) unmanned++;
       if (b.type === 'hq') reserve += Math.max(0, b.garrison.length - 2);
+      else reserve += Math.max(0, b.garrison.length - b.desiredSoldiers);
     }
     for (const s of g.settlers.values()) if (s.owner === this.p && s.sstate === 'idle' && (s.job === 'swordsman' || s.job === 'bowman') && !s.dead) reserve++;
     return unmanned === 0 && reserve > 0;
   }
 
-  private tryPlace(type: BuildingType, bias?: 'mountain' | 'water'): boolean {
+  private tryPlace(type: BuildingType, bias?: 'mountain' | 'water' | 'enemy'): boolean {
     const g = this.g;
     if (BUILDINGS[type].military && !this.canExpand()) return false;
     const w = g.world;
@@ -218,6 +250,7 @@ export class AIController {
           const towards = ed < Infinity ? -Math.hypot(cx - ex, cz - ez) * 0.4 : 0;
           const milNear = this.countMilitaryNear(cx, cz, def.military!.radius * 0.8);
           score = -border * 3 + dHQ * 0.5 + towards - milNear * 15;
+          if (bias === 'enemy' && ed < Infinity) score = -Math.hypot(cx - ex, cz - ez) * 1.6 - border * 1.5 - milNear * 12;
           if (bias === 'mountain') score += this.countMountain(cx, cz, 10) * 0.5;
           if (bias === 'water') score += this.countWater(cx, cz, 10, false) * 0.3;
           break;
