@@ -91,7 +91,7 @@ const TERRAIN_MAP = /* glsl */ `
   // grass
   if (v[0] > 0.0) {
     vec3 c = mix(C(84,130,40), C(124,150,50), smoothstep(0.3, 0.75, n0.r));
-    c = mix(c, C(54,96,32), smoothstep(0.45, 0.8, n1.b) * 0.55);
+    c = mix(c, C(54,96,32), smoothstep(0.45, 0.8, n1.g) * 0.5);
     c *= 0.88 + 0.24 * mix(0.5, n4.r * 0.7 + n5.g * 0.3, farFade);
     c = mix(c, C(152,158,72), smoothstep(0.74, 0.95, n2.g) * 0.3);
     col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5) * 0.35 * v[0];
@@ -110,7 +110,7 @@ const TERRAIN_MAP = /* glsl */ `
   if (v[2] > 0.0) {
     vec3 c = mix(C(62,98,34), C(74,92,38), smoothstep(0.35, 0.7, n2.r));
     c = mix(c, C(96,82,44), smoothstep(0.62, 0.9, n3.a) * 0.4);
-    c = mix(c, C(48,78,30), smoothstep(0.5, 0.8, n1.b) * 0.5);
+    c = mix(c, C(48,78,30), smoothstep(0.5, 0.8, n0.g) * 0.5);
     c *= 0.86 + 0.26 * mix(0.5, n4.b, farFade);
     col += c * v[2]; rough += 0.97 * v[2]; bump += n4.b * 0.4 * v[2];
   }
@@ -137,7 +137,7 @@ const TERRAIN_MAP = /* glsl */ `
     float strata = sin(vWPos.y * 3.6 + n1.r * 4.0 + n2.g * 1.5) * 0.5 + 0.5;
     vec3 c = mix(C(96,90,82), C(128,120,108), strata * 0.45 + n2.b * 0.35 + n3.r * 0.2);
     c = mix(c, C(80,76,72), smoothstep(0.55, 0.8, n1.g) * 0.45);
-    c = mix(c, C(118,100,82), smoothstep(0.6, 0.85, n0.b) * 0.35);
+    c = mix(c, C(118,100,82), smoothstep(0.6, 0.85, n0.r) * 0.35);
     float crack = (1.0 - smoothstep(0.0, 0.1, n3.b)) * step(0.55, n3.a) * 0.6 * farFade;
     c *= 1.0 - crack * 0.35;
     c *= 0.9 + 0.2 * n4.g * farFade;
@@ -167,7 +167,7 @@ const TERRAIN_MAP = /* glsl */ `
   // swamp
   if (v[7] > 0.0) {
     vec3 c = mix(C(70,80,42), C(56,62,38), n2.g);
-    float pud = (1.0 - smoothstep(0.36, 0.44, n1.b + (n3.r - 0.5) * 0.1));
+    float pud = (1.0 - smoothstep(0.36, 0.44, n1.g + (n3.r - 0.5) * 0.1));
     c = mix(c, C(34,46,44), pud * 0.85);
     col += c * v[7]; rough += mix(0.9, 0.08, pud) * v[7]; bump += (1.0 - pud) * n3.r * 0.4 * v[7];
   }

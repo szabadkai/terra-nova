@@ -254,7 +254,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
       const t = world.terrain[i];
       let p = 0;
       const sn = nStone.noise(x * 0.09, y * 0.09);
-      if (sn > 0.62 && t !== T_SWAMP) p = 0.35;
+      if (sn > 0.66 && t !== T_SWAMP) p = 0.24;
       if ((t === T_ROCK) && world.slopeAt(i) < 0.7 && sn > 0.3) p = Math.max(p, 0.05);
       for (const Rk of rocks) if (Math.hypot(x - Rk.x, y - Rk.y) < Rk.r) p = 0.55;
       if (!rng.chance(p)) continue;
