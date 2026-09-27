@@ -9,7 +9,7 @@ import { patchMaterial } from './shaderPatch';
 import { BANNER_COLORS } from './materials';
 import { HAIR_STYLES, HATS, HairStyle, Hat, RIG, buildSettlerGeos } from './settlerModels';
 
-const SCALE = 1.06;
+const SCALE = 1.1;
 
 /** Settler shader: per-vertex choice of tint (see settlerModels) plus metal/gloss flags and a soft rim light. */
 function settlerMaterial() {
@@ -499,8 +499,8 @@ export class SettlersRenderer {
         this.tools.get(tool)!.add(m);
       }
       if (s.job === 'swordsman') {
-        const m = this.mB.copy(this.mArmL).multiply(this.mA.makeTranslation(-0.045, -0.11, 0.035));
-        m.multiply(this.mA.makeRotationY(-0.35));
+        const m = this.mB.copy(this.mArmL).multiply(this.mA.makeTranslation(-0.05, -0.11, 0.02));
+        m.multiply(this.mA.makeRotationY(-1.05));
         this.shields.add(m, pc);
       }
       // --- carried good, hugged against the chest

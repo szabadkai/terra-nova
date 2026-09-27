@@ -83,12 +83,30 @@ function setupInput() {
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
   canvas.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; downBtn = e.button; });
+  let tipT = 0;
   canvas.addEventListener('pointermove', (e) => {
     if (state !== 'play') return;
     const p = gr.pickGround(e.clientX, e.clientY);
     gr.hoverNode = gr.pickNode(p);
     gr.hoverPoint = p;
+    // hover tooltip for buildings (throttled)
+    const now = performance.now();
+    if (!hud || gr.placing || e.buttons) { hud?.hideTip(); return; }
+    if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
+    tipT = now;
+    const b = gr.pickBuilding(e.clientX, e.clientY);
+    const w = game.world;
+    if (b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))]) {
+      const owner = game.players[b.owner];
+      const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
+      hud.showTip(e, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}`);
+      canvas.style.cursor = 'pointer';
+    } else {
+      hud.hideTip();
+      canvas.style.cursor = '';
+    }
   });
+  canvas.addEventListener('pointerleave', () => hud?.hideTip());
   canvas.addEventListener('pointerup', (e) => {
     if (state !== 'play' || !hud) return;
     const moved = Math.hypot(e.clientX - downX, e.clientY - downY) > 6;

@@ -1,4 +1,4 @@
-// Procedural geometry for trees, rocks, crops, grass, settlers, animals and goods.
+// Procedural geometry for trees, rocks, crops, grass, animals and goods (settlers: settlerModels.ts).
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';

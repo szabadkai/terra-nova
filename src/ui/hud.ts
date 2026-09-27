@@ -10,6 +10,7 @@ import type { Audio } from '../audio/audio';
 import { attackableSoldiers, launchAttack } from '../game/military';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
+import { Objectives } from './objectives';
 
 const h = (tag: string, cls = '', html = '') => {
   const e = document.createElement(tag);
@@ -40,6 +41,7 @@ export class HUD {
   private tab: Tab = 'build';
   private cat: Category = 'basic';
   minimap!: Minimap;
+  objectives!: Objectives;
   private t = 0;
   private infoT = 0;
   private attackCount = 5;
@@ -61,6 +63,10 @@ export class HUD {
     this.root.appendChild(this.tip);
     this.hint = h('div', 'hint hidden');
     this.root.appendChild(this.hint);
+    this.objectives = new Objectives(this.game, this.root, (text) => {
+      this.message(`✔ Objective complete: ${text}`, undefined, undefined, 'good');
+      this.audio.play('built');
+    });
     this.renderTab();
   }
 
@@ -547,6 +553,7 @@ export class HUD {
   }
 
   onEvent(e: GameEvent) {
+    this.objectives.noteEvent(e.type, e.owner);
     if (e.type === 'msg' && e.text) this.message(e.text, e.x, e.z, e.kind);
     if (e.type === 'defeated' && e.text) this.message(e.text, undefined, undefined, e.owner === this.game.local ? 'bad' : 'good');
     if (e.type === 'gameover') this.gameOver(e.owner === this.game.local);
@@ -581,6 +588,7 @@ export class HUD {
     this.t -= dt;
     this.infoT -= dt;
     this.minimap.update(dt);
+    this.objectives.update(dt);
     if (this.t <= 0) {
       this.t = 0.5;
       this.refreshTop();

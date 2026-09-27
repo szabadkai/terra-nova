@@ -134,7 +134,7 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
 
 
 /* ------------------------------------------------ messages, tooltip, hint */
-.msgs { position: fixed; top: 64px; right: 12px; width: 340px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.msgs { position: fixed; top: 150px; right: 12px; width: 320px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
 .msg { pointer-events: auto; padding: 8px 12px; border-radius: 10px; background: rgba(20, 14, 10, 0.82); border: 1px solid var(--line); border-left: 4px solid var(--gold); font-size: 12.5px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); animation: slidein .35s ease-out; transition: opacity 1s, transform 1s; backdrop-filter: blur(8px); }
 .msg.good { border-left-color: var(--good); }
 .msg.bad { border-left-color: var(--bad); }
@@ -184,3 +184,18 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
   .info { width: calc(100vw - 280px); }
 }
 .slider-row .ci + label { width: 92px; flex: none; }
+
+/* ------------------------------------------------ objectives */
+.objectives { position: fixed; top: 62px; right: 12px; width: 320px; padding: 9px 12px 10px; cursor: pointer; user-select: none; }
+.objectives .ohead { display: flex; align-items: center; gap: 6px; font-family: var(--font-title); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--gold); }
+.objectives .ochev { margin-left: auto; color: var(--muted); }
+.crest-s { color: var(--gold); font-size: 14px; }
+.objectives .otext { font-weight: 600; margin-top: 4px; font-size: 13px; }
+.objectives .prog { color: var(--gold); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.objectives .ohint { color: var(--muted); font-size: 11.5px; margin-top: 2px; line-height: 1.4; }
+.objectives .obar { height: 4px; background: rgba(0,0,0,.4); border-radius: 2px; margin-top: 7px; overflow: hidden; }
+.objectives .obar i { display: block; height: 100%; background: linear-gradient(90deg, #d9a640, #f5d98a); }
+.objectives .olist { margin: 8px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+.objectives .olist li.done { color: var(--good); text-decoration: line-through; opacity: .75; }
+.objectives .olist li.cur { color: var(--text); font-weight: 600; }
+@media (max-width: 900px) { .objectives { top: 10px; left: 262px; right: 10px; width: auto; } .msgs { top: 110px; } }

@@ -220,29 +220,22 @@ export class Audio {
   }
 
   private pluck(t: number, freq: number, dur: number, peak: number, out: AudioNode) {
-    // Karplus-Strong-ish pluck via short noise burst into a resonant comb
+    // Plucked string: a sawtooth whose lowpass closes as it decays. No feedback loop, so it can't
+    // run away (the old comb-filter version had a loop gain above 1 and screamed at ~2.2 kHz).
     const ctx = this.ctx!;
-    const delay = ctx.createDelay(0.05);
-    delay.delayTime.value = 1 / freq;
-    const fb = ctx.createGain();
-    fb.gain.value = 0.96;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = freq;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 2800;
-    delay.connect(lp).connect(fb).connect(delay);
-    const src = ctx.createBufferSource();
-    src.buffer = this.noiseBuf;
-    const eg = ctx.createGain();
-    eg.gain.setValueAtTime(peak, t);
-    eg.gain.exponentialRampToValueAtTime(0.0001, t + 0.02);
-    const outG = ctx.createGain();
-    outG.gain.setValueAtTime(1, t);
-    outG.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(eg).connect(delay);
-    delay.connect(outG).connect(out);
-    src.start(t, Math.random());
-    src.stop(t + 0.03);
-    setTimeout(() => { try { delay.disconnect(); fb.disconnect(); lp.disconnect(); outG.disconnect(); } catch { /* */ } }, (dur + 0.5) * 1000);
+    lp.Q.value = -3; // Butterworth: no resonant peak
+    lp.frequency.setValueAtTime(Math.min(freq * 6, 2500), t);
+    lp.frequency.exponentialRampToValueAtTime(freq * 1.2, t + dur * 0.6);
+    const g = ctx.createGain();
+    this.env(g, t, 0.004, peak * 0.5, dur);
+    o.connect(lp).connect(g).connect(out);
+    o.start(t);
+    o.stop(t + dur + 0.05);
   }
 
   play(name: string, x?: number, z?: number, vol = 1) {

@@ -1,6 +1,6 @@
 // Economy: logistics dispatch, construction, worker recruitment, production.
 import {
-  BUILDINGS, FOODS, GOODS, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WEAPONS,
+  BUILDINGS, FOODS, GOODS, GOOD_NAMES, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WEAPONS,
 } from './defs';
 import type { Game } from './game';
 import { OUT_CAP } from './game';
@@ -133,7 +133,7 @@ function updateProduction(g: Game, b: Building, dt: number) {
     if (outCount >= OUT_CAP) { b.status = 'Output storage full'; return; }
     for (const inp of def.inputs ?? []) {
       if (!hasInput(b, inp.goods)) {
-        b.status = `Waiting for ${inp.goods.length > 1 ? 'food' : inp.goods[0]}`;
+        b.status = `Waiting for ${inp.goods.length > 1 ? 'food' : GOOD_NAMES[inp.goods[0]].toLowerCase()}`;
         return;
       }
     }
@@ -531,7 +531,7 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
     const tool = JOB_TOOL[job];
     if (tool) {
       const src = findToolSource(g, owner, tool, b.cx, b.cz);
-      if (!src) { b.status = `Missing tool: ${tool}`; continue; }
+      if (!src) { b.status = `Missing tool: ${GOOD_NAMES[tool].replace(/s$/, '').toLowerCase()}`; continue; }
       const c = nearestCarrier(carriers, src.cx, src.cz);
       if (!c) continue;
       equip(g, c, src, tool, job, b);
@@ -644,7 +644,7 @@ export function builderThink(g: Game, s: Settler, dt: number) {
       b.used++;
       consumed = true;
     }),
-    A.anim('hammer', 3.2, center, (t) => { if (Math.floor(t * 2.5) !== Math.floor((t - 0.05) * 2.5)) g.emit({ type: 'hammer', x: s.x, z: s.z }); }),
+    A.anim('hammer', 4.4, center, (t) => { if (Math.floor(t * 2.5) !== Math.floor((t - 0.05) * 2.5)) g.emit({ type: 'hammer', x: s.x, z: s.z }); }),
     A.do(() => {
       if (!g.buildings.has(b.id) || b.state !== 'building') return false;
       b.buildWork++;
