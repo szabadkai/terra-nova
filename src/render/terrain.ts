@@ -51,7 +51,7 @@ const TERRAIN_MAP = /* glsl */ `
   vec2 pr2 = mat2(0.28, -0.96, 0.96, 0.28) * p;
   vec4 n4 = texture2D(tNoise, pr1 * 1.73 + vec2(0.47, 0.29));
   vec4 n5 = texture2D(tNoise, pr2 * 4.9 + vec2(0.77, 0.19));
-  float farFade = smoothstep(90.0, 30.0, camDist);
+  float farFade = (1.0 - smoothstep(30.0, 90.0, camDist));
 
   float slope = 1.0 - clamp(vWNormal.y, 0.0, 1.0);
   float wh = vWPos.y - uWaterLevel;
@@ -100,8 +100,8 @@ const TERRAIN_MAP = /* glsl */ `
   if (v[1] > 0.0) {
     vec3 c = mix(C(106,150,48), C(142,166,62), n0.g);
     c *= 0.88 + 0.24 * mix(0.5, n4.g, farFade);
-    vec4 fl = texture2D(tNoise, p * 4.1 + vec2(0.2, 0.9));
-    float f = smoothstep(0.2, 0.08, fl.b) * step(0.56, fl.a) * farFade;
+    vec4 fl = texture2D(tNoise, pr1 * 0.62 + vec2(0.2, 0.9));
+    float f = (1.0 - smoothstep(0.14, 0.3, fl.b)) * step(0.5, fl.a) * farFade;
     vec3 fc = fl.a > 0.88 ? C(248,244,236) : fl.a > 0.78 ? C(252,212,58) : fl.a > 0.67 ? C(176,118,222) : C(232,96,84);
     c = mix(c, fc, f);
     col += c * v[1]; rough += 0.93 * v[1]; bump += (n4.g * 0.4 + f * 0.6) * 0.35 * v[1];
@@ -118,7 +118,7 @@ const TERRAIN_MAP = /* glsl */ `
   if (v[3] > 0.0) {
     vec3 c = mix(C(116,86,56), C(142,110,74), n2.g);
     c *= 0.84 + 0.28 * n3.r;
-    float peb = smoothstep(0.24, 0.1, n4.b) * step(0.45, n4.a) * farFade;
+    float peb = (1.0 - smoothstep(0.1, 0.24, n3.b)) * step(0.45, n3.a) * farFade;
     c = mix(c, C(156,146,130), peb * 0.65);
     c = mix(c, c * 0.8, pathM * 0.35 * (1.0 - n4.r));
     col += c * v[3]; rough += 0.95 * v[3]; bump += (n3.r * 0.4 + peb * 0.8) * 0.4 * v[3];
@@ -134,22 +134,27 @@ const TERRAIN_MAP = /* glsl */ `
   }
   // rock
   if (v[5] > 0.0) {
-    float strata = sin(vWPos.y * 4.2 + n1.r * 5.0 + n2.g * 2.0) * 0.5 + 0.5;
-    vec3 c = mix(C(112,106,98), C(152,144,130), strata * 0.55 + n2.b * 0.45);
-    c = mix(c, C(92,88,84), smoothstep(0.55, 0.8, n1.g) * 0.5);
-    float crack = smoothstep(0.04, 0.0, abs(n2.r - 0.5)) + smoothstep(0.03, 0.0, abs(n3.g - 0.5)) * 0.7;
-    c *= 1.0 - crack * 0.5;
-    c = mix(c, C(106,118,66), smoothstep(0.68, 0.9, n3.b) * (1.0 - slope) * 0.55);
+    float strata = sin(vWPos.y * 3.6 + n1.r * 4.0 + n2.g * 1.5) * 0.5 + 0.5;
+    vec3 c = mix(C(96,90,82), C(128,120,108), strata * 0.45 + n2.b * 0.35 + n3.r * 0.2);
+    c = mix(c, C(80,76,72), smoothstep(0.55, 0.8, n1.g) * 0.45);
+    c = mix(c, C(118,100,82), smoothstep(0.6, 0.85, n0.b) * 0.35);
+    float crack = (1.0 - smoothstep(0.0, 0.1, n3.b)) * step(0.55, n3.a) * 0.6 * farFade;
+    c *= 1.0 - crack * 0.35;
+    c *= 0.9 + 0.2 * n4.g * farFade;
+    c = mix(c, C(96,110,58), smoothstep(0.66, 0.9, n3.b) * (1.0 - slope) * 0.55);
     // ore specks
     vec4 ore = texture2D(tOre, muv);
-    float spk = smoothstep(0.3, 0.12, n5.b) * step(0.5, n5.a) * farFade;
-    float spk2 = smoothstep(0.3, 0.1, n4.b) * step(0.7, n4.a);
+    vec2 warp = (vec2(n2.g, n2.b) - 0.5) * 0.9;
+    vec4 on1 = texture2D(tNoise, (pr2 + warp) * 0.42 + vec2(0.13, 0.57));
+    vec4 on2 = texture2D(tNoise, (pr1 - warp) * 0.23 + vec2(0.71, 0.33));
+    float spk = (1.0 - smoothstep(0.08, 0.2, on1.b + n3.r * 0.08)) * step(0.62, on1.a) * farFade;
+    float spk2 = (1.0 - smoothstep(0.06, 0.18, on2.b + n3.g * 0.08)) * step(0.78, on2.a);
     c = mix(c, C(28,26,28), clamp(ore.r * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
     c = mix(c, C(168,78,44), clamp(ore.g * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
     c = mix(c, C(214,206,196), clamp(ore.a * 2.0, 0.0, 1.0) * spk2 * 0.8);
     float gold = clamp(ore.b * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6);
     c = mix(c, C(250,200,60), gold);
-    tEmis += C(255,190,60) * gold * pow(n5.r, 6.0) * 3.0 * (0.5 + 0.5 * sin(uTime * 3.0 + n5.a * 40.0));
+    tEmis += C(255,190,60) * gold * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(uTime * 2.5 + on1.a * 40.0), 8.0)) * 1.4;
     col += c * v[5]; rough += mix(0.72, 0.3, gold) * v[5]; bump += (n1.r * 0.3 + n2.r * 0.5 + n3.g * 0.3 - crack * 0.6) * 1.1 * v[5];
   }
   // snow
@@ -162,7 +167,7 @@ const TERRAIN_MAP = /* glsl */ `
   // swamp
   if (v[7] > 0.0) {
     vec3 c = mix(C(70,80,42), C(56,62,38), n2.g);
-    float pud = smoothstep(0.44, 0.36, n1.b + (n3.r - 0.5) * 0.1);
+    float pud = (1.0 - smoothstep(0.36, 0.44, n1.b + (n3.r - 0.5) * 0.1));
     c = mix(c, C(34,46,44), pud * 0.85);
     col += c * v[7]; rough += mix(0.9, 0.08, pud) * v[7]; bump += (1.0 - pud) * n3.r * 0.4 * v[7];
   }
@@ -183,7 +188,7 @@ const TERRAIN_MAP = /* glsl */ `
     vec2 cp = p * 0.55;
     float c1 = texture2D(tNoise, cp + vec2(uTime * 0.021, uTime * 0.013)).b;
     float c2 = texture2D(tNoise, cp * 1.31 - vec2(uTime * 0.017, -uTime * 0.02)).b;
-    float caust = smoothstep(0.4, 0.05, abs(c1 - c2)) ;
+    float caust = (1.0 - smoothstep(0.05, 0.4, abs(c1 - c2))) ;
     tEmis += vec3(0.55, 0.85, 0.8) * caust * 0.22 * uSunI * (1.0 - smoothstep(0.0, 2.6, depth)) * smoothstep(0.0, 0.25, depth);
     rough = 0.6;
   }
@@ -211,7 +216,7 @@ const TERRAIN_MAP = /* glsl */ `
   // selection ring
   if (uSel.w > 0.0) {
     float d = length(p - uSel.xz);
-    float ring = smoothstep(0.09, 0.0, abs(d - uSel.w)) + smoothstep(0.35, 0.0, abs(d - uSel.w)) * 0.3;
+    float ring = (1.0 - smoothstep(0.0, 0.09, abs(d - uSel.w))) + (1.0 - smoothstep(0.0, 0.35, abs(d - uSel.w))) * 0.3;
     tEmis += vec3(1.0, 0.85, 0.35) * ring * (0.7 + 0.3 * sin(uTime * 5.0));
   }
   // work range circle
@@ -219,7 +224,7 @@ const TERRAIN_MAP = /* glsl */ `
     float d = length(p - uRange.xz);
     float ang = atan(p.y - uRange.z, p.x - uRange.x);
     float dash = step(0.5, fract(ang * uRange.w * 0.8 / 6.2831 * 2.0 + uTime * 0.2));
-    float ring = smoothstep(0.1, 0.0, abs(d - uRange.w)) * dash;
+    float ring = (1.0 - smoothstep(0.0, 0.1, abs(d - uRange.w))) * dash;
     float fill = (1.0 - smoothstep(uRange.w - 0.2, uRange.w, d)) * 0.05;
     tEmis += vec3(0.45, 0.85, 1.0) * (ring * 0.9 + fill);
   }
@@ -241,7 +246,7 @@ const TERRAIN_NORMAL = /* glsl */ `
     vec3 r1 = cross(dpy, normal);
     vec3 r2 = cross(normal, dpx);
     float det = dot(dpx, r1);
-    float scale = 0.9 * smoothstep(80.0, 15.0, length(vViewPosition));
+    float scale = 0.9 * (1.0 - smoothstep(15.0, 80.0, length(vViewPosition)));
     vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
     normal = normalize(abs(det) * normal - grad * scale);
   }

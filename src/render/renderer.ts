@@ -258,7 +258,7 @@ export class GameRenderer {
     let best: Settler | null = null, bd = maxPx * maxPx;
     const v = new THREE.Vector3();
     for (const it of this.settlers.visibleList) {
-      v.set(it.x, it.y + 0.35, it.z).project(this.cam.camera);
+      v.set(it.x, it.y + 0.45, it.z).project(this.cam.camera);
       const sx = (v.x * 0.5 + 0.5) * r.width + r.left, sy = (-v.y * 0.5 + 0.5) * r.height + r.top;
       const d = (sx - clientX) ** 2 + (sy - clientY) ** 2;
       if (d < bd) { bd = d; best = it.s; }
@@ -384,7 +384,7 @@ export class GameRenderer {
         case 'splash': P.splash(x, WATER_LEVEL, z); snd('splash', 0.6); break;
         case 'cast': P.splash(x, WATER_LEVEL, z); break;
         case 'harvest': P.emit({ x, y: y + 0.3, z, vy: 0.6, spread: 1, life: 1.2, size: 0.05, color: [0.95, 0.8, 0.4], gravity: 1.5, count: 10, kind: 1 }); snd('harvest', 0.6); break;
-        case 'plant': P.dust(x, y, z, 4, [0.45, 0.35, 0.25]); break;
+        case 'plant': P.dust(x, y, z, 4, [0.45, 0.35, 0.25]); snd('plant', 0.6); break;
         case 'swing': snd('swing', 0.7); break;
         case 'hit': P.hit(x, y + 0.4, z); snd('hit'); break;
         case 'parry': P.sparks(x, y + 0.45, z, 5); snd('clang', 0.6); break;
@@ -441,6 +441,7 @@ export class GameRenderer {
           }
         }
         if (b.type === 'sawmill' && Math.random() < 0.4) P.emit({ x: b.cx + 0.97, y: by + 0.4, z: b.cz + 0.15, vy: 0.5, spread: 0.8, life: 0.8, size: 0.04, color: [0.9, 0.78, 0.55], gravity: 2, count: 3, kind: 1 });
+        if (b.type === 'sawmill' && Math.random() < 0.07) this.sound?.('saw', b.cx, b.cz, 0.5);
       }
     }
     // fireflies near forests at night & butterflies by day

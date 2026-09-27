@@ -77,7 +77,7 @@ vec3 nightLights(vec3 wp) {
     float dist2 = dot(d, d);
     float r = 3.2 + L.w * 1.6;
     float att = L.w / (1.0 + dist2 * 1.1);
-    att *= smoothstep(r * r, 0.0, dist2);
+    att *= 1.0 - smoothstep(0.0, r * r, dist2);
     acc += att;
   }
   return acc * uLightColor;

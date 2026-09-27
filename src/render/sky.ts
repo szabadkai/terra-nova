@@ -84,7 +84,7 @@ export class Sky {
           vec3 d = normalize(vDir);
           float h = d.y;
           vec3 col = mix(uHorizon, uZenith, pow(clamp(h, 0.0, 1.0), 0.6));
-          col = mix(col, uGround, smoothstep(0.0, -0.25, h));
+          col = mix(col, uGround, (1.0 - smoothstep(-0.25, 0.0, h)));
           float s = max(dot(d, uSunDir), 0.0);
           col += uSunCol * (pow(s, 600.0) * 30.0 + pow(s, 12.0) * 0.5);
           gl_FragColor = vec4(col, 1.0);

@@ -1,6 +1,6 @@
 // Procedural geometry for trees, rocks, crops, grass, settlers, animals and goods.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
 import type { Good } from '../game/defs';
 
@@ -297,27 +297,56 @@ export function buildRockGeos(): THREE.BufferGeometry[] {
     const parts: THREE.BufferGeometry[] = [];
     const n = 3 + v;
     for (let k = 0; k < n; k++) {
-      const r = 0.28 + hash2(k, v, 3) * 0.22;
-      const g = new THREE.DodecahedronGeometry(r, 1);
+      const r = 0.26 + hash2(k, v, 3) * 0.24;
+      // indexed icosphere, randomly displaced; normals are a blend of flat + smooth
+      let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(r, 2);
+      g.deleteAttribute('normal');
+      g.deleteAttribute('uv');
+      g = mergeVertices(g);
       const p = g.getAttribute('position') as THREE.BufferAttribute;
+      const sx = 0.8 + hash2(k, v, 11) * 0.5, sz = 0.8 + hash2(k, v, 12) * 0.5;
       for (let i = 0; i < p.count; i++) {
         const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-        const m = 0.8 + 0.3 * Math.abs(Math.sin(x * 11 + k) * Math.cos(z * 9 + y * 5 + v));
-        p.setXYZ(i, x * m, y * m * 0.75, z * m);
+        const q = (a: number) => Math.round(a * 60);
+        const rnd = hash2(q(x) + q(z) * 7, q(y) + k * 31, v * 13 + 5);
+        const low = Math.sin(x * 7 + k * 3) * Math.cos(z * 6 + y * 3 + v) * 0.1;
+        let m = 1 + (rnd - 0.5) * 0.28 + low;
+        let yy = y * m * 0.72;
+        if (yy > r * 0.45) yy = r * 0.45 + (yy - r * 0.45) * 0.35; // flattened top
+        p.setXYZ(i, x * m * sx, yy, z * m * sz);
       }
-      const a = (k / n) * Math.PI * 2 + v;
-      const d = k === 0 ? 0 : 0.32;
-      g.translate(Math.cos(a) * d, r * 0.45, Math.sin(a) * d);
       g.computeVertexNormals();
+      const smooth = g.getAttribute('normal').clone() as THREE.BufferAttribute;
+      const flat = g.toNonIndexed();
+      flat.computeVertexNormals();
+      // blend flat face normals with the smooth ones for chiselled but natural stone
+      const idx = g.index!.array;
+      const fn = flat.getAttribute('normal') as THREE.BufferAttribute;
+      for (let t = 0; t < idx.length; t++) {
+        const si = idx[t];
+        const nx = fn.getX(t) * 0.55 + smooth.getX(si) * 0.45, ny = fn.getY(t) * 0.55 + smooth.getY(si) * 0.45, nz = fn.getZ(t) * 0.55 + smooth.getZ(si) * 0.45;
+        const l = Math.hypot(nx, ny, nz);
+        fn.setXYZ(t, nx / l, ny / l, nz / l);
+      }
+      g = flat;
+      const a = (k / n) * Math.PI * 2 + v;
+      const d = k === 0 ? 0 : 0.34;
+      g.translate(Math.cos(a) * d, r * 0.4, Math.sin(a) * d);
       parts.push(g);
     }
     const geo = merge(parts);
+    const nrm = geo.getAttribute('normal') as THREE.BufferAttribute;
+    let vi = 0;
     colorize(geo, (x, y, z) => {
-      const h = hash2(Math.round(x * 30), Math.round(z * 30) + Math.round(y * 30) * 3, v);
-      const base = 0.1 + h * 0.06 + y * 0.03;
-      const warm = hash2(Math.round(x * 7), Math.round(z * 7), v + 9);
-      const moss = y > 0.3 && h > 0.7 ? 1 : 0;
-      return moss ? [0.05, 0.08, 0.02] : [base * (1.0 + warm * 0.12), base * 0.97, base * (0.88 - warm * 0.08)];
+      const ny = nrm.getY(vi++);
+      const h = hash2(Math.round(x * 14), Math.round(z * 14) + Math.round(y * 14) * 3, v);
+      const base = 0.13 + h * 0.05 + Math.max(0, y) * 0.05;
+      const warm = hash2(Math.round(x * 5), Math.round(z * 5), v + 9);
+      // crevices (downward facing / low) darker, lichen on upward facing tops
+      const crev = THREE.MathUtils.clamp(0.65 + ny * 0.35 + y * 0.4, 0.45, 1.05);
+      const lichen = ny > 0.75 && h > 0.62 ? 1 : 0;
+      if (lichen) return [0.09 * crev, 0.11 * crev, 0.05 * crev];
+      return [base * (1.0 + warm * 0.15) * crev, base * 0.97 * crev, base * (0.9 - warm * 0.08) * crev];
     });
     out.push(geo);
   }

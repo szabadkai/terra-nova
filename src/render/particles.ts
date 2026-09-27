@@ -80,12 +80,12 @@ class Layer {
           float a;
           if (vKind < 0.5) {
             float n = texture2D(tNoise, uv * 0.35 + vec2(vRot * 0.1, vRot * 0.07)).r;
-            a = smoothstep(0.5, 0.1, d + (n - 0.5) * 0.35);
+            a = (1.0 - smoothstep(0.1, 0.5, d + (n - 0.5) * 0.35));
           } else if (vKind < 1.5) {
-            a = smoothstep(0.5, 0.0, d);
+            a = (1.0 - smoothstep(0.0, 0.5, d));
             a = a * a;
           } else {
-            a = smoothstep(0.08, 0.0, abs(uv.x)) * smoothstep(0.5, 0.2, abs(uv.y));
+            a = (1.0 - smoothstep(0.0, 0.08, abs(uv.x))) * (1.0 - smoothstep(0.2, 0.5, abs(uv.y)));
           }
           a *= vAlpha * smoothstep(0.1, 0.6, vFog);
           if (a < 0.003) discard;

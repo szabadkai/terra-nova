@@ -60,7 +60,7 @@ vec3 wEmis;
   float fn = texture2D(tNoise, p * 0.9 - uTime * 0.03).g;
   float foam = clamp(shore * 0.9 + waves * 0.75, 0.0, 1.0) * smoothstep(0.25, 0.6, fn + shore * 0.4);
   wFoam = foam;
-  col = mix(col, vec3(0.92, 0.96, 0.98), foam);
+  col = mix(col, vec3(0.62, 0.7, 0.72), foam);
   diffuseColor.rgb = col;
   float alpha = clamp(0.22 + depth * 0.95, 0.0, 0.95);
   diffuseColor.a = max(alpha, foam * 0.95);

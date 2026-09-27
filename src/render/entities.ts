@@ -274,6 +274,8 @@ const TOOL: Partial<Record<Job, Good>> = {
   hunter: 'bow', miner: 'pickaxe', forester: 'shovel', swordsman: 'sword', bowman: 'bow', sawyer: 'saw', waterman: 'water',
 };
 const SKIN = [0xf0c8a0, 0xe0b088, 0xc89070, 0xa87050, 0xf4d4b4];
+/** Settlers are drawn a little larger than life (as in the original) so they read well. */
+export const SETTLER_SCALE = 1.3;
 
 interface Pose { legL: number; legR: number; armL: number; armR: number; armLz: number; armRz: number; lean: number; bob: number; twist: number; lie: number; toolRot: number; }
 
@@ -290,7 +292,7 @@ function pose(s: Settler, walkPhase: number, moving: boolean, time: number): Pos
     p.legL = sw * 0.6; p.legR = -sw * 0.6;
     p.armL = -sw * 0.5; p.armR = sw * 0.5;
     p.bob = Math.abs(Math.cos(walkPhase)) * 0.025;
-    if (s.carrying) { p.armL = p.armR = -1.1; p.armLz = 0.25; p.armRz = -0.25; }
+    if (s.carrying) { p.armR = -2.75; p.armRz = -0.42; }
     return p;
   }
   switch (s.anim) {
@@ -377,7 +379,7 @@ function pose(s: Settler, walkPhase: number, moving: boolean, time: number): Pos
       p.armL = Math.sin(time * 0.7 + s.seed * 5) * 0.05;
       p.armR = -Math.sin(time * 0.7 + s.seed * 5) * 0.05;
       p.twist = Math.sin(time * 0.3 + s.seed * 20) * 0.25;
-      if (s.carrying) { p.armL = p.armR = -1.1; p.armLz = 0.25; p.armRz = -0.25; }
+      if (s.carrying) { p.armR = -2.75; p.armRz = -0.42; }
       if (s.job === 'swordsman' || s.job === 'bowman') { p.armR = -0.3; p.armL = -0.5; }
     }
   }
@@ -458,7 +460,7 @@ export class SettlersRenderer {
       const sink = s.dead ? Math.max(0, s.deadT - 3) * 0.15 : 0;
       tmpE.set(0, s.heading, 0);
       tmpQ.setFromEuler(tmpE);
-      base.compose(tmpS.set(s.x, y0 + P.bob - sink, s.z), tmpQ, tmpV.set(1, 1, 1));
+      base.compose(tmpS.set(s.x, y0 + P.bob - sink, s.z), tmpQ, tmpV.set(SETTLER_SCALE, SETTLER_SCALE, SETTLER_SCALE));
       if (P.lie > 0) {
         rot.makeRotationX(-P.lie * Math.PI / 2 * 0.95);
         base.multiply(rot);
@@ -537,8 +539,10 @@ export class SettlersRenderer {
         const cm = this.carried.get(s.carrying)!;
         const c = carN.get(s.carrying) ?? 0;
         if (c < 800) {
-          part.copy(bodyM).multiply(rot.makeTranslation(0, 0.34, 0.2));
-          if (s.carrying === 'log' || s.carrying === 'board') part.multiply(new THREE.Matrix4().makeRotationY(0.25));
+          // carried on the right shoulder, long goods slung diagonally like in the original
+          part.copy(bodyM).multiply(rot.makeTranslation(0.1, 0.6, -0.01));
+          if (s.carrying === 'log' || s.carrying === 'board') part.multiply(new THREE.Matrix4().makeRotationFromEuler(tmpE.set(0, 1.25, 0.45)));
+          else part.multiply(new THREE.Matrix4().makeTranslation(0, 0.02, 0));
           cm.setMatrixAt(c, part);
           carN.set(s.carrying, c + 1);
         }
