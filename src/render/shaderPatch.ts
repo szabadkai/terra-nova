@@ -1,0 +1,256 @@
+// Shared shader extensions for every world material: cloud shadows, wind sway,
+// warm night light pools, fog of war and construction clipping.
+import * as THREE from 'three';
+import { getNoiseTexture } from './textures';
+
+export const MAX_LIGHTS = 32;
+
+export const G = {
+  uTime: { value: 0 },
+  uNight: { value: 0 },
+  uCloud: { value: 0.35 },
+  uCloudSpeed: { value: new THREE.Vector2(0.9, 0.35) },
+  uWind: { value: new THREE.Vector2(0.8, 0.35) },
+  uWindStrength: { value: 1 },
+  uLights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4(0, -100, 0, 0)) },
+  uLightCount: { value: 0 },
+  uLightColor: { value: new THREE.Color(1.0, 0.55, 0.22) },
+  tFog: { value: null as THREE.Texture | null },
+  uMapSize: { value: new THREE.Vector2(128, 128) },
+  uFogOn: { value: 1 },
+  uWet: { value: 0 },
+  tNoise: { value: getNoiseTexture() as THREE.Texture },
+  uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
+};
+
+export interface PatchOpts {
+  wind?: 'tree' | 'grass' | 'flag' | 'none';
+  windAmp?: number;
+  clip?: boolean;
+  fog?: boolean;
+  clouds?: boolean;
+  lights?: boolean;
+  /** extra code injection hooks */
+  vertexHead?: string;
+  vertexBegin?: string;
+  fragHead?: string;
+  fragMap?: string; // replaces map_fragment
+  fragRough?: string; // after roughnessmap_fragment
+  fragNormal?: string; // replaces normal_fragment_maps
+  fragEmissive?: string; // after emissivemap_fragment
+  fragAO?: string; // before aomap_fragment
+  fragPost?: string; // before opaque_fragment
+  uniforms?: Record<string, THREE.IUniform>;
+  key?: string;
+}
+
+const COMMON_FRAG = /* glsl */ `
+varying vec3 vWPos;
+uniform float uTime;
+uniform float uNight;
+uniform float uCloud;
+uniform vec2 uCloudSpeed;
+uniform vec4 uLights[${MAX_LIGHTS}];
+uniform int uLightCount;
+uniform vec3 uLightColor;
+uniform sampler2D tFog;
+uniform sampler2D tNoise;
+uniform vec2 uMapSize;
+uniform float uFogOn;
+uniform float uWet;
+uniform vec3 uSunDir;
+
+float cloudShadow(vec3 wp) {
+  vec2 p = wp.xz + uCloudSpeed * uTime;
+  float a = texture2D(tNoise, p * 0.0065).r;
+  float b = texture2D(tNoise, p * 0.017 + vec2(0.37, 0.11)).g;
+  float c = a * 0.7 + b * 0.3;
+  return 1.0 - smoothstep(0.46, 0.68, c) * uCloud;
+}
+
+vec3 nightLights(vec3 wp) {
+  vec3 acc = vec3(0.0);
+  for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+    if (i >= uLightCount) break;
+    vec4 L = uLights[i];
+    vec3 d = wp - L.xyz;
+    float dist2 = dot(d, d);
+    float r = 3.2 + L.w * 1.6;
+    float att = L.w / (1.0 + dist2 * 1.1);
+    att *= smoothstep(r * r, 0.0, dist2);
+    acc += att;
+  }
+  return acc * uLightColor;
+}
+
+vec3 applyFog(vec3 col, vec3 wp) {
+  if (uFogOn < 0.5) return col;
+  vec2 uv = (wp.xz + 0.5) / uMapSize;
+  float e = texture2D(tFog, uv).r;
+  float n = texture2D(tNoise, wp.xz * 0.05 + uTime * 0.004).r;
+  float n2 = texture2D(tNoise, wp.xz * 0.013 - uTime * 0.002).g;
+  float m = smoothstep(0.2, 0.85, e + (n - 0.5) * 0.35);
+  vec3 fogCol = mix(vec3(0.012, 0.016, 0.024), vec3(0.05, 0.06, 0.08), n2);
+  return mix(fogCol, col, m);
+}
+`;
+
+let patchCount = 0;
+
+export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts = {}): T {
+  const o = { wind: 'none', fog: true, clouds: true, lights: true, windAmp: 1, ...opts } as Required<PatchOpts> & PatchOpts;
+  const uClip = { value: 1e9 };
+  (mat as any).userData.uClip = uClip;
+  const uWindAmp = { value: o.windAmp };
+  (mat as any).userData.uWindAmp = uWindAmp;
+  const key = `p${o.wind}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.key ?? ''}`;
+  mat.customProgramCacheKey = () => key;
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, {
+      uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
+      uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
+      tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
+      uClip, uWindAmp,
+      ...(o.uniforms ?? {}),
+    });
+    // ---------------- vertex
+    let vs = shader.vertexShader;
+    vs = vs.replace('#include <common>', `#include <common>
+varying vec3 vWPos;
+uniform float uTime;
+uniform vec2 uWind;
+uniform float uWindStrength;
+uniform float uWindAmp;
+${o.vertexHead ?? ''}
+`);
+    let windCode = '';
+    if (o.wind !== 'none') {
+      windCode = `
+  {
+    #ifdef USE_INSTANCING
+      vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+    #else
+      vec3 ip = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
+    #endif
+    float ph = ip.x * 0.37 + ip.z * 0.23;
+    float gust = 0.6 + 0.4 * sin(uTime * 0.23 + ip.x * 0.05);
+    ${o.wind === 'tree' ? `
+    float hgt = max(transformed.y, 0.0);
+    float sway = sin(uTime * 1.3 + ph) * 0.55 + sin(uTime * 2.9 + ph * 1.7 + transformed.x * 2.0) * 0.18;
+    transformed.xz += uWind * sway * uWindAmp * uWindStrength * gust * hgt * hgt * 0.012;
+    ` : o.wind === 'grass' ? `
+    float hgt = max(transformed.y, 0.0);
+    float sway = sin(uTime * 2.1 + ph + transformed.x * 3.0) * 0.6 + 0.5;
+    transformed.xz += uWind * sway * uWindAmp * uWindStrength * gust * hgt * 0.35;
+    ` : `
+    float fx = max(transformed.x, 0.0);
+    float wave = sin(uTime * 6.0 - fx * 9.0 + ph) * 0.5 + sin(uTime * 9.7 - fx * 15.0 + ph) * 0.2;
+    transformed.z += wave * fx * 0.22 * uWindAmp * uWindStrength;
+    transformed.y -= fx * fx * 0.12;
+    `}
+  }`;
+    }
+    vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>
+${o.vertexBegin ?? ''}
+${windCode}`);
+    vs = vs.replace('#include <project_vertex>', `#include <project_vertex>
+  {
+    vec4 wpp = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      wpp = instanceMatrix * wpp;
+    #endif
+    vWPos = (modelMatrix * wpp).xyz;
+  }`);
+    shader.vertexShader = vs;
+
+    // ---------------- fragment
+    let fs = shader.fragmentShader;
+    fs = fs.replace('#include <common>', `#include <common>
+${COMMON_FRAG}
+uniform float uClip;
+${o.fragHead ?? ''}
+`);
+    if (o.clip) {
+      fs = fs.replace('void main() {', `void main() {
+  if (vWPos.y > uClip) discard;`);
+    }
+    if (o.fragMap) fs = fs.replace('#include <map_fragment>', o.fragMap);
+    if (o.fragRough) fs = fs.replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+${o.fragRough}`);
+    if (o.fragNormal) fs = fs.replace('#include <normal_fragment_maps>', o.fragNormal);
+    if (o.fragEmissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+${o.fragEmissive}`);
+    if (o.clouds) {
+      const chunk = THREE.ShaderChunk.lights_fragment_begin.replace(
+        'getDirectionalLightInfo( directionalLight, directLight );',
+        'getDirectionalLightInfo( directionalLight, directLight );\n\t\tdirectLight.color *= cloudShadow(vWPos);',
+      );
+      fs = fs.replace('#include <lights_fragment_begin>', chunk);
+    }
+    if (o.fragAO) fs = fs.replace('#include <aomap_fragment>', `${o.fragAO}
+#include <aomap_fragment>`);
+    let post = o.fragPost ?? '';
+    if (o.lights) post += `\n  outgoingLight += diffuseColor.rgb * nightLights(vWPos) * uNight;`;
+    if (o.fog) post += `\n  outgoingLight = applyFog(outgoingLight, vWPos);`;
+    fs = fs.replace('#include <opaque_fragment>', `${post}
+#include <opaque_fragment>`);
+    shader.fragmentShader = fs;
+    patchCount++;
+  };
+  return mat;
+}
+
+/** Depth material for shadows that shares wind/clip behaviour. */
+export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number } = {}): THREE.MeshDepthMaterial {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  const o = { wind: 'none', windAmp: 1, ...opts };
+  const uClip = { value: 1e9 };
+  (m as any).userData.uClip = uClip;
+  const uWindAmp = { value: o.windAmp };
+  const key = `d${o.wind}|${o.clip ? 1 : 0}`;
+  m.customProgramCacheKey = () => key;
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp });
+    let vs = shader.vertexShader;
+    vs = vs.replace('#include <common>', `#include <common>
+uniform float uTime;
+uniform vec2 uWind;
+uniform float uWindStrength;
+uniform float uWindAmp;
+varying float vWY;`);
+    let windCode = '';
+    if (o.wind === 'tree') {
+      windCode = `
+  {
+    #ifdef USE_INSTANCING
+      vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+    #else
+      vec3 ip = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
+    #endif
+    float ph = ip.x * 0.37 + ip.z * 0.23;
+    float gust = 0.6 + 0.4 * sin(uTime * 0.23 + ip.x * 0.05);
+    float hgt = max(transformed.y, 0.0);
+    float sway = sin(uTime * 1.3 + ph) * 0.55 + sin(uTime * 2.9 + ph * 1.7 + transformed.x * 2.0) * 0.18;
+    transformed.xz += uWind * sway * uWindAmp * uWindStrength * gust * hgt * hgt * 0.012;
+  }`;
+    }
+    vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>
+${windCode}`);
+    vs = vs.replace('#include <project_vertex>', `#include <project_vertex>
+  {
+    vec4 wpp = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      wpp = instanceMatrix * wpp;
+    #endif
+    vWY = (modelMatrix * wpp).y;
+  }`);
+    shader.vertexShader = vs;
+    let fs = shader.fragmentShader;
+    fs = fs.replace('#include <common>', `#include <common>
+uniform float uClip;
+varying float vWY;`);
+    if (o.clip) fs = fs.replace('void main() {', 'void main() {\n  if (vWY > uClip) discard;');
+    shader.fragmentShader = fs;
+  };
+  return m;
+}

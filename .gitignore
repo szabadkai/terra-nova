@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-single/
+__pycache__/
+
+# Copyrighted Settlers III reference material - keep it out of version control.
+reference/*/raw/
+reference/*/extracted/
+reference

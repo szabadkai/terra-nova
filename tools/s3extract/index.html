@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S3 Demo Assets</title>
+<style>
+  :root {
+    --bg: #16171a; --panel: #1f2125; --panel-2: #26292e; --line: #33373d;
+    --text: #e6e4df; --muted: #9a9892; --accent: #d9a441; --checker: #2a2d32;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: rgba(22,23,26,.96);
+           border-bottom: 1px solid var(--line); padding: 10px 16px;
+           display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  h1 small { color: var(--muted); font-weight: 400; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  nav button, .ctl button { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+       border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; }
+  nav button[aria-pressed="true"], .ctl button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); }
+  input[type=search] { background: var(--panel); border: 1px solid var(--line); color: var(--text);
+       border-radius: 6px; padding: 5px 9px; font: inherit; min-width: 180px; }
+  main { padding: 16px; max-width: 1600px; margin: 0 auto; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+       margin: 28px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .grid.wide { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+          display: flex; flex-direction: column; gap: 6px; min-width: 0; cursor: pointer; }
+  .card:hover { border-color: #4a4f57; }
+  .stage { display: flex; align-items: center; justify-content: center; min-height: 110px; border-radius: 4px;
+           background: conic-gradient(var(--checker) 25%, transparent 0 50%, var(--checker) 0 75%, transparent 0) 0 0/16px 16px; overflow: hidden; }
+  .stage canvas, .stage img { image-rendering: pixelated; max-width: 100%; }
+  .name { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 11px; }
+  audio { width: 100%; height: 32px; }
+  .notice { color: var(--muted); font-size: 12px; max-width: 900px; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+           max-width: min(1100px, 94vw); max-height: 90vh; padding: 16px; }
+  dialog::backdrop { background: rgba(0,0,0,.7); }
+  dialog .stage { min-height: 260px; }
+  dialog pre { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); white-space: pre-wrap; max-height: 30vh; overflow: auto; }
+  .hidden { display: none !important; }
+  table { border-collapse: collapse; font-size: 12px; width: 100%; }
+  td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Settlers III demo assets <small>build 1998-05-12 · reference only</small></h1>
+  <nav id="nav"></nav>
+  <div class="ctl">
+    <input type="search" id="q" placeholder="Filter by name…">
+    <span>Direction</span><span id="dirs"></span>
+    <span>Zoom</span><span id="zoom"></span>
+  </div>
+</header>
+<main id="main"></main>
+<dialog id="dlg"><div id="dlgBody"></div><p><button onclick="dlg.close()">Close</button></p></dialog>
+<script src="manifest.js"></script>
+<script>
+const M = window.S3_MANIFEST;
+const main = document.getElementById('main');
+const state = { dir: 'A', zoom: 2, tab: 'sprites', q: '' };
+const players = [];   // [{canvas, entry, img}]
+const FPS = 12;
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v; else if (k.startsWith('on')) e[k] = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids) e.append(k);
+  return e;
+}
+function directions(entry) { return entry.groups.filter(g => /^[A-F]$/.test(g.label)).length; }
+function frameRange(entry) {
+  const gs = entry.groups;
+  const g = gs.length > 1 ? (gs.find(g => g.label === state.dir) || gs[0]) : gs[0];
+  return [g.start, g.count];
+}
+function drawFrame(p, k) {
+  const { entry, canvas, img } = p;
+  if (!img.complete || !img.naturalWidth) return;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const sx = (k % entry.cols) * entry.cell_w, sy = Math.floor(k / entry.cols) * entry.cell_h;
+  ctx.drawImage(img, sx, sy, entry.cell_w, entry.cell_h, 0, 0, entry.cell_w, entry.cell_h);
+  // hotspot marker
+  ctx.fillStyle = 'rgba(217,164,65,.9)';
+  ctx.fillRect(entry.anchor_x - 1, entry.anchor_y, 3, 1); ctx.fillRect(entry.anchor_x, entry.anchor_y - 1, 1, 3);
+}
+function spriteCanvas(entry, zoom, maxH = 220) {
+  const c = el('canvas', { width: entry.cell_w, height: entry.cell_h });
+  c.style.width = entry.cell_w * Math.min(zoom, maxH / entry.cell_h) + 'px';
+  return c;
+}
+function makePlayer(entry, canvas, always = false) {
+  const img = new Image(); img.src = entry.sheet;
+  const p = { entry, canvas, img, visible: always, t: 0 };
+  img.onload = () => drawFrame(p, frameRange(entry)[0]);
+  players.push(p);
+  return p;
+}
+let tick = 0;
+setInterval(() => {
+  tick++;
+  for (const p of players) {
+    if (!p.visible || !p.canvas.isConnected) continue;
+    const [start, len] = frameRange(p.entry);
+    drawFrame(p, start + (tick % len));
+  }
+}, 1000 / FPS);
+const io = new IntersectionObserver(es => es.forEach(e => { e.target._p.visible = e.isIntersecting; }));
+
+function section(title, grid) { return [el('h2', {}, title), grid]; }
+
+function renderSprites(filterFolders) {
+  const out = [];
+  for (const [folder, entries] of Object.entries(M.sprites)) {
+    if (!filterFolders(folder)) continue;
+    const grid = el('div', { class: 'grid' });
+    for (const [name, entry] of Object.entries(entries)) {
+      const c = spriteCanvas(entry, state.zoom);
+      const p = makePlayer(entry, c); c._p = p; io.observe(c);
+      const card = el('div', { class: 'card', 'data-name': name.toLowerCase(), onclick: () => openSprite(folder, name, entry) },
+        el('div', { class: 'stage' }, c),
+        el('div', { class: 'name' }, name),
+        el('div', { class: 'meta' }, `${entry.frames} frames${directions(entry) > 1 ? ' · ' + directions(entry) + ' dirs' : directions(entry) === 1 ? ' · dir ' + entry.groups[0].label : ''} · ${entry.cell_w}×${entry.cell_h} · ${entry.layers.join('+')}`));
+      grid.append(card);
+    }
+    out.push(...section(folder.replace(/^(\d+)_/, '$1 · ').replace(/_/g, ' '), grid));
+  }
+  return out;
+}
+function openSprite(folder, name, entry) {
+  const body = document.getElementById('dlgBody'); body.replaceChildren();
+  const c = spriteCanvas(entry, 4, window.innerHeight * 0.55);
+  const p = makePlayer(entry, c, true);
+  body.append(el('div', { class: 'name' }, `${folder} / ${name}`),
+    el('p', { class: 'meta' }, `${entry.frames} frames in ${entry.groups.map(g => g.label + ':' + g.count).join(' ')}, cell ${entry.cell_w}×${entry.cell_h}, hotspot (${entry.anchor_x}, ${entry.anchor_y}) — sheet: ${entry.sheet}, frames: ${entry.sheet.replace(/\.png$/, '/NNN.png')}`),
+    el('div', { class: 'stage' }, c),
+    el('p', {}, el('a', { href: entry.sheet, target: '_blank', style: 'color:var(--accent)' }, 'Open sprite sheet')));
+  dlg.showModal();
+  dlg.onclose = () => { p.visible = false; };
+}
+function renderImages(list, wide) {
+  const grid = el('div', { class: 'grid' + (wide ? ' wide' : '') });
+  for (const it of list) {
+    const img = el('img', { src: it.file, loading: 'lazy', alt: it.name });
+    img.style.width = Math.min(it.w * (wide ? 1 : state.zoom), 1000) + 'px';
+    grid.append(el('div', { class: 'card', 'data-name': it.name.toLowerCase(), onclick: () => window.open(it.file) },
+      el('div', { class: 'stage' }, img), el('div', { class: 'name' }, it.name),
+      el('div', { class: 'meta' }, `${it.w}×${it.h}${it.kind ? ' · ' + it.kind : ''}`)));
+  }
+  return grid;
+}
+function renderSounds() {
+  const grid = el('div', { class: 'grid wide' });
+  for (const s of M.sounds) {
+    grid.append(el('div', { class: 'card', 'data-name': s.name.toLowerCase() },
+      el('div', { class: 'name' }, `SND_${s.name} #${s.variant}`),
+      el('div', { class: 'meta' }, `${s.seconds}s · ${s.rate} Hz · ${s.bits}-bit · ${s.channels === 1 ? 'mono' : 'stereo'}`),
+      el('audio', { controls: '', preload: 'none', src: s.file })));
+  }
+  return [
+    el('p', { class: 'notice' }, 'No music ships with this demo: the game streamed its soundtrack from CD audio tracks ("play cdaudio from N"), so only the 17 effect/ambience sounds below are in the data files.'),
+    ...section('Sound effects & ambience', grid)];
+}
+function renderPalettes() {
+  const t = el('table', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Name (German)')));
+  for (const p of M.palettes) t.append(el('tr', {}, el('td', {}, p.index), el('td', {}, p.name)));
+  const img = el('img', { src: 'palettes/player_palettes.png' }); img.style.width = '100%'; img.style.imageRendering = 'pixelated';
+  return [...section('Player colour palettes (20 players × 8 brightness levels × 256 entries)', el('div', { class: 'stage' }, img)),
+          el('p', { class: 'notice' }, 'Torso (player-colour) layers store an 8-bit index into these palettes. Level 7 is full brightness; the sprite previews use player ' + M.player_palette + '.'), t];
+}
+
+const tabs = {
+  sprites: () => renderSprites(f => !/buildings/.test(f)),
+  buildings: () => renderSprites(f => /buildings/.test(f)),
+  textures: () => section('Landscape textures (siedler3_00)', renderImages(M.textures)),
+  gui: () => Object.entries(M.gui).flatMap(([f, list]) => section(f.replace(/^(\d+)_/, '$1 · ').replace(/_/g, ' '), renderImages(list, /menus/.test(f)))),
+  sounds: renderSounds,
+  palettes: renderPalettes,
+};
+function render() {
+  players.length = 0; io.disconnect();
+  main.replaceChildren(...tabs[state.tab]());
+  applyFilter();
+}
+function applyFilter() {
+  for (const c of main.querySelectorAll('.card')) c.classList.toggle('hidden', !!state.q && !c.dataset.name.includes(state.q));
+  for (const g of main.querySelectorAll('.grid')) {
+    const empty = !g.querySelector('.card:not(.hidden)');
+    g.classList.toggle('hidden', empty);
+    if (g.previousElementSibling?.tagName === 'H2') g.previousElementSibling.classList.toggle('hidden', empty);
+  }
+}
+function buttons(host, items, key, onchange) {
+  host.replaceChildren(...items.map(([v, label]) => {
+    const b = el('button', { 'aria-pressed': String(state[key] === v) }, label);
+    b.onclick = () => { state[key] = v; for (const x of host.children) x.setAttribute('aria-pressed', String(x === b)); onchange(); };
+    return b;
+  }));
+}
+buttons(document.getElementById('nav'), Object.keys(tabs).map(k => [k, k[0].toUpperCase() + k.slice(1)]), 'tab', render);
+buttons(document.getElementById('dirs'), 'ABCDEF'.split('').map(d => [d, d]), 'dir', () => {});
+buttons(document.getElementById('zoom'), [[1, '1×'], [2, '2×'], [3, '3×']], 'zoom', render);
+document.getElementById('q').oninput = e => { state.q = e.target.value.trim().toLowerCase(); applyFilter(); };
+render();
+</script>
+</body>
+</html>
