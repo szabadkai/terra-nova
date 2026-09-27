@@ -618,8 +618,11 @@ export class Game {
         this.fieldsVersion++;
       }
     }
-    // fish regeneration (slow)
+    // footpaths: grass slowly recovers where nobody walks
     const w = this.world;
+    const wear = w.wear;
+    for (let i = 0; i < wear.length; i++) if (wear[i] > 0) wear[i] = wear[i] > 0.002 ? wear[i] * 0.9965 : 0;
+    // fish regeneration (slow)
     for (let k = 0; k < 30; k++) {
       const i = this.rng.int(0, w.N);
       if (w.isWater(i) && w.h[i] > WATER_LEVEL - 4.5 && w.fish[i] < 6 && this.rng.chance(0.2)) w.fish[i]++;

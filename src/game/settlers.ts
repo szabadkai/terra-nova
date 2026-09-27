@@ -80,7 +80,7 @@ export function updateMovement(g: Game, s: Settler, dt: number) {
       s.node = s.next;
       s.next = -1;
       s.t = 0;
-      const wr = w.wear[s.node] + 0.006;
+      const wr = w.wear[s.node] + 0.0035;
       w.wear[s.node] = wr > 1 ? 1 : wr;
       if (s.path && s.pathI < s.path.length) {
         // carry over leftover time for smooth motion

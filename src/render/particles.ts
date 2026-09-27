@@ -223,7 +223,8 @@ export class Particles {
     this.emit({ x, y, z, vy: 1.4, spread: 2.2, vspread: 1.2, life: 0.55, size: 0.05, color: [1.6, 0.9, 0.35], color2: [1.2, 0.35, 0.05], alpha: 1, gravity: 5, drag: 1, count: n, additive: true, kind: 1 });
   }
   fire(x: number, y: number, z: number, s = 1) {
-    this.emit({ x, y, z, vy: 1.1 * s, spread: 0.35 * s, life: 0.8, size: 0.45 * s, grow: -0.6, color: [2.2, 1.0, 0.3], color2: [1.2, 0.2, 0.02], alpha: 0.8, drag: 0.8, jitter: 0.6 * s, additive: true });
+    this.emit({ x, y, z, vy: 1.5 * s, spread: 0.3 * s, vspread: 0.4, life: 0.55, size: 0.42 * s, grow: -0.55, color: [3.2, 2.0, 0.8], color2: [1.6, 0.35, 0.06], alpha: 0.9, drag: 1.2, jitter: 0.55 * s, additive: true, kind: 3 });
+    if (Math.random() < 0.15 * s) this.emit({ x, y: y + 0.3, z, vy: 1.8, spread: 0.8, vspread: 0.6, life: 1.4, size: 0.035, color: [2.4, 1.2, 0.3], color2: [1.2, 0.3, 0.05], alpha: 1, gravity: -0.4, drag: 0.6, jitter: 0.5 * s, additive: true, kind: 1 });
   }
   splash(x: number, y: number, z: number) {
     this.emit({ x, y, z, vy: 1.8, spread: 1.2, vspread: 0.6, life: 0.7, size: 0.06, color: [0.85, 0.92, 1], alpha: 0.9, gravity: 7, drag: 0.4, count: 10, kind: 1 });

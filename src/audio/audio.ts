@@ -1,4 +1,42 @@
-// Fully procedural audio: ambience, positional sound effects and generative music.
+// Audio: ambience, positional sound effects and generative music. Effects that have an
+// original Settlers III sample use it; everything else is synthesised.
+
+// The original samples are served by the Vite dev server straight from the local reference
+// extraction. It is gitignored and never bundled, so builds fall back to the synth versions.
+const SAMPLE_DIR = '/reference/s3-demo-1998-05-12/extracted/sounds/';
+const SAMPLES: Record<string, { files: string[]; gain: number }> = {
+  chop: { files: ['00_axe_0', '00_axe_1'], gain: 0.4 },
+  hammer: { files: ['01_buildhammer_0', '01_buildhammer_1'], gain: 0.35 },
+  anvil: { files: ['01_buildhammer_0', '01_buildhammer_1'], gain: 0.25 },
+  dig: { files: ['02_dig_0'], gain: 0.25 },
+  pick: { files: ['03_pickaxe_0', '03_pickaxe_1'], gain: 0.8 },
+  clang: { files: ['03_pickaxe_0', '03_pickaxe_1'], gain: 0.7 },
+  plant: { files: ['04_plant_0'], gain: 0.4 },
+  saw: { files: ['05_saw_0'], gain: 0.3 },
+  treefall: { files: ['08_treefall_0'], gain: 0.7 },
+  harvest: { files: ['09_gras_0', '09_gras_1'], gain: 0.4 },
+  bird: { files: ['11_bird_0', '11_bird_1', '11_bird_2', '11_bird_3', '11_bird_4'], gain: 0.2 },
+};
+
+// Level-match samples: scale to a common short-term loudness (loudest 50 ms RMS) without clipping.
+function normalize(buf: AudioBuffer) {
+  const d = buf.getChannelData(0);
+  const win = Math.max(1, Math.floor(buf.sampleRate * 0.05));
+  let peak = 0, loud = 0;
+  for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+  for (let s = 0; s + win <= d.length; s += win >> 2) {
+    let sum = 0;
+    for (let i = s; i < s + win; i++) sum += d[i] * d[i];
+    loud = Math.max(loud, Math.sqrt(sum / win));
+  }
+  if (peak === 0 || loud === 0) return;
+  const k = Math.min(0.3 / loud, 1 / peak);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const ch = buf.getChannelData(c);
+    for (let i = 0; i < ch.length; i++) ch[i] *= k;
+  }
+}
+
 export class Audio {
   ctx: AudioContext | null = null;
   private master!: GainNode;
@@ -13,8 +51,8 @@ export class Audio {
   musicOn = true;
   private musicT = 0;
   private birdT = 2;
-  private cricketT = 1;
   private recent = new Map<string, number>();
+  private buffers = new Map<string, AudioBuffer>();
   started = false;
 
   start() {
@@ -76,6 +114,39 @@ export class Audio {
     this.rainGain.gain.value = 0;
     rain.connect(rf).connect(this.rainGain).connect(this.amb);
     rain.start();
+    if (import.meta.env.DEV) void this.loadSamples();
+  }
+
+  private async loadSamples() {
+    const ctx = this.ctx!;
+    const files = new Set(Object.values(SAMPLES).flatMap((s) => s.files));
+    await Promise.all([...files].map(async (f) => {
+      try {
+        const res = await fetch(`${SAMPLE_DIR}${f}.wav`);
+        if (!res.ok) return;
+        const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+        normalize(buf);
+        this.buffers.set(f, buf);
+      } catch { /* not available: keep the synth version */ }
+    }));
+  }
+
+  private sample(name: string) {
+    const s = SAMPLES[name];
+    if (!s) return null;
+    const buf = this.buffers.get(s.files[Math.floor(Math.random() * s.files.length)]);
+    return buf ? { buf, gain: s.gain } : null;
+  }
+
+  private playBuffer(t: number, buf: AudioBuffer, gain: number, out: AudioNode, rate = 1) {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(out);
+    src.start(t);
   }
 
   private impulse(sec: number) {
@@ -190,7 +261,13 @@ export class Audio {
     const pan = this.ctx.createStereoPanner();
     pan.pan.value = x === undefined ? 0 : Math.max(-0.8, Math.min(0.8, (x - this.listener.x) / (10 + this.listener.zoom * 0.4)));
     out.connect(pan).connect(this.sfx);
-    switch (name) {
+    let life = 3;
+    const smp = this.sample(name);
+    if (smp) {
+      const rate = 0.96 + Math.random() * 0.08;
+      this.playBuffer(t, smp.buf, smp.gain, out, rate);
+      life = Math.max(life, smp.buf.duration / rate + 0.2);
+    } else switch (name) {
       case 'chop':
         this.noise(t, 0.09, 'bandpass', 900, 1.5, 0.5, out);
         this.tone(t, 180, 0.08, 'triangle', 0.35, out, 90);
@@ -279,7 +356,7 @@ export class Audio {
         this.tone(t, 660, 0.06, 'triangle', 0.1, out, 880);
         break;
     }
-    setTimeout(() => { try { out.disconnect(); pan.disconnect(); } catch { /* */ } }, 3000);
+    setTimeout(() => { try { out.disconnect(); pan.disconnect(); } catch { /* */ } }, life * 1000);
   }
 
   // ------------------------------------------------------------ ambience & music
@@ -295,24 +372,19 @@ export class Audio {
     // birds by day
     this.birdT -= dt;
     if (this.birdT <= 0 && night < 0.5 && rain < 0.5) {
-      this.birdT = 1.5 + Math.random() * 4;
-      const base = 2000 + Math.random() * 2200;
-      const n = 2 + Math.floor(Math.random() * 4);
+      const bird = this.sample('bird');
+      this.birdT = bird ? 3 + Math.random() * 6 : 1.5 + Math.random() * 4;
       const out = this.ctx.createGain();
-      out.gain.value = 0.05 * (1 - night);
+      out.gain.value = (bird ? bird.gain : 0.05) * (1 - night);
       const pan = this.ctx.createStereoPanner();
       pan.pan.value = Math.random() * 1.6 - 0.8;
       out.connect(pan).connect(this.amb);
-      for (let k = 0; k < n; k++) this.tone(t + k * 0.11, base * (1 + Math.random() * 0.2), 0.08, 'sine', 0.6, out, base * (0.7 + Math.random() * 0.6));
-    }
-    // crickets at night
-    this.cricketT -= dt;
-    if (this.cricketT <= 0 && night > 0.5) {
-      this.cricketT = 0.6 + Math.random() * 1.2;
-      const out = this.ctx.createGain();
-      out.gain.value = 0.025 * night;
-      out.connect(this.amb);
-      for (let k = 0; k < 3; k++) this.tone(t + k * 0.05, 4400 + Math.random() * 300, 0.03, 'square', 0.4, out);
+      if (bird) this.playBuffer(t, bird.buf, 1, out);
+      else {
+        const base = 2000 + Math.random() * 2200;
+        const n = 2 + Math.floor(Math.random() * 4);
+        for (let k = 0; k < n; k++) this.tone(t + k * 0.11, base * (1 + Math.random() * 0.2), 0.08, 'sine', 0.6, out, base * (0.7 + Math.random() * 0.6));
+      }
     }
     void nearWater;
     // generative music: lute arpeggios over a drone, dorian mode
