@@ -30,7 +30,7 @@ export interface RenderSettings {
   ao: boolean;
   grade: boolean;
   dayCycle: boolean;
-  weather: 'auto' | 'clear' | 'rain';
+  weather: 'auto' | 'clear' | 'rain' | 'snow';
   borders: boolean;
   reflections: boolean;
 }
@@ -134,6 +134,7 @@ export class GameRenderer {
   private weatherT = 60;
   private rainAmount = 0;
   private targetRain = 0;
+  private precip: 'rain' | 'snow' = 'rain';
   onEvent: ((e: GameEvent) => void) | null = null;
   private sound: ((name: string, x?: number, z?: number, vol?: number) => void) | null = null;
 
@@ -482,8 +483,16 @@ export class GameRenderer {
         }
       }
     }
+    // snow flakes
+    if (this.rainAmount > 0.02 && this.precip === 'snow') {
+      const n = Math.floor(this.rainAmount * 30 * dt * 60);
+      for (let k = 0; k < n; k++) {
+        const x = t.x + (Math.random() - 0.5) * R * 1.6, z = t.z + (Math.random() - 0.5) * R * 1.6;
+        P.emit({ x, y: t.y + 6 + Math.random() * 8, z, vx: -0.4 + Math.random() * 0.3, vy: -1.3, vz: (Math.random() - 0.5) * 0.4, spread: 0.5, life: 7, size: 0.06, color: [0.95, 0.97, 1.0], alpha: 0.9, drag: 0.2, kind: 1 });
+      }
+    }
     // rain
-    if (this.rainAmount > 0.02) {
+    if (this.rainAmount > 0.02 && this.precip === 'rain') {
       const n = Math.floor(this.rainAmount * 60 * dt * 60);
       for (let k = 0; k < n; k++) {
         const x = t.x + (Math.random() - 0.5) * R * 1.6, z = t.z + (Math.random() - 0.5) * R * 1.6;
@@ -499,19 +508,28 @@ export class GameRenderer {
   private updateWeather(dt: number) {
     const mode = this.settings.weather;
     if (mode === 'clear') this.targetRain = 0;
-    else if (mode === 'rain') this.targetRain = 1;
+    else if (mode === 'rain') { this.targetRain = 1; this.precip = 'rain'; }
+    else if (mode === 'snow') { this.targetRain = 1; this.precip = 'snow'; }
     else {
       this.weatherT -= dt;
       if (this.weatherT <= 0) {
         const raining = this.targetRain > 0.5;
-        this.targetRain = raining ? 0 : Math.random() < 0.35 ? 1 : 0;
-        this.weatherT = this.targetRain > 0.5 ? 50 + Math.random() * 60 : 120 + Math.random() * 180;
+        this.targetRain = raining ? 0 : Math.random() < 0.4 ? 1 : 0;
+        if (this.targetRain > 0.5 && this.rainAmount < 0.05) this.precip = Math.random() < 0.3 ? 'snow' : 'rain';
+        this.weatherT = this.targetRain > 0.5 ? 60 + Math.random() * 70 : 120 + Math.random() * 180;
       }
     }
+    // switching precipitation type waits until the current one has faded
+    if (this.rainAmount < 0.03 && mode === 'rain') this.precip = 'rain';
     this.rainAmount += (this.targetRain - this.rainAmount) * (1 - Math.exp(-dt * 0.25));
-    this.sky.weather = this.rainAmount;
-    G.uWet.value = Math.min(1, this.rainAmount * 1.3);
-    G.uWindStrength.value = 1 + this.rainAmount * 1.2;
+    const snowing = this.precip === 'snow';
+    this.sky.weather = this.rainAmount * (snowing ? 0.8 : 1);
+    G.uWet.value = snowing ? 0 : Math.min(1, this.rainAmount * 1.3);
+    // snow cover builds up while it snows and melts slowly afterwards
+    const sn = G.uSnow.value;
+    if (snowing && this.rainAmount > 0.3) G.uSnow.value = Math.min(1, sn + dt / 70 * this.rainAmount);
+    else G.uSnow.value = Math.max(0, sn - dt / 140);
+    G.uWindStrength.value = 1 + this.rainAmount * (snowing ? 0.5 : 1.2);
     const wind = G.uWind.value;
     const a = this.time * 0.01;
     wind.set(Math.cos(a) * 0.9, Math.sin(a) * 0.4 + 0.2);

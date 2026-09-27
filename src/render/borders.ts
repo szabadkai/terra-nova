@@ -19,7 +19,7 @@ export class BordersRenderer {
     base.translate(0, 0.0, 0);
     const postGeo = mergeGeometries([stone.toNonIndexed(), base.toNonIndexed()].map((g) => { g.deleteAttribute('uv'); return g; }))!;
     const postMat = new THREE.MeshStandardMaterial({ color: 0x9a948a, roughness: 0.85 });
-    patchMaterial(postMat, { key: 'borderpost' });
+    patchMaterial(postMat, { key: 'borderpost', snow: 1 });
     this.posts = new THREE.InstancedMesh(postGeo, postMat, 6000);
     this.posts.castShadow = true;
     this.posts.receiveShadow = true;

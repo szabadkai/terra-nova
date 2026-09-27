@@ -335,6 +335,7 @@ export class TerrainRenderer {
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
     patchMaterial(mat, {
       key: 'terrain',
+      snow: 0.95,
       uniforms: this.uniforms,
       vertexHead: 'varying vec3 vWNormal;',
       vertexBegin: 'vWNormal = normalize(mat3(modelMatrix) * objectNormal);',

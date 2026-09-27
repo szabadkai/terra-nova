@@ -45,9 +45,10 @@ export class TreesRenderer {
 
   constructor(private game: Game) {
     const geos = buildTreeGeos();
-    const barkMat = vcMat({ roughness: 0.95 }, 'tree', 0.6);
+    const barkMat = vcMat({ roughness: 0.95 }, 'tree', 0.6, { snow: 0.35, key: 'bark' });
     this.leafMat = vcMat({ roughness: 0.8, side: THREE.DoubleSide }, 'tree', 1, {
       key: 'leaf',
+      snow: 0.8,
       fragEmissive: `{
         vec3 V = normalize(vViewPosition);
         vec3 L = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
@@ -61,7 +62,7 @@ export class TreesRenderer {
     const mkCard = (map: THREE.Texture, key: string) => {
       const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, map, alphaTest: 0.45, side: THREE.DoubleSide });
       return patchMaterial(m, {
-      wind: 'tree', key,
+      wind: 'tree', key, snow: 0.75,
       fragEmissive: `{
         vec3 V = normalize(vViewPosition);
         vec3 L = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
@@ -147,7 +148,7 @@ export class StonesRenderer {
   private meshes: THREE.InstancedMesh[] = [];
   private version = -1;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.9 });
+    const mat = vcMat({ roughness: 0.9 }, 'none', 1, { snow: 1, key: 'rock' });
     for (const g of buildRockGeos()) {
       const m = inst(g, mat, 2000);
       this.meshes.push(m);
@@ -179,7 +180,7 @@ export class FieldsRenderer {
   mesh: THREE.InstancedMesh;
   private version = -1;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.9 }, 'grass', 0.25);
+    const mat = vcMat({ roughness: 0.9 }, 'grass', 0.25, { snow: 0.6, key: 'wheat' });
     this.mesh = inst(buildWheatGeo(), mat, 1500, true);
   }
   update() {
@@ -212,7 +213,7 @@ export class GrassRenderer {
   private t = 0;
   enabled = true;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, { key: 'tuft' });
+    const mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, { key: 'tuft', snow: 1 });
     this.mesh = inst(buildGrassTuft(), mat, 60000, false);
     this.rebuild();
   }

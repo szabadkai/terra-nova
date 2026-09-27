@@ -55,8 +55,10 @@ for (let p = 0; p < 4; p++) {
 
 const WIND_MATS = new Set(['banner0', 'banner1', 'banner2', 'banner3', 'canvasFlag']);
 
+const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'water', 'metal', 'iron', 'gold']);
 function patchOpts(key: string, clip: boolean) {
-  return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), key: `bld_${key}` };
+  const snow = NO_SNOW.has(key) || WIND_MATS.has(key) ? 0 : 1;
+  return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), key: `bld_${key}`, snow };
 }
 
 export function getMaterial(key: string): THREE.Material {

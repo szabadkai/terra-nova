@@ -341,7 +341,7 @@ export class HUD {
     toggle('Day & night cycle', 'dayCycle');
     toggle('Territory borders', 'borders');
     const w = h('div', 'kv');
-    w.innerHTML = `<span>Weather</span><select><option value="auto">Changing</option><option value="clear">Always clear</option><option value="rain">Rain</option></select>`;
+    w.innerHTML = `<span>Weather</span><select><option value="auto">Changing</option><option value="clear">Always clear</option><option value="rain">Rain</option><option value="snow">Snow</option></select>`;
     const ws = w.querySelector('select')!;
     ws.value = s.weather;
     ws.onchange = () => { s.weather = ws.value as any; };

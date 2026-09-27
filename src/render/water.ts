@@ -29,6 +29,7 @@ export class WaterRenderer {
     });
     patchMaterial(mat, {
       key: 'water',
+      snow: 0,
       uniforms: this.uniforms,
       lights: true,
       fragHead: /* glsl */ `

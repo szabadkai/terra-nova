@@ -21,6 +21,7 @@ export const G = {
   uWet: { value: 0 },
   tNoise: { value: getNoiseTexture() as THREE.Texture },
   uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
+  uSnow: { value: 0 },
 };
 
 export interface PatchOpts {
@@ -42,6 +43,8 @@ export interface PatchOpts {
   fragPost?: string; // before opaque_fragment
   uniforms?: Record<string, THREE.IUniform>;
   key?: string;
+  /** how much snow may settle on this material (0 = none, 1 = full) */
+  snow?: number;
 }
 
 const COMMON_FRAG = /* glsl */ `
@@ -59,6 +62,7 @@ uniform vec2 uMapSize;
 uniform float uFogOn;
 uniform float uWet;
 uniform vec3 uSunDir;
+uniform float uSnow;
 
 float cloudShadow(vec3 wp) {
   vec2 p = wp.xz + uCloudSpeed * uTime;
@@ -103,14 +107,14 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   (mat as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
   (mat as any).userData.uWindAmp = uWindAmp;
-  const key = `p${o.wind}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.key ?? ''}`;
+  const key = `p${o.wind}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.key ?? ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
       uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
       uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
       tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
-      uClip, uWindAmp,
+      uSnow: G.uSnow, uClip, uWindAmp,
       ...(o.uniforms ?? {}),
     });
     // ---------------- vertex
@@ -180,6 +184,22 @@ ${o.fragRough}`);
     if (o.fragNormal) fs = fs.replace('#include <normal_fragment_maps>', o.fragNormal);
     if (o.fragEmissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 ${o.fragEmissive}`);
+    const snowAmt = o.snow ?? 0;
+    if (snowAmt > 0) {
+      fs = fs.replace('#include <lights_physical_fragment>', `{
+    // snow settles on upward-facing surfaces while it snows and melts away afterwards
+    #ifndef FLAT_SHADED
+      vec3 wnS = normalize((vec4(normalize(vNormal), 0.0) * viewMatrix).xyz);
+    #else
+      vec3 wnS = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+    #endif
+    float upS = smoothstep(0.3, 0.85, wnS.y);
+    float nS = texture2D(tNoise, vWPos.xz * 0.37).r * 0.6 + texture2D(tNoise, vWPos.xz * 1.9).g * 0.4;
+    float coverS = clamp(uSnow * 1.7 - (1.0 - upS) * 1.3 - nS * 0.45 + 0.15, 0.0, 1.0) * ${snowAmt.toFixed(2)};
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.66, 0.7, 0.76), coverS);
+  }
+#include <lights_physical_fragment>`);
+    }
     if (o.clouds) {
       const chunk = THREE.ShaderChunk.lights_fragment_begin.replace(
         'getDirectionalLightInfo( directionalLight, directLight );',
