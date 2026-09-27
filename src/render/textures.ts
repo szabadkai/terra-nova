@@ -1,6 +1,6 @@
 // Procedurally generated textures (no external image assets).
 import * as THREE from 'three';
-import { hash2 } from '../core/rng';
+import { RNG, hash2 } from '../core/rng';
 
 // ---------------------------------------------------------------- tileable noise helpers
 function fade(t: number) {
@@ -82,7 +82,7 @@ function normalFromHeight(size: number, height: Float32Array, strength: number, 
       const yu = (y - 1 + h) % h, yd = (y + 1) % h;
       const dx = (height[y * size + xr] - height[y * size + xl]) * strength;
       const dy = (height[yd * size + x] - height[yu * size + x]) * strength;
-      let nx = -dx, ny = dy, nz = 1;
+      let nx = -dx, ny = -dy, nz = 1;
       const l = Math.hypot(nx, ny, nz);
       nx /= l; ny /= l; nz /= l;
       const i = (y * size + x) * 4;
@@ -139,20 +139,26 @@ export interface MatTex { map: THREE.DataTexture; normal: THREE.DataTexture; }
 
 function build(size: number, fn: (u: number, v: number) => [number, number, number, number], strength: number, h = size): MatTex {
   const height = new Float32Array(size * h);
-  const cols: number[][] = [];
+  const data = new Uint8Array(size * h * 4);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < size; x++) {
       const [r, g, b, hh] = fn(x / size, y / h);
-      cols.push([r, g, b]);
-      height[y * size + x] = hh;
+      const i = y * size + x;
+      data[i * 4] = Math.max(0, Math.min(255, r));
+      data[i * 4 + 1] = Math.max(0, Math.min(255, g));
+      data[i * 4 + 2] = Math.max(0, Math.min(255, b));
+      data[i * 4 + 3] = 255;
+      height[i] = hh;
     }
-  let k = 0;
-  const map = makeData(size, (_u, _v, o) => {
-    const c = cols[k++];
-    o[0] = c[0]; o[1] = c[1]; o[2] = c[2];
-  }, true, h);
-  const normal = normalFromHeight(size, height, strength, h);
-  return { map, normal };
+  const map = new THREE.DataTexture(data, size, h, THREE.RGBAFormat);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.magFilter = THREE.LinearFilter;
+  map.minFilter = THREE.LinearMipmapLinearFilter;
+  map.generateMipmaps = true;
+  map.anisotropy = 8;
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.needsUpdate = true;
+  return { map, normal: normalFromHeight(size, height, strength, h) };
 }
 
 const cache = new Map<string, MatTex>();
@@ -162,93 +168,248 @@ function cached(key: string, f: () => MatTex) {
   return t;
 }
 
-/** Whitewashed plaster wall. 1 texture unit = 1 world unit. */
-export const plasterTex = () => cached('plaster', () => build(256, (u, v) => {
-  const n = pfbm(u, v, 8, 5, 5);
-  const blotch = pfbm(u, v, 3, 3, 9);
-  const speck = pnoise(u * 128, v * 128, 128, 3);
-  let c = 226 + (n - 0.5) * 30 - (blotch > 0.62 ? (blotch - 0.62) * 80 : 0);
-  c -= speck > 0.92 ? 25 : 0;
-  const warm = 0.97 + blotch * 0.04;
-  return [c * 1.0, c * 0.96 * warm, c * 0.88 * warm, n * 0.6 + speck * 0.2];
-}, 2.2));
+/** Anisotropic periodic value noise: separate integer periods along x and y. */
+function pnoiseA(x: number, y: number, px: number, py: number, seed: number): number {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const x0 = ((xi % px) + px) % px, y0 = ((yi % py) + py) % py;
+  const x1 = (x0 + 1) % px, y1 = (y0 + 1) % py;
+  const a = hash2(x0, y0, seed), b = hash2(x1, y0, seed), c = hash2(x0, y1, seed), d = hash2(x1, y1, seed);
+  const u = fade(xf), v = fade(yf);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
 
-/** Dark weathered timber beams. */
-export const timberTex = () => cached('timber', () => build(128, (u, v) => {
-  const grain = pfbm(u * 0.5, v, 4, 5, 21) ;
-  const lines = Math.sin((u * 18 + grain * 6) * Math.PI) * 0.5 + 0.5;
-  const c = 72 + lines * 22 + (grain - 0.5) * 30;
-  return [c * 1.0, c * 0.72, c * 0.5, lines * 0.5 + grain * 0.5];
-}, 3.5));
+function pfbmA(u: number, v: number, bx: number, by: number, oct: number, seed: number): number {
+  let sum = 0, amp = 1, norm = 0;
+  for (let o = 0; o < oct; o++) {
+    const kx = bx << o, ky = by << o;
+    sum += amp * pnoiseA(u * kx, v * ky, kx, ky, seed + o * 17);
+    norm += amp;
+    amp *= 0.5;
+  }
+  return sum / norm;
+}
 
-/** Neutral clay roof tiles (tinted per player through material color). */
-export const roofTex = () => cached('roof', () => build(256, (u, v) => {
+const sstep = (a: number, b: number, x: number) => {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Signed distance to a rounded rectangle centred at the origin. */
+function rrect(x: number, y: number, hx: number, hy: number, r: number) {
+  const qx = Math.abs(x) - hx + r, qy = Math.abs(y) - hy + r;
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+}
+
+/** Tileable courses of stones/bricks: random row heights, random stone lengths per row. */
+interface Course { y0: number; y1: number; joints: number[]; off: number }
+function makeCourses(rows: number, seed: number, minLen: number, maxLen: number, hVar: number): Course[] {
+  const rng = new RNG(seed);
+  const hs = Array.from({ length: rows }, () => 1 + (rng.next() - 0.5) * 2 * hVar);
+  const tot = hs.reduce((a, b) => a + b, 0);
+  let y = 0;
+  return hs.map((hh) => {
+    const y0 = y;
+    y += hh / tot;
+    const joints = [0];
+    let x = 0;
+    for (;;) {
+      const len = minLen + rng.next() * (maxLen - minLen);
+      if (x + len > 1 - minLen * 0.7) break;
+      x += len;
+      joints.push(x);
+    }
+    joints.push(1);
+    return { y0, y1: y, joints, off: rng.next() };
+  });
+}
+
+/** Locate (u,v) in a course layout: stone id, offset from stone centre and half extents. */
+function courseAt(cs: Course[], u: number, v: number) {
+  let r = 0;
+  while (r < cs.length - 1 && v >= cs[r].y1) r++;
+  const c = cs[r];
+  const uu = (((u + c.off) % 1) + 1) % 1;
+  let j = 0;
+  while (j < c.joints.length - 2 && uu >= c.joints[j + 1]) j++;
+  const a = c.joints[j], b = c.joints[j + 1];
+  return { id: r * 61 + j, dx: uu - (a + b) / 2, dy: v - (c.y0 + c.y1) / 2, hx: (b - a) / 2, hy: (c.y1 - c.y0) / 2, row: r };
+}
+
+/** Whitewashed lime plaster: trowel undulation, grain, stains, hairline cracks and a few
+ *  patches where it has fallen away to show the brickwork beneath. 1 texture = 1 world unit. */
+export const plasterTex = () => cached('plaster', () => {
+  const bricks = makeCourses(14, 71, 0.16, 0.24, 0.05);
+  return build(512, (u, v) => {
+    const n = pfbm(u, v, 6, 5, 5);
+    const blotch = pfbm(u, v, 3, 3, 9);
+    const grain = pnoise(u * 256, v * 256, 256, 3);
+    const grain2 = pnoise(u * 512, v * 512, 512, 4);
+    const [, , e] = pworley(u + (n - 0.5) * 0.06, v + (blotch - 0.5) * 0.06, 5, 21);
+    const crack = e < 0.007 && pfbm(u, v, 2, 3, 23) > 0.6 ? 1 - e / 0.007 : 0;
+    const pm = pfbm(u, v, 3, 5, 31);
+    const patch = sstep(0.74, 0.75, pm);
+    const lip = sstep(0.7, 0.74, pm) * (1 - patch);
+    let c = 228 + (n - 0.5) * 22 + (grain - 0.5) * 10 + (grain2 - 0.5) * 6 - Math.max(0, blotch - 0.58) * 70 - crack * 35;
+    let r = c, g = c * 0.965, b = c * 0.9;
+    let hgt = n * 0.35 + grain * 0.08 + grain2 * 0.04 + lip * 0.12 - crack * 0.25;
+    if (patch > 0) {
+      const k = courseAt(bricks, u, v);
+      const d = rrect(k.dx, k.dy, k.hx - 0.006, k.hy - 0.006, 0.006) + (grain - 0.5) * 0.006;
+      const inB = sstep(0.002, -0.004, d);
+      const tone = 0.8 + hash2(k.id, 3, 7) * 0.35;
+      const br = 150 * tone, bg = 78 * tone, bb = 52 * tone;
+      const mr = 170 + (grain - 0.5) * 30;
+      const pr = br * inB + mr * (1 - inB), pg = bg * inB + mr * 0.94 * (1 - inB), pb = bb * inB + mr * 0.82 * (1 - inB);
+      r = r * (1 - patch) + pr * patch; g = g * (1 - patch) + pg * patch; b = b * (1 - patch) + pb * patch;
+      hgt = hgt * (1 - patch) + (inB * 0.25 + grain * 0.06 - 0.35) * patch;
+    }
+    return [r, g, b, hgt];
+  }, 3.5);
+});
+
+/** Polished marble with faint veins. */
+export const marbleTex = () => cached('marble', () => build(512, (u, v) => {
+  const w = pfbm(u, v, 3, 5, 51);
+  const vein = 1 - Math.abs(Math.sin((u * 2 + v * 3 + w * 3.2) * Math.PI * 2));
+  const fine = pfbm(u, v, 24, 3, 53);
+  const c = 236 + (fine - 0.5) * 12 - Math.pow(vein, 14) * 45 - Math.pow(vein, 4) * 8;
+  return [c, c * 0.985, c * 0.955, fine * 0.1];
+}, 2));
+
+/** Dark weathered timber: grain along v, drying checks and the odd knot. */
+export const timberTex = () => cached('timber', () => build(256, (u, v) => {
+  const warp = pfbmA(u, v, 3, 1, 3, 21);
+  const rings = Math.sin((u * 12 + warp * 2.5) * Math.PI * 2) * 0.5 + 0.5;
+  const streak = pfbmA(u, v, 48, 2, 3, 22);
+  const fibre = pnoiseA(u * 128, v * 8, 128, 8, 23);
+  const check = streak > 0.72 && pfbmA(u, v, 8, 1, 2, 24) > 0.55 ? (streak - 0.72) * 6 : 0;
+  // knots
+  let knot = 0;
+  for (let k = 0; k < 3; k++) {
+    const kx = hash2(k, 1, 25), ky = hash2(k, 2, 25);
+    let dx = u - kx, dy = (v - ky) * 0.35;
+    dx -= Math.round(dx); dy -= Math.round(dy);
+    const d = Math.hypot(dx, dy);
+    knot = Math.max(knot, sstep(0.05, 0.0, d) * (0.6 + 0.4 * Math.sin(d * 200)));
+  }
+  const tone = 70 + rings * 16 + (streak - 0.5) * 34 + (fibre - 0.5) * 14 - check * 55 - knot * 22;
+  return [tone * 1.02, tone * 0.74, tone * 0.52, rings * 0.25 + streak * 0.35 + fibre * 0.12 - check * 0.6 + knot * 0.2];
+}, 6, 512));
+
+/** Neutral clay roof tiles (tinted per player through the material colour). 10 x 8 tiles;
+ *  roofs are built in stepped rows that line up with the 8 texture rows. */
+export const roofTex = () => cached('roof', () => build(512, (u, v) => {
   const rows = 8, cols = 10;
   const ry = v * rows;
   const row = Math.floor(ry);
-  const fy = ry - row;
-  const off = (row % 2) * 0.5;
+  const fy = ry - row; // 0 = exposed lower edge, 1 = under the next row
+  const off = (row % 2) * 0.5 + (hash2(row, 0, 9) - 0.5) * 0.1;
   const cx = u * cols + off;
   const col = Math.floor(cx);
   const fx = cx - col;
-  // curved tile profile
-  const prof = Math.sin(fx * Math.PI);
-  const tileVar = hash2(col % cols, row, 5);
+  const id = hash2(((col % cols) + cols) % cols, row, 5);
+  const id2 = hash2(((col % cols) + cols) % cols, row, 6);
+  // rounded tile end: the visible bottom edge is an arc
+  const arc = 0.12 * (1 - Math.pow(Math.sin(fx * Math.PI), 0.6));
+  const gapX = sstep(0.035, 0.0, Math.min(fx, 1 - fx));
+  const gapY = fy < arc ? 1 : 0;
+  const prof = Math.pow(Math.sin(fx * Math.PI), 0.7);
   const n = pfbm(u, v, 16, 3, 31);
-  const shadow = Math.pow(fy, 3); // overlapped bottom edge darker
-  let c = 200 + prof * 40 - shadow * 110 + (tileVar - 0.5) * 50 + (n - 0.5) * 30;
-  const edge = fx < 0.05 || fx > 0.95 ? 0.6 : 1;
-  c *= edge;
-  const hgt = prof * 0.6 + (1 - fy) * 0.4 + n * 0.1;
-  return [c, c * 0.97, c * 0.94, hgt];
-}, 4));
+  const fine = pnoise(u * 256, v * 256, 256, 32);
+  const under = Math.pow(fy, 2.5); // shadow from the row above
+  const lichen = pfbm(u, v, 24, 3, 33) > 0.74 && id2 > 0.75 ? sstep(0.74, 0.8, pfbm(u, v, 24, 3, 33)) : 0;
+  let c = 190 + prof * 34 - under * 95 + (id - 0.5) * 60 + (n - 0.5) * 30 + (fine - 0.5) * 12;
+  c *= 1 - gapX * 0.5;
+  if (gapY) c *= 0.45;
+  let r = c, g = c * (0.96 + id2 * 0.04), b = c * (0.9 + id2 * 0.08);
+  if (lichen) { const k = lichen * 0.35; r = r * (1 - k) + 190 * k; g = g * (1 - k) + 188 * k; b = b * (1 - k) + 150 * k; }
+  const hgt = gapY ? 0 : prof * 0.35 + (1 - fy) * 0.55 + fine * 0.05 - gapX * 0.3;
+  return [r, g, b, hgt];
+}, 6));
 
-/** Rough stone masonry (coursed ashlar-ish blocks). */
-export const stoneTex = () => cached('stone', () => build(256, (u, v) => {
-  const rows = 5;
-  const ry = v * rows;
-  const row = Math.floor(ry);
-  const fy = ry - row;
-  const off = hash2(row, 0, 13) * 0.5;
-  const cols = 3 + Math.floor(hash2(row, 1, 13) * 2);
-  const cx = (u + off) * cols;
-  const col = Math.floor(cx);
-  const fx = cx - col;
-  const id = hash2(((col % cols) + cols) % cols, row, 17);
-  const n = pfbm(u, v, 16, 4, 12);
-  const n2 = pfbm(u, v, 32, 3, 44);
-  const ex = Math.min(fx, 1 - fx) * 2.2, ey = Math.min(fy, 1 - fy) * 1.3;
-  const edge = Math.min(ex, ey);
-  const mortar = 1 - Math.min(1, edge / 0.09);
-  const bulge = Math.min(1, edge / 0.35);
-  const tone = 140 + (id - 0.5) * 34 + (n - 0.5) * 34 + (n2 - 0.5) * 16;
-  const c = tone * (1 - mortar * 0.38) * (0.9 + bulge * 0.1);
-  const tint = 0.97 + id * 0.05;
-  return [c * tint, c * 0.97, c * 0.9 / tint, (1 - mortar) * (0.6 + bulge * 0.3) + n * 0.12];
-}, 4));
+/** Rough coursed stone: irregular rows, stones of random length with rounded, chipped
+ *  edges, recessed mortar. */
+export const stoneTex = () => cached('stone', () => {
+  const cs = makeCourses(5, 13, 0.18, 0.42, 0.3);
+  return build(512, (u, v) => {
+    const k = courseAt(cs, u, v);
+    const n = pfbm(u, v, 16, 4, 12);
+    const n2 = pfbm(u, v, 32, 3, 44);
+    const fine = pnoise(u * 256, v * 256, 256, 45);
+    const edgeN = pfbm(u, v, 24, 3, 46);
+    const rad = 0.012 + hash2(k.id, 1, 17) * 0.03;
+    const d = rrect(k.dx, k.dy, k.hx - 0.01, k.hy - 0.01, rad) + (edgeN - 0.5) * 0.03;
+    const inS = sstep(0.003, -0.004, d);
+    const bulge = sstep(0, 0.05, -d);
+    const id = hash2(k.id, 0, 17);
+    const hue = hash2(k.id, 2, 17);
+    const tone = 142 + (id - 0.5) * 44 + (n - 0.5) * 36 + (n2 - 0.5) * 18 + (fine - 0.5) * 12;
+    const wear = 0.84 + 0.16 * bulge;
+    const sc = tone * wear;
+    const sr = sc * (hue > 0.7 ? 1.05 : hue < 0.25 ? 0.97 : 1), sg = sc * 0.97, sb = sc * (hue > 0.7 ? 0.87 : hue < 0.25 ? 0.97 : 0.92);
+    const mc = (150 + (fine - 0.5) * 30 + (n - 0.5) * 20) * 0.78;
+    const r = sr * inS + mc * (1 - inS), g = sg * inS + mc * 0.96 * (1 - inS), b = sb * inS + mc * 0.86 * (1 - inS);
+    const hgt = inS * (0.45 + bulge * 0.35 + n * 0.14 + fine * 0.04) + (1 - inS) * fine * 0.05;
+    return [r, g, b, hgt];
+  }, 7);
+});
 
-/** Wooden planks (vertical). */
-export const planksTex = () => cached('planks', () => build(256, (u, v) => {
-  const boards = 6;
-  const bx = u * boards;
-  const bi = Math.floor(bx);
-  const fx = bx - bi;
-  const grain = pfbm(u * 0.3 + bi * 0.17, v * 2, 4, 4, 7 + bi);
-  const lines = Math.sin((v * 40 + grain * 10) * Math.PI) * 0.5 + 0.5;
-  const tone = 150 + (hash2(bi, 0, 3) - 0.5) * 50 + lines * 18 + (grain - 0.5) * 30;
-  const gap = fx < 0.04 || fx > 0.96 ? 0.45 : 1;
-  const c = tone * gap;
-  return [c, c * 0.74, c * 0.5, gap * (0.6 + lines * 0.2)];
-}, 3));
+/** Wooden boards (vertical): varied widths, grain, butt joints with nails, weathering. */
+export const planksTex = () => cached('planks', () => {
+  const rng = new RNG(77);
+  const edges = [0];
+  while (edges[edges.length - 1] < 0.86) edges.push(edges[edges.length - 1] + 0.12 + rng.next() * 0.08);
+  edges.push(1);
+  const joint = edges.map(() => rng.next());
+  return build(512, (u, v) => {
+    let bi = 0;
+    while (bi < edges.length - 2 && u >= edges[bi + 1]) bi++;
+    const a = edges[bi], b = edges[bi + 1];
+    const fx = (u - a) / (b - a);
+    const jv = joint[bi];
+    let dv = v - jv; dv -= Math.round(dv);
+    const grain = pfbmA(u, v, 64, 2, 3, 7 + bi);
+    const rings = Math.sin((u * 40 + pfbmA(u, v, 4, 1, 3, 70 + bi) * 5) * Math.PI) * 0.5 + 0.5;
+    const fibre = pnoiseA(u * 256, v * 8, 256, 8, 71);
+    const weather = hash2(bi, 0, 3);
+    const gap = sstep(0.05, 0.0, Math.min(fx, 1 - fx) * (b - a) * 10);
+    const butt = sstep(0.006, 0.0, Math.abs(dv));
+    let nail = 0;
+    for (const sx of [0.22, 0.78]) {
+      const nd = Math.hypot((fx - sx) * (b - a), dv - 0.025 * Math.sign(dv || 1));
+      nail = Math.max(nail, sstep(0.007, 0.004, nd));
+    }
+    const tone = 146 + (weather - 0.5) * 50 + rings * 16 + (grain - 0.5) * 34 + (fibre - 0.5) * 12;
+    const gray = 0.2 + weather * 0.35;
+    let r = tone, g = tone * 0.74, bb = tone * 0.5;
+    const l = (r + g + bb) / 3;
+    r = r * (1 - gray) + l * gray; g = g * (1 - gray) + l * gray; bb = bb * (1 - gray) + l * gray * 0.95;
+    const dark = 1 - gap * 0.6 - butt * 0.5;
+    r *= dark; g *= dark; bb *= dark;
+    if (nail > 0) { r = r * (1 - nail) + 60 * nail; g = g * (1 - nail) + 56 * nail; bb = bb * (1 - nail) + 54 * nail; }
+    return [r, g, bb, (1 - gap) * (0.6 + rings * 0.12 + grain * 0.18) - butt * 0.3 + nail * 0.15];
+  }, 6);
+});
 
-/** Straw thatch. */
-export const thatchTex = () => cached('thatch', () => build(256, (u, v) => {
-  const strands = pnoise(u * 180, v * 12, 180, 44);
-  const layer = (v * 9) % 1;
-  const n = pfbm(u, v, 8, 3, 3);
-  const c = 170 + strands * 60 - Math.pow(layer, 4) * 70 + (n - 0.5) * 40;
-  return [c, c * 0.86, c * 0.52, strands * 0.6 + (1 - layer) * 0.4];
-}, 5));
+/** Straw thatch laid in courses; ragged strand ends shade the course below. */
+export const thatchTex = () => cached('thatch', () => build(512, (u, v) => {
+  const courses = 6;
+  const rag = pnoiseA(u * 18, 0, 18, 1, 41) * 0.14 + pnoiseA(u * 90, 0, 90, 1, 42) * 0.05 + pnoiseA(u * 260, 0, 260, 1, 43) * 0.03;
+  const cv = v * courses + rag;
+  const fy = cv - Math.floor(cv); // 0 = strand ends, 1 = under the next course
+  const ci = Math.floor(cv);
+  const strands = pnoiseA(u * 260, v * 6, 260, 6, 44 + (ci & 3));
+  const strands2 = pnoiseA(u * 130, v * 12, 130, 12, 48);
+  const n = pfbm(u, v, 6, 4, 3);
+  const grey = sstep(0.55, 0.85, pfbm(u, v, 3, 3, 49)) * 0.4;
+  const shade = 1 - Math.pow(fy, 3) * 0.4 - (fy < 0.05 ? (0.05 - fy) * 4 : 0);
+  const tone = (160 + strands * 48 + (strands2 - 0.5) * 26 + (n - 0.5) * 40) * shade;
+  const r = tone, g = tone * (0.84 - grey * 0.04), b = tone * (0.52 + grey * 0.22);
+  const l = (r + g + b) / 3;
+  return [r * (1 - grey * 0.45) + l * grey * 0.45, g * (1 - grey * 0.45) + l * grey * 0.45, b * (1 - grey * 0.45) + l * grey * 0.4,
+    strands * 0.18 + (1 - fy) * 0.6 + strands2 * 0.06];
+}, 3.5));
 
 /** Dirt/cobble ground patch for yards. */
 export const cobbleTex = () => cached('cobble', () => build(256, (u, v) => {

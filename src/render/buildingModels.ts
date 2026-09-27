@@ -1,7 +1,7 @@
 // Procedural building models for every building type.
 import * as THREE from 'three';
 import type { BuildingType } from '../game/defs';
-import { ModelBuilder, box, cone, cyl, gableRoof, pyramidRoof, sphere } from './geom';
+import { ModelBuilder, RoofStyle, box, cone, coneRoof, cyl, gableRoof, pyramidRoof, ridgeCap, sphere } from './geom';
 
 type MB = ModelBuilder;
 
@@ -66,7 +66,7 @@ function win(mb: MB, x: number, y: number, z: number, face: 'z' | '-z' | 'x' | '
   const nx = face === 'x' ? 1 : face === '-x' ? -1 : 0, nz = face === 'z' ? 1 : face === '-z' ? -1 : 0;
   mb.add('window', box(w, h, 0.03), x + nx * 0.008, y, z + nz * 0.008, ry);
   // frame + cross
-  mb.add('timber', box(w + 0.06, 0.045, 0.05), x + nx * 0.02, y - h / 2 - 0.02, z + nz * 0.02, ry);
+  mb.add('timber', box(w + 0.1, 0.04, 0.085), x + nx * 0.035, y - h / 2 - 0.022, z + nz * 0.035, ry);
   mb.add('timber', box(w + 0.06, 0.04, 0.05), x + nx * 0.02, y + h / 2 + 0.02, z + nz * 0.02, ry);
   mb.add('timber', box(0.022, h, 0.04), x + nx * 0.02, y, z + nz * 0.02, ry);
   mb.add('timber', box(w, 0.022, 0.04), x + nx * 0.02, y + h * 0.1, z + nz * 0.02, ry);
@@ -81,6 +81,31 @@ function chimney(mb: MB, x: number, y: number, z: number, h = 0.5, w = 0.17) {
   mb.add('stone', box(w, h, w, 3), x, y + h / 2, z);
   mb.add('stoneDark', box(w + 0.05, 0.05, w + 0.05), x, y + h, z);
   mb.anchors.chimneys.push(new THREE.Vector3(x, y + h + 0.05, z));
+}
+
+/** Dressed corner stones alternating between the two faces of each wall corner. */
+function quoins(mb: MB, w: number, d: number, h: number, x: number, y: number, z: number, mat: string) {
+  const n = Math.max(3, Math.round(h / 0.13));
+  const bh = h / n;
+  const p = 0.014; // how far they stand proud of the wall
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    for (let k = 0; k < n; k++) {
+      const long = (k + (sx * sz > 0 ? 0 : 1)) % 2 === 0;
+      const lx = long ? 0.15 : 0.085, lz = long ? 0.085 : 0.15;
+      const jit = (Math.sin(k * 12.9 + sx * 3.1 + sz * 7.7) * 0.5 + 0.5) * 0.02;
+      mb.add(mat, box(lx + jit, bh - 0.012, lz + jit, 2.2),
+        x + sx * (w / 2 - (lx + jit) / 2 + p), y + bh * (k + 0.5), z + sz * (d / 2 - (lz + jit) / 2 + p));
+    }
+  }
+}
+
+/** Timber bargeboards along the sloping verges of a tiled gable roof. */
+function bargeboards(mb: MB, r: ReturnType<typeof gableRoof>, x: number, top: number, z: number) {
+  const h = r.gableH, e = r.eave;
+  const ang = Math.atan2(h - e, r.hd);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    mb.add('timber', box(0.035, 0.075, r.slopeLen + 0.03, 2), x + sx * (r.hw + 0.012), top + (h + e) / 2 - 0.02, z + sz * r.hd / 2, 0, sz * ang, 0);
+  }
 }
 
 interface HouseOpts {
@@ -99,15 +124,18 @@ function house(mb: MB, o: HouseOpts) {
   const base = y + 0.12;
   mb.add(wall, box(o.w, o.wallH, o.d, 1), x, base + o.wallH / 2, z);
   if (o.timber) timberFrame(mb, o.w, o.d, o.wallH, x, base, z, o.braces ?? true);
+  else if (wall !== 'planks') quoins(mb, o.w, o.d, o.wallH, x, base, z, wall === 'stone' ? 'stoneDark' : 'stone');
   const top = base + o.wallH;
+  const style: RoofStyle = roof === 'thatch' ? 'thatch' : 'tile';
   if (o.hip) {
-    mb.add(roof, pyramidRoof(o.w, o.d, o.roofH, o.over ?? 0.12, 1.2, Math.max(0, o.w - o.d)), x, top, z);
+    mb.add(roof, pyramidRoof(o.w, o.d, o.roofH, o.over ?? 0.12, 1.2, Math.max(0, o.w - o.d), style), x, top, z);
   } else {
-    const r = gableRoof(o.w, o.d, o.roofH, o.over ?? 0.13, 1.2);
+    const over = o.over ?? 0.13;
+    const r = gableRoof(o.w, o.d, o.roofH, over, 1.2, style);
     mb.add(roof, r.roof, x, top, z);
     mb.add(wall, r.gable, x, top, z);
-    // ridge cap
-    mb.add(roof, cyl(0.045, 0.045, o.w + (o.over ?? 0.13) * 2 + 0.02, 6), x - o.w / 2 - (o.over ?? 0.13) - 0.01, top + o.roofH - 0.01, z, 0, 0, -Math.PI / 2);
+    mb.add(roof, ridgeCap(o.w + over * 2 + 0.04, style), x, top + o.roofH + (style === 'thatch' ? 0.0 : 0.005), z);
+    if (style === 'tile') bargeboards(mb, r, x, top, z);
     if (o.timber) {
       mb.add('timber', box(0.05, o.roofH * 0.9, 0.05), x + o.w / 2 + 0.012, top + o.roofH * 0.45, z);
       mb.add('timber', box(0.05, o.roofH * 0.9, 0.05), x - o.w / 2 - 0.012, top + o.roofH * 0.45, z);
@@ -204,8 +232,8 @@ function crenels(mb: MB, w: number, d: number, y: number, x = 0, z = 0, mat = 's
 }
 
 function roundTower(mb: MB, x: number, z: number, r: number, h: number, roofH: number, roof: string, crenel = false) {
-  mb.add('stone', cyl(r * 0.92, r, h, 14, 1.2), x, 0, z);
-  mb.add('stoneDark', cyl(r + 0.04, r + 0.06, 0.25, 14, 1.2), x, -0.12, z);
+  mb.add('stone', cyl(r * 0.92, r, h, 28, 1.2), x, 0, z);
+  mb.add('stoneDark', cyl(r + 0.04, r + 0.06, 0.25, 28, 1.2), x, -0.12, z);
   // arrow slits
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
@@ -218,7 +246,8 @@ function roundTower(mb: MB, x: number, z: number, r: number, h: number, roofH: n
     }
   }
   if (roofH > 0) {
-    mb.add(roof, cone(r + 0.1, roofH, 14, 1.3), x, h, z);
+    mb.add('stoneDark', cyl(r * 0.95, r * 0.93, 0.07, 28, 2), x, h - 0.07, z);
+    mb.add(roof, coneRoof(r + 0.1, roofH, 28, 1.3), x, h, z);
     mb.add('gold', sphere(0.04, 8, 6), x, h + roofH, z);
   }
   mb.anchors.top = Math.max(mb.anchors.top, h + roofH);
@@ -457,9 +486,9 @@ const designs: Partial<Record<BuildingType, Design>> = {
   },
   mill(mb, owner) {
     foundation(mb, 1.3, 1.3, 0, -0.1, 0.12);
-    mb.add('stone', cyl(0.5, 0.66, 1.9, 16, 1.2), 0, 0.1, -0.1);
-    mb.add(`roof${owner}`, cone(0.62, 0.7, 16, 1.4), 0, 2.0, -0.1);
-    mb.add('timber', cyl(0.62, 0.62, 0.08, 16), 0, 1.96, -0.1);
+    mb.add('stone', cyl(0.5, 0.66, 1.9, 32, 1.2), 0, 0.1, -0.1);
+    mb.add(`roof${owner}`, coneRoof(0.62, 0.7, 32, 1.4), 0, 2.0, -0.1);
+    mb.add('timber', cyl(0.62, 0.62, 0.08, 32), 0, 1.96, -0.1);
     door(mb, 0, 0.12, 0.52, 0.32, 0.55, 'z', true);
     win(mb, 0, 1.1, 0.46, 'z', 0.16, 0.2);
     win(mb, 0.5, 0.8, -0.1, 'x', 0.16, 0.2);
@@ -686,7 +715,7 @@ const designs: Partial<Record<BuildingType, Design>> = {
       mb.add('marble', cyl(0.02, 0.02, 0.28, 6), Math.sin(a) * 0.17, yl + 0.06, cz + Math.cos(a) * 0.17);
     }
     mb.add('glowHoly', new THREE.OctahedronGeometry(0.09, 0), 0, yl + 0.2, cz);
-    mb.add(`roof${owner}`, cone(0.25, 0.26, 12, 1.2), 0, yl + 0.34, cz);
+    mb.add(`roof${owner}`, coneRoof(0.25, 0.26, 16, 1.2), 0, yl + 0.34, cz);
     mb.add('gold', sphere(0.05, 8, 6), 0, yl + 0.63, cz);
     // portico
     for (const px of [-0.6, -0.2, 0.2, 0.6]) column(mb, px, y0, 1.6, ch, 0.06);

@@ -1,7 +1,7 @@
 // Shared material library for buildings and props. Every material is shader-patched.
 import * as THREE from 'three';
 import { patchMaterial, patchedDepthMaterial } from './shaderPatch';
-import { clothTex, cobbleTex, planksTex, plasterTex, roofTex, stoneTex, thatchTex, timberTex } from './textures';
+import { clothTex, cobbleTex, marbleTex, planksTex, plasterTex, roofTex, stoneTex, thatchTex, timberTex } from './textures';
 
 export const ROOF_COLORS = [0xb8553a, 0x4d6f9e, 0xc49a3c, 0x7c4f8e];
 export const BANNER_COLORS = [0xc8342a, 0x2f6fd0, 0xe0b020, 0x8a3fd0];
@@ -19,7 +19,7 @@ function def(key: string, f: Factory) {
   factories[key] = f;
 }
 
-def('plaster', () => { const t = plasterTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.92 }); });
+def('plaster', () => { const t = plasterTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.92 }); });
 def('plasterWarm', () => { const t = plasterTex(); return std({ map: t.map, normalMap: t.normal, color: 0xf0d8b0, roughness: 0.92 }); });
 def('sandstone', () => { const t = stoneTex(); return std({ map: t.map, normalMap: t.normal, color: 0xe8cc98, roughness: 0.9 }); });
 def('timber', () => { const t = timberTex(); return std({ map: t.map, normalMap: t.normal, roughness: 0.8 }); });
@@ -48,7 +48,7 @@ def('window', () => std({ color: 0x1a1612, roughness: 0.3, emissive: new THREE.C
 def('glowFire', () => std({ color: 0x331100, emissive: new THREE.Color(1.0, 0.45, 0.12), emissiveIntensity: 3.5, roughness: 1 }));
 def('glowGold', () => std({ color: 0x331100, emissive: new THREE.Color(1.0, 0.75, 0.2), emissiveIntensity: 2.5, roughness: 1 }));
 def('glowHoly', () => std({ color: 0x332a10, emissive: new THREE.Color(1.0, 0.72, 0.38), emissiveIntensity: 2.2, roughness: 1 }));
-def('marble', () => { const t = plasterTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.2, 0.2), color: 0xfff9ee, roughness: 0.38 }); });
+def('marble', () => { const t = marbleTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.4, 0.4), color: 0xfff9ee, roughness: 0.34 }); });
 def('marbleDark', () => { const t = stoneTex(); return std({ map: t.map, normalMap: t.normal, normalScale: new THREE.Vector2(0.6, 0.6), color: 0xd6cec0, roughness: 0.7 }); });
 def('grape', () => std({ color: 0x4a1a4c, roughness: 0.3 }));
 def('wine', () => std({ color: 0x4a0c24, roughness: 0.12 }));
@@ -62,9 +62,11 @@ for (let p = 0; p < 4; p++) {
 const WIND_MATS = new Set(['banner0', 'banner1', 'banner2', 'banner3', 'canvasFlag']);
 
 const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'glowHoly', 'water', 'wine', 'metal', 'iron', 'gold']);
+const GRIME = new Set(['plaster', 'plasterWarm', 'sandstone', 'timber', 'stone', 'stoneDark', 'planks', 'marble', 'marbleDark', 'wood']);
 function patchOpts(key: string, clip: boolean) {
   const snow = NO_SNOW.has(key) || WIND_MATS.has(key) ? 0 : 1;
-  return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), key: `bld_${key}`, snow };
+  const grime = GRIME.has(key) ? (key.startsWith('marble') ? 0.6 : 1) : 0;
+  return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), key: `bld_${key}`, snow, grime };
 }
 
 export function getMaterial(key: string): THREE.Material {

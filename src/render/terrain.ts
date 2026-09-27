@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Game } from '../game/game';
 import { WATER_LEVEL } from '../game/world';
 import { G, patchMaterial } from './shaderPatch';
+import { getTerrainDetail } from './terrainDetail';
 
 function dataTex(W: number, H: number, linear = true): THREE.DataTexture {
   const t = new THREE.DataTexture(new Uint8Array(W * H * 4), W, H, THREE.RGBAFormat);
@@ -40,6 +41,33 @@ float tBump;
 float tRough;
 float tAO;
 vec3 tEmis;
+vec3 tDetG;
+
+// close-up detail layers (see terrainDetail.ts): two lookups per layer at different
+// rotations/scales, merged height-aware so the tiling never shows.
+uniform sampler2DArray tDetail;
+uniform sampler2DArray tDetailN;
+const mat2 DROT = mat2(0.4536, 0.8912, -0.8912, 0.4536);
+vec2 dUv1, dUv2, dD1x, dD1y, dD2x, dD2y;
+float dMix;
+
+void detailAt(float layer, out vec4 A, out vec4 M) {
+  vec4 a1 = textureGrad(tDetail, vec3(dUv1, layer), dD1x, dD1y);
+  vec4 a2 = textureGrad(tDetail, vec3(dUv2, layer), dD2x, dD2y);
+  vec4 m1 = textureGrad(tDetailN, vec3(dUv1, layer), dD1x, dD1y);
+  vec4 m2 = textureGrad(tDetailN, vec3(dUv2, layer), dD2x, dD2y);
+  float b = clamp(0.5 + ((a2.a - a1.a) * 0.6 + dMix - 0.5) * 5.0, 0.0, 1.0);
+  A = mix(a1, a2, b);
+  vec2 g1 = m1.rg * 2.0 - 1.0;
+  vec2 g2 = (m2.rg * 2.0 - 1.0) * DROT; // back into world orientation
+  M = vec4(mix(g1, g2, b), mix(m1.b, m2.b, b), mix(m1.a, m2.a, b));
+}
+vec3 dMod(vec4 A, float k) { return mix(vec3(1.0), A.rgb * 2.5, k); }
+vec3 hash32(vec2 q) {
+  vec3 p3 = fract(vec3(q.xyx) * vec3(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yxz + 33.33);
+  return fract((p3.xxy + p3.yzz) * p3.zyx);
+}
 `;
 
 const TERRAIN_MAP = /* glsl */ `
@@ -75,6 +103,25 @@ const TERRAIN_MAP = /* glsl */ `
   float pathM = smoothstep(0.22, 0.55, wear + (n3.r - 0.5) * 0.3);
   w[3] += pathM * 1.5 * (w[0] + w[1] + w[2] + w[7]);
 
+  // ---- close-up detail
+  float detK = 1.0 - smoothstep(24.0, 66.0, camDist);
+  dUv1 = p * 0.5;
+  dUv2 = DROT * p * 0.43 + vec2(0.37, 0.71);
+  dD1x = dFdx(dUv1); dD1y = dFdy(dUv1); dD2x = dFdx(dUv2); dD2y = dFdy(dUv2);
+  vec3 wpx = dFdx(vWPos), wpy = dFdy(vWPos);
+  dMix = smoothstep(0.3, 0.7, n2.r * 0.6 + n1.g * 0.4);
+  vec4 dA0 = vec4(0.4, 0.4, 0.4, 0.5), dA1 = dA0, dA2 = dA0, dA3 = dA0, dA5 = dA0;
+  vec4 dM0 = vec4(0.0, 0.0, 1.0, 0.5), dM1 = dM0, dM2 = dM0, dM3 = dM0, dM5 = dM0;
+  if (detK > 0.001) {
+    if (w[0] + w[1] > 0.001) detailAt(0.0, dA0, dM0);
+    if (w[2] > 0.001) detailAt(1.0, dA1, dM1);
+    if (w[3] > 0.001 || misc.a > 0.01) detailAt(2.0, dA2, dM2);
+    if (w[4] + w[6] > 0.001) detailAt(3.0, dA3, dM3);
+    if (w[7] > 0.001) detailAt(5.0, dA5, dM5);
+  }
+  vec3 dg = vec3(0.0);
+  float dCav = 0.0, dRough = 0.0;
+
   float hts[8];
   hts[0] = n3.r * 0.55 + n4.g * 0.45;
   hts[1] = n3.g * 0.55 + n4.r * 0.45;
@@ -84,6 +131,11 @@ const TERRAIN_MAP = /* glsl */ `
   hts[5] = n1.r * 0.55 + n2.r * 0.55;
   hts[6] = n1.g * 0.4 + 0.35;
   hts[7] = n2.a * 0.25;
+  // fine detail relief makes transitions ragged up close (blades poking through soil)
+  float dhK = detK * (1.0 - smoothstep(10.0, 30.0, camDist) * 0.6);
+  hts[0] += (dA0.a - 0.5) * 0.3 * dhK; hts[1] += (dA0.a - 0.5) * 0.3 * dhK;
+  hts[2] += (dA1.a - 0.5) * 0.26 * dhK; hts[3] += (dA2.a - 0.5) * 0.26 * dhK;
+  hts[4] += (dA3.a - 0.5) * 0.2 * dhK; hts[7] += (dA5.a - 0.5) * 0.2 * dhK;
   float mx = 0.0;
   float v[8];
   for (int i = 0; i < 8; i++) { v[i] = w[i] > 0.001 ? w[i] + hts[i] * 0.55 : 0.0; mx = max(mx, v[i]); }
@@ -99,44 +151,77 @@ const TERRAIN_MAP = /* glsl */ `
   if (v[0] > 0.0) {
     vec3 c = mix(C(84,130,40), C(124,150,50), smoothstep(0.3, 0.75, n0.r));
     c = mix(c, C(54,96,32), smoothstep(0.45, 0.8, n1.g) * 0.5);
-    c *= 0.88 + 0.24 * mix(0.5, n4.r * 0.7 + n5.g * 0.3, farFade);
+    c *= 0.88 + 0.24 * mix(0.5, n4.r * 0.7 + n5.g * 0.3, farFade * (1.0 - detK));
     c = mix(c, C(152,158,72), smoothstep(0.74, 0.95, n2.g) * 0.3);
-    col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5) * 0.35 * v[0];
+    c *= dMod(dA0, detK);
+    dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * v[0]; dCav += dM0.z * v[0]; dRough += dM0.w * v[0];
+    col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5) * 0.35 * (1.0 - detK) * v[0];
   }
   // meadow with flowers
   if (v[1] > 0.0) {
     vec3 c = mix(C(106,150,48), C(142,166,62), n0.g);
-    c *= 0.88 + 0.24 * mix(0.5, n4.g, farFade);
+    c *= 0.88 + 0.24 * mix(0.5, n4.g, farFade * (1.0 - detK));
+    c *= dMod(dA0, detK);
     vec4 fl = texture2D(tNoise, pr1 * 0.62 + vec2(0.2, 0.9));
     float f = (1.0 - smoothstep(0.14, 0.3, fl.b)) * step(0.5, fl.a) * farFade;
     vec3 fc = fl.a > 0.88 ? C(248,244,236) : fl.a > 0.78 ? C(252,212,58) : fl.a > 0.67 ? C(176,118,222) : C(232,96,84);
+    f *= 1.0 - detK;
     c = mix(c, fc, f);
-    col += c * v[1]; rough += 0.93 * v[1]; bump += (n4.g * 0.4 + f * 0.6) * 0.35 * v[1];
+    // up close: analytic five-petal flowers, crisp at any zoom, clustered like the far speckles
+    vec2 fp = p * 6.0;
+    float fw = (fwidth(fp.x) + fwidth(fp.y)) * 0.7;
+    if (detK > 0.001) {
+      vec2 fi = floor(fp), ff = fract(fp) - 0.5;
+      vec3 hh = hash32(fi);
+      float h1 = hh.x, h2 = hh.y, h3 = hh.z;
+      float dens = smoothstep(0.3, 0.7, fl.a * 0.55 + n2.b * 0.45);
+      if (h1 < 0.6 * dens + 0.12) {
+        vec2 d = ff - (vec2(h2, h3) - 0.5) * 0.4;
+        float r = length(d);
+        float R = 0.15 + h2 * 0.1;
+        float petal = R * (0.6 + 0.4 * abs(cos(atan(d.y, d.x) * 2.5 + h3 * 6.28)));
+        float fm = (1.0 - smoothstep(petal - fw, petal + fw, r)) * detK;
+        float core = 1.0 - smoothstep(R * 0.28 - fw, R * 0.28 + fw, r);
+        float hc = fract(h3 * 7.13);
+        vec3 pc = hc > 0.7 ? C(250,248,240) : hc > 0.5 ? C(255,214,50) : hc > 0.3 ? C(170,110,230) : hc > 0.15 ? C(236,84,70) : C(96,140,236);
+        pc *= 0.85 + 0.3 * smoothstep(0.0, R, r);
+        c = mix(c, mix(pc, C(240,170,30), core), fm);
+        f = max(f, fm);
+      }
+    }
+    dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * (1.0 - f) * v[1]; dCav += mix(dM0.z, 1.0, f) * v[1]; dRough += dM0.w * v[1];
+    col += c * v[1]; rough += 0.93 * v[1]; bump += (n4.g * 0.4 * (1.0 - detK) + f * 0.6) * 0.35 * v[1];
   }
   // forest floor
   if (v[2] > 0.0) {
     vec3 c = mix(C(62,98,34), C(74,92,38), smoothstep(0.35, 0.7, n2.r));
     c = mix(c, C(96,82,44), smoothstep(0.62, 0.9, n3.a) * 0.4);
     c = mix(c, C(48,78,30), smoothstep(0.5, 0.8, n0.g) * 0.5);
-    c *= 0.86 + 0.26 * mix(0.5, n4.b, farFade);
-    col += c * v[2]; rough += 0.97 * v[2]; bump += n4.b * 0.4 * v[2];
+    c *= 0.86 + 0.26 * mix(0.5, n4.b, farFade * (1.0 - detK));
+    c *= dMod(dA1, detK);
+    dg += vec3(dM1.x, 0.0, dM1.y) * 0.8 * v[2]; dCav += dM1.z * v[2]; dRough += dM1.w * v[2];
+    col += c * v[2]; rough += 0.97 * v[2]; bump += n4.b * 0.4 * (1.0 - detK) * v[2];
   }
   // dirt / packed earth
   if (v[3] > 0.0) {
     vec3 c = mix(C(116,86,56), C(142,110,74), n2.g);
     c *= 0.84 + 0.28 * n3.r;
-    float peb = (1.0 - smoothstep(0.1, 0.24, n3.b)) * step(0.45, n3.a) * farFade;
+    float peb = (1.0 - smoothstep(0.1, 0.24, n3.b)) * step(0.45, n3.a) * farFade * (1.0 - detK);
     c = mix(c, C(156,146,130), peb * 0.65);
     c = mix(c, c * 0.8, pathM * 0.35 * (1.0 - n4.r));
+    c *= dMod(dA2, detK);
+    dg += vec3(dM2.x, 0.0, dM2.y) * 0.9 * v[3]; dCav += dM2.z * v[3]; dRough += dM2.w * v[3];
     col += c * v[3]; rough += 0.95 * v[3]; bump += (n3.r * 0.4 + peb * 0.8) * 0.4 * v[3];
   }
   // sand
   if (v[4] > 0.0) {
     vec3 c = mix(C(212,188,134), C(228,208,158), n1.r);
     float rip = sin(dot(p, vec2(2.4, 1.1)) + n2.r * 7.0) * 0.5 + 0.5;
-    c *= 0.92 + 0.08 * rip + 0.1 * (n4.r - 0.5) * farFade;
+    c *= 0.92 + 0.08 * rip + 0.1 * (n4.r - 0.5) * farFade * (1.0 - detK);
     float wetS = 1.0 - smoothstep(0.02, 0.28, wh);
     c = mix(c, c * 0.58, wetS);
+    c *= dMod(dA3, detK);
+    dg += vec3(dM3.x, 0.0, dM3.y) * mix(0.6, 0.25, wetS) * v[4]; dCav += dM3.z * v[4]; dRough += dM3.w * v[4];
     col += c * v[4]; rough += mix(0.9, 0.35, wetS) * v[4]; bump += rip * 0.25 * v[4];
   }
   // rock (triplanar so cliffs don't stretch)
@@ -153,8 +238,25 @@ const TERRAIN_MAP = /* glsl */ `
     c = mix(c, C(118,100,82), smoothstep(0.6, 0.85, n0.r) * 0.35);
     float crack = (1.0 - smoothstep(0.0, 0.1, r3.b)) * step(0.55, r3.a) * 0.6 * farFade;
     c *= 1.0 - crack * 0.35;
-    c *= 0.9 + 0.2 * r4.g * farFade;
+    c *= 0.9 + 0.2 * r4.g * farFade * (1.0 - detK);
     c = mix(c, C(96,110,58), smoothstep(0.66, 0.9, r3.b) * (1.0 - slope) * 0.55);
+    // triplanar close-up detail
+    vec4 ra = vec4(0.4, 0.4, 0.4, 0.5);
+    vec3 rgW = vec3(0.0);
+    float rc = 1.0, rr = 0.5;
+    if (detK > 0.001) {
+      vec3 q = vWPos * 0.3333, qx = wpx * 0.3333, qy = wpy * 0.3333;
+      ra = vec4(0.0); rc = 0.0; rr = 0.0;
+      vec4 a, m;
+      a = textureGrad(tDetail, vec3(q.zy, 4.0), qx.zy, qy.zy); m = textureGrad(tDetailN, vec3(q.zy, 4.0), qx.zy, qy.zy);
+      ra += a * tw.x; rgW += vec3(0.0, m.g * 2.0 - 1.0, m.r * 2.0 - 1.0) * tw.x; rc += m.b * tw.x; rr += m.a * tw.x;
+      a = textureGrad(tDetail, vec3(q.xz, 4.0), qx.xz, qy.xz); m = textureGrad(tDetailN, vec3(q.xz, 4.0), qx.xz, qy.xz);
+      ra += a * tw.y; rgW += vec3(m.r * 2.0 - 1.0, 0.0, m.g * 2.0 - 1.0) * tw.y; rc += m.b * tw.y; rr += m.a * tw.y;
+      a = textureGrad(tDetail, vec3(q.xy, 4.0), qx.xy, qy.xy); m = textureGrad(tDetailN, vec3(q.xy, 4.0), qx.xy, qy.xy);
+      ra += a * tw.z; rgW += vec3(m.r * 2.0 - 1.0, m.g * 2.0 - 1.0, 0.0) * tw.z; rc += m.b * tw.z; rr += m.a * tw.z;
+    }
+    c *= dMod(ra, detK);
+    dg += rgW * 1.1 * v[5]; dCav += rc * v[5]; dRough += rr * v[5];
     // ore specks
     vec4 ore = texture2D(tOre, muv);
     vec3 wp2 = vWPos + vec3(r2.g - 0.5, 0.0, r2.b - 0.5) * 0.9;
@@ -175,6 +277,8 @@ const TERRAIN_MAP = /* glsl */ `
     vec3 c = mix(C(234,240,248), C(212,224,242), n2.r * 0.8);
     c = mix(c, C(190,205,230), slope * 0.6);
     tEmis += vec3(0.8, 0.9, 1.0) * pow(n5.a, 40.0) * 2.0 * farFade;
+    c *= dMod(dA3, detK * 0.25);
+    dg += vec3(dM3.x, 0.0, dM3.y) * 0.3 * v[6]; dCav += mix(1.0, dM3.z, 0.3) * v[6]; dRough += 0.5 * v[6];
     col += c * v[6]; rough += 0.55 * v[6]; bump += n2.r * 0.4 * v[6];
   }
   // swamp
@@ -182,6 +286,8 @@ const TERRAIN_MAP = /* glsl */ `
     vec3 c = mix(C(70,80,42), C(56,62,38), n2.g);
     float pud = (1.0 - smoothstep(0.36, 0.44, n1.g + (n3.r - 0.5) * 0.1));
     c = mix(c, C(34,46,44), pud * 0.85);
+    c *= dMod(dA5, detK * (1.0 - pud * 0.8));
+    dg += vec3(dM5.x, 0.0, dM5.y) * 0.7 * (1.0 - pud) * v[7]; dCav += mix(dM5.z, 1.0, pud) * v[7]; dRough += mix(dM5.w, 0.5, pud) * v[7];
     col += c * v[7]; rough += mix(0.9, 0.08, pud) * v[7]; bump += (1.0 - pud) * n3.r * 0.4 * v[7];
   }
 
@@ -189,10 +295,16 @@ const TERRAIN_MAP = /* glsl */ `
   float tilled = misc.a;
   if (tilled > 0.01) {
     float furrow = sin(p.x * 8.0 + n2.r * 2.0) * 0.5 + 0.5;
-    vec3 soil = mix(C(92,64,40), C(120,86,54), furrow) * (0.9 + 0.2 * n4.r);
+    vec3 soil = mix(C(92,64,40), C(120,86,54), furrow) * (0.9 + 0.2 * n4.r) * dMod(dA2, detK);
     col = mix(col, soil, tilled);
     bump = mix(bump, furrow * 0.5, tilled);
+    dg = mix(dg, vec3(dM2.x, 0.0, dM2.y) * 0.9, tilled); dCav = mix(dCav, dM2.z, tilled); dRough = mix(dRough, dM2.w, tilled);
   }
+
+  // detail cavities darken crevices between blades / around pebbles; per-texel roughness
+  col *= mix(1.0, dCav, detK * 0.75);
+  rough = clamp(rough * mix(1.0, dRough * 2.0, detK), 0.04, 1.0);
+  tDetG = dg * detK;
 
   // underwater: tint, caustics
   if (wh < 0.0) {
@@ -204,6 +316,7 @@ const TERRAIN_MAP = /* glsl */ `
     float caust = (1.0 - smoothstep(0.05, 0.4, abs(c1 - c2))) ;
     tEmis += vec3(0.55, 0.85, 0.8) * caust * 0.22 * uSunI * (1.0 - smoothstep(0.0, 2.6, depth)) * smoothstep(0.0, 0.25, depth);
     rough = 0.6;
+    tDetG *= 1.0 - smoothstep(0.0, 0.6, depth);
   }
 
   // wetness from rain
@@ -275,7 +388,7 @@ const TERRAIN_MAP = /* glsl */ `
 
   tBump = bump;
   tRough = rough;
-  tAO = misc.b;
+  tAO = misc.b * mix(1.0, dCav, detK * 0.5);
   diffuseColor.rgb = col;
 `;
 
@@ -290,9 +403,11 @@ const TERRAIN_NORMAL = /* glsl */ `
     vec3 r1 = cross(dpy, normal);
     vec3 r2 = cross(normal, dpx);
     float det = dot(dpx, r1);
-    float scale = 0.9 * (1.0 - smoothstep(15.0, 80.0, length(vViewPosition)));
+    float dist = length(vViewPosition);
+    float scale = 0.9 * (1.0 - smoothstep(15.0, 80.0, dist)) * (0.35 + 0.65 * smoothstep(20.0, 60.0, dist));
     vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
     normal = normalize(abs(det) * normal - grad * scale);
+    normal = normalize(normal + (viewMatrix * vec4(tDetG, 0.0)).xyz);
   }
 `;
 
@@ -351,8 +466,10 @@ export class TerrainRenderer {
     this.heightTex.magFilter = THREE.LinearFilter;
     this.heightTex.minFilter = THREE.LinearFilter;
     this.heightTex.needsUpdate = true;
+    G.tHeight.value = this.heightTex;
     G.tFog.value = this.misc;
     G.uMapSize.value.set(W, H);
+    const detail = getTerrainDetail();
 
     this.uniforms = {
       tSplatA: { value: this.splatA },
@@ -368,6 +485,8 @@ export class TerrainRenderer {
       uSpellCol: { value: new THREE.Color(1, 0.8, 0.3) },
       uBorderOn: { value: 1 },
       uSunI: { value: 1 },
+      tDetail: { value: detail.albedo },
+      tDetailN: { value: detail.normal },
     };
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
     patchMaterial(mat, {
@@ -377,7 +496,7 @@ export class TerrainRenderer {
       vertexHead: 'varying vec3 vWNormal;',
       vertexBegin: 'vWNormal = normalize(mat3(modelMatrix) * objectNormal);',
       fragHead: TERRAIN_FRAG_HEAD,
-      fragMap: 'tBump = 0.0; tRough = 1.0; tAO = 1.0; tEmis = vec3(0.0);\n' + TERRAIN_MAP,
+      fragMap: 'tBump = 0.0; tRough = 1.0; tAO = 1.0; tEmis = vec3(0.0); tDetG = vec3(0.0);\n' + TERRAIN_MAP,
       fragRough: 'roughnessFactor = tRough;',
       fragNormal: TERRAIN_NORMAL,
       fragEmissive: 'totalEmissiveRadiance += tEmis;',

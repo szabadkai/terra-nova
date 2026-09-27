@@ -25,6 +25,9 @@ export const G = {
   // one bright transient light (lightning, divine pillars): xyz + intensity, colour
   uFlash: { value: new THREE.Vector4(0, -100, 0, 0) },
   uFlashCol: { value: new THREE.Color(0.7, 0.8, 1.0) },
+  // terrain height (world units) for ground-contact effects on buildings
+  tHeight: { value: null as THREE.Texture | null },
+  uGrime: { value: 1 },
 };
 
 export interface PatchOpts {
@@ -48,6 +51,8 @@ export interface PatchOpts {
   key?: string;
   /** how much snow may settle on this material (0 = none, 1 = full) */
   snow?: number;
+  /** splash-back grime where the surface meets the ground (0 = none, 1 = full) */
+  grime?: number;
 }
 
 const COMMON_FRAG = /* glsl */ `
@@ -118,14 +123,14 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   (mat as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
   (mat as any).userData.uWindAmp = uWindAmp;
-  const key = `p${o.wind}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.key ?? ''}`;
+  const key = `p${o.wind}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.key ?? ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
       uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
       uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
       tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
-      uSnow: G.uSnow, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp,
+      uSnow: G.uSnow, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp, tHeight: G.tHeight, uGrime: G.uGrime,
       ...(o.uniforms ?? {}),
     });
     // ---------------- vertex
@@ -195,6 +200,22 @@ ${o.fragRough}`);
     if (o.fragNormal) fs = fs.replace('#include <normal_fragment_maps>', o.fragNormal);
     if (o.fragEmissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 ${o.fragEmissive}`);
+    const grimeAmt = o.grime ?? 0;
+    if (grimeAmt > 0) {
+      fs = fs.replace('#include <common>', `#include <common>
+uniform sampler2D tHeight;
+uniform float uGrime;`);
+      fs = fs.replace('#include <lights_physical_fragment>', `{
+    // rain splash and soil creep darken the bottom of walls; it follows the real terrain
+    float gh = texture2D(tHeight, (vWPos.xz + 0.5) / uMapSize).r;
+    float above = vWPos.y - gh;
+    float gn = texture2D(tNoise, vWPos.xz * 0.9 + vWPos.y * 0.6).r;
+    float grime = (1.0 - smoothstep(0.02, 0.26 + gn * 0.16, above)) * uGrime * ${grimeAmt.toFixed(2)};
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.58, 0.52, 0.44), grime);
+    roughnessFactor = mix(roughnessFactor, 1.0, grime * 0.5);
+  }
+#include <lights_physical_fragment>`);
+    }
     const snowAmt = o.snow ?? 0;
     if (snowAmt > 0) {
       fs = fs.replace('#include <lights_physical_fragment>', `{

@@ -442,21 +442,24 @@ export function buildVineGeos(): { plant: THREE.BufferGeometry; grapes: THREE.Bu
 
 export function buildGrassTuft(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
-  for (let k = 0; k < 7; k++) {
-    const h = 0.14 + hash2(k, 7, 1) * 0.12;
+  // slender blades fanning out from a common root, darker at the base
+  for (let k = 0; k < 9; k++) {
+    const h = 0.11 + hash2(k, 7, 1) * 0.17;
     const g = new THREE.BufferGeometry();
-    const w = 0.035;
+    const w = 0.012 + hash2(k, 12, 1) * 0.01;
     g.setAttribute('position', new THREE.Float32BufferAttribute([-w, 0, 0, w, 0, 0, 0, h, 0], 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
-    g.rotateZ((hash2(k, 8, 1) - 0.5) * 0.7);
-    g.rotateY(hash2(k, 9, 1) * Math.PI * 2);
-    g.translate((hash2(k, 10, 1) - 0.5) * 0.22, 0, (hash2(k, 11, 1) - 0.5) * 0.22);
+    const a = (k / 9) * Math.PI * 2 + hash2(k, 9, 1) * 0.8;
+    const r = hash2(k, 10, 1) * 0.07;
+    g.rotateX(0.15 + hash2(k, 8, 1) * 0.45);
+    g.rotateY(a);
+    g.translate(Math.sin(a) * r, 0, Math.cos(a) * r);
     parts.push(g);
   }
   const geo = mergeGeometries(parts, false)!;
   colorize(geo, (_x, y) => {
-    const k = 0.85 + y * 2.2;
-    return [k, k, k];
+    const k = 0.5 + y * 3.4;
+    return [k * (1 + y * 0.5), k, k * (1 - y * 0.8)];
   });
   return twoSidedUp(geo);
 }

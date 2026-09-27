@@ -29,6 +29,7 @@ export function generateIcons(owner: number) {
   const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
   const fogWas = G.uFogOn.value, lightsWas = G.uLightCount.value, nightWas = G.uNight.value;
   G.uFogOn.value = 0;
+  G.uGrime.value = 0;
   G.uLightCount.value = 0;
   G.uNight.value = 0;
 
@@ -60,6 +61,7 @@ export function generateIcons(owner: number) {
   G.uFogOn.value = fogWas;
   G.uLightCount.value = lightsWas;
   G.uNight.value = nightWas;
+  G.uGrime.value = 1;
   r.dispose();
   r.forceContextLoss();
 }

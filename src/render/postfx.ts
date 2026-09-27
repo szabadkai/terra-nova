@@ -142,8 +142,10 @@ export class PostFX {
     this.bloom.strength = 0.28 + night * 0.55;
     this.bloom.threshold = 0.9 - night * 0.35;
     this.tilt.enabled = this.settings.dof;
-    this.tilt.uniforms.uAmount.value = THREE.MathUtils.lerp(0.55, 1.0, zoom01);
-    this.tilt.uniforms.uBand.value = THREE.MathUtils.lerp(0.26, 0.15, zoom01);
+    // the miniature look belongs to the overview; close up the blur would only smear detail
+    const tz = THREE.MathUtils.smoothstep(zoom01, 0.0, 0.55);
+    this.tilt.uniforms.uAmount.value = THREE.MathUtils.lerp(0.18, 1.0, tz);
+    this.tilt.uniforms.uBand.value = THREE.MathUtils.lerp(0.34, 0.15, tz);
     this.grade.enabled = true;
     const u = this.grade.uniforms;
     u.uTime.value = time;
