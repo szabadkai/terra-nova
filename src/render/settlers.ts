@@ -9,7 +9,8 @@ import { patchMaterial } from './shaderPatch';
 import { BANNER_COLORS } from './materials';
 import { HAIR_STYLES, HATS, HairStyle, Hat, RIG, buildSettlerGeos } from './settlerModels';
 
-const SCALE = 1.1;
+/** Settlers are drawn a little larger than life (as in the original) so they read well. */
+const SCALE = 1.3;
 
 /** Settler shader: per-vertex choice of tint (see settlerModels) plus metal/gloss flags and a soft rim light. */
 function settlerMaterial() {
@@ -191,10 +192,11 @@ function pose(s: Settler, ph: number, moving: boolean, time: number, p: Pose): P
   p.toolRot = 0;
   const t = s.animT;
   const sd = s.seed;
+  // goods ride on the right shoulder, steadied by the raised right hand, like in the original
   const carryPose = () => {
-    p.armL = p.armR = -1.15 + Math.sin(ph * 2) * 0.03;
-    p.splayL = p.splayR = 0.3;
-    p.nod = -0.05;
+    p.armR = -2.75 + Math.sin(ph * 2) * 0.03;
+    p.splayR = 0.42;
+    p.tilt -= 0.08;
   };
   if (s.dead) {
     p.lie = Math.min(1, t / 0.6);
@@ -212,7 +214,7 @@ function pose(s: Settler, ph: number, moving: boolean, time: number, p: Pose): P
     p.tilt = -sw * 0.05;
     p.lean = 0.07;
     p.nod = Math.cos(ph * 2) * 0.03;
-    if (s.carrying) { carryPose(); p.lean = -0.02; }
+    if (s.carrying) carryPose();
     return p;
   }
   switch (s.anim) {
@@ -503,10 +505,11 @@ export class SettlersRenderer {
         m.multiply(this.mA.makeRotationY(-1.05));
         this.shields.add(m, pc);
       }
-      // --- carried good, hugged against the chest
+      // --- carried good on the right shoulder, long goods slung diagonally
       if (s.carrying) {
-        const m = this.mB.copy(body).multiply(this.mA.makeTranslation(0, 0.28, 0.17));
-        if (s.carrying === 'log' || s.carrying === 'board') m.multiply(this.mA.makeRotationY(0.25));
+        const m = this.mB.copy(body).multiply(this.mA.makeTranslation(0.17, 0.425, -0.01));
+        if (s.carrying === 'log' || s.carrying === 'board') m.multiply(this.mA.makeRotationFromEuler(this.e.set(0, 1.25, 0.45)));
+        else m.multiply(this.mA.makeTranslation(0, 0.02, 0));
         this.carried.get(s.carrying)!.add(m);
       }
     }
