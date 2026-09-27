@@ -29,6 +29,10 @@ varying vec3 vWNormal;
 
 #define C(r,g,b) pow(vec3(float(r),float(g),float(b))/255.0, vec3(2.2))
 
+vec4 triN(vec3 wp, vec3 w3, float scale, vec2 off) {
+  return texture2D(tNoise, wp.zy * scale + off) * w3.x + texture2D(tNoise, wp.xz * scale + off) * w3.y + texture2D(tNoise, wp.xy * scale + off) * w3.z;
+}
+
 float tBump;
 float tRough;
 float tAO;
@@ -132,21 +136,27 @@ const TERRAIN_MAP = /* glsl */ `
     c = mix(c, c * 0.58, wetS);
     col += c * v[4]; rough += mix(0.9, 0.35, wetS) * v[4]; bump += rip * 0.25 * v[4];
   }
-  // rock
+  // rock (triplanar so cliffs don't stretch)
   if (v[5] > 0.0) {
-    float strata = sin(vWPos.y * 3.6 + n1.r * 4.0 + n2.g * 1.5) * 0.5 + 0.5;
-    vec3 c = mix(C(96,90,82), C(128,120,108), strata * 0.45 + n2.b * 0.35 + n3.r * 0.2);
-    c = mix(c, C(80,76,72), smoothstep(0.55, 0.8, n1.g) * 0.45);
+    vec3 tw = pow(abs(vWNormal), vec3(4.0));
+    tw /= (tw.x + tw.y + tw.z);
+    vec4 r1 = triN(vWPos, tw, 0.047, vec2(0.31, 0.17));
+    vec4 r2 = triN(vWPos, tw, 0.17, vec2(0.63, 0.41));
+    vec4 r3 = triN(vWPos, tw, 0.61, vec2(0.11, 0.87));
+    vec4 r4 = triN(vWPos, tw, 1.73, vec2(0.47, 0.29));
+    float strata = sin(vWPos.y * 3.6 + r1.r * 4.0 + r2.g * 1.5) * 0.5 + 0.5;
+    vec3 c = mix(C(96,90,82), C(128,120,108), strata * 0.45 + r2.b * 0.35 + r3.r * 0.2);
+    c = mix(c, C(80,76,72), smoothstep(0.55, 0.8, r1.g) * 0.45);
     c = mix(c, C(118,100,82), smoothstep(0.6, 0.85, n0.r) * 0.35);
-    float crack = (1.0 - smoothstep(0.0, 0.1, n3.b)) * step(0.55, n3.a) * 0.6 * farFade;
+    float crack = (1.0 - smoothstep(0.0, 0.1, r3.b)) * step(0.55, r3.a) * 0.6 * farFade;
     c *= 1.0 - crack * 0.35;
-    c *= 0.9 + 0.2 * n4.g * farFade;
-    c = mix(c, C(96,110,58), smoothstep(0.66, 0.9, n3.b) * (1.0 - slope) * 0.55);
+    c *= 0.9 + 0.2 * r4.g * farFade;
+    c = mix(c, C(96,110,58), smoothstep(0.66, 0.9, r3.b) * (1.0 - slope) * 0.55);
     // ore specks
     vec4 ore = texture2D(tOre, muv);
-    vec2 warp = (vec2(n2.g, n2.b) - 0.5) * 0.9;
-    vec4 on1 = texture2D(tNoise, (pr2 + warp) * 0.42 + vec2(0.13, 0.57));
-    vec4 on2 = texture2D(tNoise, (pr1 - warp) * 0.23 + vec2(0.71, 0.33));
+    vec3 wp2 = vWPos + vec3(r2.g - 0.5, 0.0, r2.b - 0.5) * 0.9;
+    vec4 on1 = triN(wp2, tw, 0.42, vec2(0.13, 0.57));
+    vec4 on2 = triN(wp2, tw, 0.23, vec2(0.71, 0.33));
     float spk = (1.0 - smoothstep(0.08, 0.2, on1.b + n3.r * 0.08)) * step(0.62, on1.a) * farFade;
     float spk2 = (1.0 - smoothstep(0.06, 0.18, on2.b + n3.g * 0.08)) * step(0.78, on2.a);
     c = mix(c, C(28,26,28), clamp(ore.r * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
@@ -155,7 +165,7 @@ const TERRAIN_MAP = /* glsl */ `
     float gold = clamp(ore.b * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6);
     c = mix(c, C(250,200,60), gold);
     tEmis += C(255,190,60) * gold * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(uTime * 2.5 + on1.a * 40.0), 8.0)) * 1.4;
-    col += c * v[5]; rough += mix(0.72, 0.3, gold) * v[5]; bump += (n1.r * 0.3 + n2.r * 0.5 + n3.g * 0.3 - crack * 0.6) * 1.1 * v[5];
+    col += c * v[5]; rough += mix(0.72, 0.3, gold) * v[5]; bump += (r1.r * 0.3 + r2.r * 0.5 + r3.g * 0.3 - crack * 0.6) * 1.1 * v[5];
   }
   // snow
   if (v[6] > 0.0) {
