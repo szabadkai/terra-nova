@@ -201,13 +201,13 @@ ${o.fragEmissive}`);
 }
 
 /** Depth material for shadows that shares wind/clip behaviour. */
-export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number } = {}): THREE.MeshDepthMaterial {
-  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map?: THREE.Texture } = {}): THREE.MeshDepthMaterial {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: opts.map ?? null, alphaTest: opts.alphaTest ?? 0 });
   const o = { wind: 'none', windAmp: 1, ...opts };
   const uClip = { value: 1e9 };
   (m as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
-  const key = `d${o.wind}|${o.clip ? 1 : 0}`;
+  const key = `d${o.wind}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${opts.key ?? ''}`;
   m.customProgramCacheKey = () => key;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp });

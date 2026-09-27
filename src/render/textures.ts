@@ -265,3 +265,92 @@ export const clothTex = () => cached('cloth', () => build(64, (u, v) => {
   const c = 225 + weave * 30;
   return [c, c, c, weave];
 }, 1));
+
+/** Leaf cluster card (RGBA with alpha) painted procedurally. kind 0 broadleaf, 1 needles. */
+const leafCache = new Map<number, THREE.CanvasTexture>();
+export function leafTexture(kind = 0): THREE.CanvasTexture {
+  const hit = leafCache.get(kind);
+  if (hit) return hit;
+  const S = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d')!;
+  ctx.clearRect(0, 0, S, S);
+  let seed = 1234 + kind * 77;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  if (kind === 0) {
+    for (let i = 0; i < 300; i++) {
+      // cluster leaves towards the centre so the card has an organic silhouette
+      const a = rnd() * Math.PI * 2, r = Math.pow(rnd(), 0.6) * S * 0.37;
+      const x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r;
+      const len = 16 + rnd() * 14, wid = len * (0.45 + rnd() * 0.15);
+      const rot = a + Math.PI / 2 + (rnd() - 0.5) * 1.6;
+      const lum = 0.75 + rnd() * 0.5;
+      const gcol = `rgb(${Math.round(150 * lum)},${Math.round(200 * lum)},${Math.round(110 * lum)})`;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.fillStyle = gcol;
+      ctx.beginPath();
+      ctx.moveTo(-len / 2, 0);
+      ctx.quadraticCurveTo(0, -wid, len / 2, 0);
+      ctx.quadraticCurveTo(0, wid, -len / 2, 0);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(40,70,20,0.35)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-len / 2, 0);
+      ctx.lineTo(len / 2, 0);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // a few twigs
+    ctx.strokeStyle = 'rgba(90,70,45,0.8)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 5; i++) {
+      const a = rnd() * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(S / 2, S / 2);
+      ctx.lineTo(S / 2 + Math.cos(a) * S * 0.3, S / 2 + Math.sin(a) * S * 0.3);
+      ctx.stroke();
+    }
+  } else {
+    // a fan of branches spreading from the top centre (trunk side) downwards
+    const branches = 7;
+    for (let b = 0; b < branches; b++) {
+      const tx = S * (0.1 + (b / (branches - 1)) * 0.8);
+      const x0 = S * 0.5, y0 = 4;
+      const x1 = tx + (rnd() - 0.5) * 20, y1 = S * (0.86 + rnd() * 0.1);
+      ctx.strokeStyle = 'rgba(70,50,30,0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+      const steps = 26;
+      for (let k = 2; k < steps; k++) {
+        const t = k / steps;
+        const x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
+        const dirA = Math.atan2(y1 - y0, x1 - x0);
+        for (const side of [-1, 1]) {
+          const ang = dirA + side * (0.9 + rnd() * 0.3);
+          const len = 12 + rnd() * 12 * (0.6 + t * 0.5);
+          const lum = 0.65 + rnd() * 0.55;
+          ctx.strokeStyle = `rgb(${Math.round(80 * lum)},${Math.round(140 * lum)},${Math.round(84 * lum)})`;
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  leafCache.set(kind, t);
+  return t;
+}

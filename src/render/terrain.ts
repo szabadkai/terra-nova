@@ -46,8 +46,11 @@ const TERRAIN_MAP = /* glsl */ `
   vec4 n1 = texture2D(tNoise, p * 0.047 + vec2(0.31, 0.17));
   vec4 n2 = texture2D(tNoise, p * 0.17 + vec2(0.63, 0.41));
   vec4 n3 = texture2D(tNoise, p * 0.61 + vec2(0.11, 0.87));
-  vec4 n4 = texture2D(tNoise, p * 2.1 + vec2(0.47, 0.29));
-  vec4 n5 = texture2D(tNoise, p * 6.3 + vec2(0.77, 0.19));
+  // rotated sampling breaks up visible tiling of the high-frequency layers
+  vec2 pr1 = mat2(0.8, -0.6, 0.6, 0.8) * p;
+  vec2 pr2 = mat2(0.28, -0.96, 0.96, 0.28) * p;
+  vec4 n4 = texture2D(tNoise, pr1 * 1.73 + vec2(0.47, 0.29));
+  vec4 n5 = texture2D(tNoise, pr2 * 4.9 + vec2(0.77, 0.19));
   float farFade = smoothstep(90.0, 30.0, camDist);
 
   float slope = 1.0 - clamp(vWNormal.y, 0.0, 1.0);

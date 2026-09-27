@@ -346,13 +346,11 @@ export class Game {
     w.reserve[door] = b.id;
     // target height: average (mines keep the terrain)
     b.targetH = sum / fp.length;
-    // bare-earth yard
-    for (let yy = y - 1; yy <= y + size; yy++)
-      for (let xx = x - 1; xx <= x + size; xx++) {
-        if (!w.inBounds(xx, yy)) continue;
-        const i = w.idx(xx, yy);
-        if (!def.mine && w.terrain[i] !== T_ROCK && w.terrain[i] !== T_SNOW) w.terrain[i] = T_DIRT;
-      }
+    // bare-earth yard: footprint and the path in front of the door
+    if (!def.mine) {
+      const yard = [...fp, door];
+      for (const i of yard) if (w.terrain[i] !== T_ROCK && w.terrain[i] !== T_SNOW) w.terrain[i] = T_DIRT;
+    }
     w.splatDirty = true;
     if (def.mine) {
       b.levelTotal = 0;

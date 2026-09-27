@@ -7,6 +7,7 @@ import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildSettlerGeos, buildTreeGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
+import { leafTexture } from './textures';
 import { BANNER_COLORS } from './materials';
 
 const tmpM = new THREE.Matrix4();
@@ -39,6 +40,7 @@ export class TreesRenderer {
   group = new THREE.Group();
   private trunks: THREE.InstancedMesh[] = [];
   private crowns: THREE.InstancedMesh[] = [];
+  private cards: (THREE.InstancedMesh | null)[] = [];
   private version = -1;
   private fallStart = new Map<number, number>();
   private leafMat: THREE.Material;
@@ -56,6 +58,24 @@ export class TreesRenderer {
       }`,
     });
     const depth = patchedDepthMaterial({ wind: 'tree' });
+    const leafTex = leafTexture(0);
+    const needleTex = leafTexture(1);
+    const mkCard = (map: THREE.Texture, key: string) => {
+      const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, map, alphaTest: 0.45, side: THREE.DoubleSide });
+      return patchMaterial(m, {
+      wind: 'tree', key,
+      fragEmissive: `{
+        vec3 V = normalize(vViewPosition);
+        vec3 L = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+        float back = pow(clamp(dot(-V, L), 0.0, 1.0), 3.0);
+        totalEmissiveRadiance += diffuseColor.rgb * (0.08 + back * 0.45) * (1.0 - uNight * 0.8);
+      }`,
+      });
+    };
+    const cardMat = mkCard(leafTex, 'leafcard');
+    const needleMat = mkCard(needleTex, 'needlecard');
+    const cardDepth = patchedDepthMaterial({ wind: 'tree', map: leafTex, alphaTest: 0.45 });
+    const needleDepth = patchedDepthMaterial({ wind: 'tree', map: needleTex, alphaTest: 0.45, key: 'nd' });
     const cap = Math.max(4000, game.trees.size * 2);
     for (const g of geos) {
       const t = inst(g.trunk, barkMat, cap, true, depth);
@@ -63,6 +83,11 @@ export class TreesRenderer {
       this.trunks.push(t);
       this.crowns.push(c);
       this.group.add(t, c);
+      if (g.cards) {
+        const cm = inst(g.cards, g.needles ? needleMat : cardMat, cap, true, g.needles ? needleDepth : cardDepth);
+        this.cards.push(cm);
+        this.group.add(cm);
+      } else this.cards.push(null);
     }
   }
 
@@ -96,12 +121,18 @@ export class TreesRenderer {
       this.trunks[sp].setMatrixAt(i, tmpM);
       this.crowns[sp].setMatrixAt(i, tmpM);
       const tint = 0.85 + hash2(t.node, 4, 7) * 0.3;
-      tmpC.setRGB(tint, tint * (0.95 + hash2(t.node, 5, 7) * 0.1), tint * 0.9);
+      // autumn-ish variety on some trees
+      const warm = hash2(t.node, 6, 7) > 0.88 ? 0.25 : 0;
+      tmpC.setRGB(tint * (1 + warm * 0.9), tint * (0.95 + hash2(t.node, 5, 7) * 0.1), tint * (0.9 - warm));
       this.crowns[sp].setColorAt(i, tmpC);
+      const cm = this.cards[sp];
+      if (cm) { cm.setMatrixAt(i, tmpM); cm.setColorAt(i, tmpC); }
     }
     for (let sp = 0; sp < this.trunks.length; sp++) {
       this.trunks[sp].count = counts[sp];
       this.crowns[sp].count = counts[sp];
+      const cm = this.cards[sp];
+      if (cm) { cm.count = counts[sp]; cm.instanceMatrix.needsUpdate = true; if (cm.instanceColor) cm.instanceColor.needsUpdate = true; }
       this.trunks[sp].instanceMatrix.needsUpdate = true;
       this.crowns[sp].instanceMatrix.needsUpdate = true;
       if (this.crowns[sp].instanceColor) this.crowns[sp].instanceColor!.needsUpdate = true;
@@ -150,7 +181,7 @@ export class FieldsRenderer {
   mesh: THREE.InstancedMesh;
   private version = -1;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.9, side: THREE.DoubleSide }, 'grass', 0.25);
+    const mat = vcMat({ roughness: 0.9 }, 'grass', 0.25);
     this.mesh = inst(buildWheatGeo(), mat, 1500, true);
   }
   update() {
@@ -183,7 +214,7 @@ export class GrassRenderer {
   private t = 0;
   enabled = true;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.95, side: THREE.DoubleSide }, 'grass', 0.5, { key: 'tuft' });
+    const mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, { key: 'tuft' });
     this.mesh = inst(buildGrassTuft(), mat, 60000, false);
     this.rebuild();
   }

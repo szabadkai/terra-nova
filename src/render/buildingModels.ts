@@ -16,7 +16,7 @@ function timberFrame(mb: MB, w: number, d: number, h: number, x: number, y: numb
   // corner posts
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) mb.add('timber', box(t, h, t, 2), x + sx * (hw - t / 2 + o), y + h / 2, z + sz * (hd - t / 2 + o));
   // horizontal beams: top, mid
-  for (const yy of [h - t / 2, h * 0.48]) {
+  for (const yy of [h - t / 2, h * 0.4]) {
     mb.add('timber', box(w + o * 2, t, t, 2), x, y + yy, z + hd + o - t / 2 + 0.01);
     mb.add('timber', box(w + o * 2, t, t, 2), x, y + yy, z - hd - o + t / 2 - 0.01);
     mb.add('timber', box(t, t, d + o * 2, 2), x + hw + o - t / 2 + 0.01, y + yy, z);
@@ -26,17 +26,17 @@ function timberFrame(mb: MB, w: number, d: number, h: number, x: number, y: numb
   mb.add('timber', box(w + o * 2, t, t, 2), x, y + t / 2, z + hd + o - t / 2 + 0.01);
   if (braces) {
     // diagonal braces on the front upper half
-    const bh = h * 0.5 - t;
+    const bh = h * 0.58 - t;
     const len = Math.hypot(bh, 0.32);
     const ang = Math.atan2(bh, 0.32);
     for (const sx of [-1, 1]) {
-      mb.add('timber', box(len, t * 0.8, t * 0.8, 2), x + sx * (hw - 0.2), y + h * 0.48 + bh / 2 + t / 2, z + hd + 0.015, 0, 0, sx * ang);
-      mb.add('timber', box(len, t * 0.8, t * 0.8, 2), x + sx * (hw - 0.2), y + h * 0.48 + bh / 2 + t / 2, z - hd - 0.015, 0, 0, -sx * ang);
+      mb.add('timber', box(len, t * 0.8, t * 0.8, 2), x + sx * (hw - 0.2), y + h * 0.4 + bh / 2 + t / 2, z + hd + 0.015, 0, 0, sx * ang);
+      mb.add('timber', box(len, t * 0.8, t * 0.8, 2), x + sx * (hw - 0.2), y + h * 0.4 + bh / 2 + t / 2, z - hd - 0.015, 0, 0, -sx * ang);
     }
     // side braces
     const sl = Math.hypot(bh, 0.3);
     const sa = Math.atan2(bh, 0.3);
-    for (const sx of [-1, 1]) mb.add('timber', box(t * 0.8, t * 0.8, sl, 2), x + sx * (hw + 0.015), y + h * 0.48 + bh / 2 + t / 2, z, sa * sx, 0, 0);
+    for (const sx of [-1, 1]) mb.add('timber', box(t * 0.8, t * 0.8, sl, 2), x + sx * (hw + 0.015), y + h * 0.4 + bh / 2 + t / 2, z, sa * sx, 0, 0);
   }
 }
 
@@ -118,12 +118,18 @@ function house(mb: MB, o: HouseOpts) {
   if (doorX !== null) door(mb, x + doorX, base, z + o.d / 2);
   const nWin = o.win ?? 1;
   for (let f = 0; f < floors; f++) {
-    const wy = base + (f === 0 ? Math.min(0.5, o.wallH * 0.6) : o.wallH * (0.5 + f * 0.5 / floors) + 0.12);
+    const wy = base + (floors === 1 ? o.wallH * 0.62 : f === 0 ? o.wallH * 0.3 : o.wallH * 0.74);
+    // distribute windows across the facade, keeping clear of the door
     const slots: number[] = [];
-    if (nWin === 1) slots.push(doorX !== null && Math.abs(doorX) < 0.2 && f === 0 ? -o.w * 0.3 : doorX !== null && f === 0 ? -doorX * 0.9 : 0);
-    else for (let k = 0; k < nWin; k++) slots.push(-o.w / 2 + (o.w / (nWin + 1)) * (k + 1));
-    for (const sx of slots) {
-      if (f === 0 && doorX !== null && Math.abs(sx - doorX) < 0.32) continue;
+    const n = f === 0 && doorX !== null ? nWin : Math.max(1, nWin);
+    const span = o.w - 0.36;
+    for (let k = 0; k < n; k++) slots.push(n === 1 ? 0 : -span / 2 + (span / (n - 1)) * k);
+    for (let sx of slots) {
+      if (f === 0 && doorX !== null && Math.abs(sx - doorX) < 0.34) {
+        // push the window away from the door
+        sx = doorX + (sx <= doorX ? -0.4 : 0.4);
+        if (Math.abs(sx) > o.w / 2 - 0.16) continue;
+      }
       win(mb, x + sx, wy, z + o.d / 2, 'z');
     }
     if (o.sideWin ?? true) {
@@ -421,7 +427,7 @@ const designs: Partial<Record<BuildingType, Design>> = {
     const blades = mb.mover('blades', 0, 2.2, 0.62, 'z');
     sailBlades(blades, 4, 1.25);
     // sacks
-    for (const [px, pz] of [[0.75, 0.65], [0.95, 0.55]]) mb.add('canvas', sphere(0.12, 8, 6), px, 0.1, pz);
+    for (const [px, pz] of [[0.75, 0.65], [0.95, 0.55]]) mb.add('hay', sphere(0.12, 8, 6), px, 0.1, pz);
     mb.anchors.piles.push(new THREE.Vector3(-0.8, 0, 0.8));
     mb.anchors.top = 3.4;
   },

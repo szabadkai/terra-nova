@@ -56,7 +56,7 @@ function softNormals(g: THREE.BufferGeometry, center: THREE.Vector3, amount = 0.
 }
 
 // ------------------------------------------------------------------ trees
-export interface TreeGeo { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry; }
+export interface TreeGeo { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry; cards?: THREE.BufferGeometry; needles?: boolean; }
 
 function trunkGeo(h: number, r: number, bark: number, bend = 0, marks = false): THREE.BufferGeometry {
   const g = new THREE.CylinderGeometry(r * 0.65, r, h, 7, 4, true);
@@ -88,6 +88,92 @@ function crownColor(g: THREE.BufferGeometry, cols: number[], center: THREE.Vecto
   });
 }
 
+/** Leaf cards scattered over an ellipsoidal crown, with outward normals and AO colours. */
+function leafCards(center: THREE.Vector3, rx: number, ry: number, rz: number, n: number, size: number, seed: number, tint: number[]): THREE.BufferGeometry {
+  const pos: number[] = [], nrm: number[] = [], uv: number[] = [], col: number[] = [];
+  const tc = tint.map(lin);
+  const up = new THREE.Vector3(0, 1, 0);
+  for (let k = 0; k < n; k++) {
+    // fibonacci-ish distribution over the sphere, biased upwards
+    const t = (k + 0.5) / n;
+    const phi = Math.acos(1 - 2 * Math.pow(t, 0.85));
+    const theta = k * 2.39996 + seed;
+    const dir = new THREE.Vector3(Math.sin(phi) * Math.cos(theta), Math.cos(phi), Math.sin(phi) * Math.sin(theta));
+    const rr = 0.72 + hash2(k, seed, 3) * 0.32;
+    const c = new THREE.Vector3(center.x + dir.x * rx * rr, center.y + dir.y * ry * rr, center.z + dir.z * rz * rr);
+    // card plane: perpendicular-ish to the outward direction, randomly rolled
+    const nrmDir = dir.clone().lerp(new THREE.Vector3(hash2(k, 1, seed) - 0.5, hash2(k, 2, seed) - 0.5, hash2(k, 3, seed) - 0.5), 0.5).normalize();
+    let tan = new THREE.Vector3().crossVectors(nrmDir, up);
+    if (tan.lengthSq() < 0.01) tan.set(1, 0, 0);
+    tan.normalize();
+    const bit = new THREE.Vector3().crossVectors(tan, nrmDir).normalize();
+    const roll = hash2(k, 4, seed) * Math.PI * 2;
+    const t2 = tan.clone().multiplyScalar(Math.cos(roll)).addScaledVector(bit, Math.sin(roll));
+    const b2 = new THREE.Vector3().crossVectors(t2, nrmDir);
+    const s = size * (0.8 + hash2(k, 5, seed) * 0.45);
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    const quad = corners.map(([a, b]) => c.clone().addScaledVector(t2, a * s * 0.5).addScaledVector(b2, b * s * 0.5));
+    const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const shade = THREE.MathUtils.clamp(0.55 + dir.y * 0.35 + (rr - 0.7) * 0.6, 0.35, 1.1);
+    const base = tc[k % tc.length];
+    for (const idx of [0, 1, 2, 0, 2, 3]) {
+      const q = quad[idx];
+      pos.push(q.x, q.y, q.z);
+      // soft outward normal from crown centre
+      const on = q.clone().sub(center).normalize();
+      nrm.push(on.x, on.y, on.z);
+      uv.push(uvs[idx][0], uvs[idx][1]);
+      col.push(base[0] * shade, base[1] * shade, base[2] * shade);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+
+/** Drooping skirt of needle cards around a conifer trunk. */
+function pineCards(tiers: number, seed: number): THREE.BufferGeometry {
+  const pos: number[] = [], nrm: number[] = [], uv: number[] = [], col: number[] = [];
+  for (let t = 0; t < tiers; t++) {
+    const f = t / (tiers - 1);
+    const y = 0.5 + t * 0.42;
+    const r = 0.78 - f * 0.55;
+    const drop = 0.42 - f * 0.12;
+    const n = Math.max(5, Math.round(10 - f * 4));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + t * 0.7 + hash2(k, t, seed) * 0.4;
+      const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+      const tan = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a));
+      const w = (Math.PI * 2 * r) / n * 1.7;
+      const top = new THREE.Vector3(0, y + 0.12, 0).addScaledVector(out, 0.04);
+      const bot = new THREE.Vector3(0, y - drop, 0).addScaledVector(out, r * (0.9 + hash2(k, t, seed + 1) * 0.25));
+      const q = [
+        top.clone().addScaledVector(tan, -w * 0.18), top.clone().addScaledVector(tan, w * 0.18),
+        bot.clone().addScaledVector(tan, w * 0.5), bot.clone().addScaledVector(tan, -w * 0.5),
+      ];
+      const uvs = [[0.2, 1], [0.8, 1], [1, 0], [0, 0]];
+      const shade = 0.55 + f * 0.45;
+      const nn = out.clone().multiplyScalar(0.6).add(new THREE.Vector3(0, 0.8, 0)).normalize();
+      for (const idx of [0, 1, 2, 0, 2, 3]) {
+        pos.push(q[idx].x, q[idx].y, q[idx].z);
+        nrm.push(nn.x, nn.y, nn.z);
+        uv.push(uvs[idx][0], uvs[idx][1]);
+        const edge = idx >= 2 ? 1.15 : 0.7;
+        col.push(0.2 * shade * edge, 0.42 * shade * edge, 0.2 * shade * edge);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+
 export function buildTreeGeos(): TreeGeo[] {
   const out: TreeGeo[] = [];
   // 0 oak / broadleaf
@@ -100,10 +186,13 @@ export function buildTreeGeos(): TreeGeo[] {
     parts.push(blob(0.44, 0.05, 1.95, -0.2, 4));
     parts.push(blob(0.4, -0.1, 1.3, 0.42, 5));
     const crown = merge(parts);
+    crown.scale(0.72, 0.72, 0.72);
+    crown.translate(0, 1.55 * 0.28, 0);
     softNormals(crown, c, 0.75);
-    crownColor(crown, [0x4f7d2a, 0x5a8a30, 0x467528, 0x62923a], c, 1);
-    const trunk = merge([trunkGeo(1.3, 0.1, 0x5a4230, 0.03), (() => { const b = trunkGeo(0.55, 0.05, 0x5a4230); b.rotateZ(0.8); b.translate(0.05, 0.85, 0); return b; })()]);
-    out.push({ trunk, crown });
+    crownColor(crown, [0x223c12, 0x284416, 0x1e3610], c, 1);
+    const cards = leafCards(c, 0.84, 0.74, 0.84, 64, 0.72, 1, [0x9ac860, 0x8aba54, 0xa8d06a, 0x86b04e]);
+    const trunk = merge([trunkGeo(1.3, 0.1, 0x5a4230, 0.03), (() => { const b = trunkGeo(0.55, 0.05, 0x5a4230); b.rotateZ(0.8); b.translate(0.05, 0.85, 0); return b; })(), (() => { const b = trunkGeo(0.5, 0.045, 0x5a4230); b.rotateZ(-0.9); b.rotateY(1.2); b.translate(-0.02, 1.0, 0.02); return b; })()]);
+    out.push({ trunk, crown, cards });
   }
   // 1 pine
   {
@@ -128,19 +217,23 @@ export function buildTreeGeos(): TreeGeo[] {
       parts.push(g);
     }
     const crown = merge(parts);
+    crown.scale(0.72, 0.95, 0.72);
     const c = new THREE.Vector3(0, 1.4, 0);
     softNormals(crown, c, 0.35);
-    crownColor(crown, [0x2f5a2a, 0x34632c, 0x2a5028], c, 7);
-    out.push({ trunk: trunkGeo(0.8, 0.09, 0x4a3426), crown });
+    crownColor(crown, [0x1a3818, 0x1e3e1a, 0x183416], c, 7);
+    out.push({ trunk: trunkGeo(1.9, 0.09, 0x4a3426), crown, cards: pineCards(5, 3), needles: true });
   }
   // 2 birch
   {
     const c = new THREE.Vector3(0, 1.7, 0);
     const parts = [blob(0.4, 0, 1.75, 0, 11, 1, 1.35), blob(0.34, 0.25, 1.5, 0.1, 12, 1, 1.3), blob(0.32, -0.22, 1.55, -0.1, 13, 1, 1.3), blob(0.28, 0.02, 2.15, 0.05, 14, 1, 1.2)];
     const crown = merge(parts);
+    crown.scale(0.7, 0.75, 0.7);
+    crown.translate(0, 1.7 * 0.25, 0);
     softNormals(crown, c, 0.75);
-    crownColor(crown, [0x7ea83e, 0x8cb448, 0x6f9a36], c, 3);
-    out.push({ trunk: trunkGeo(1.5, 0.065, 0xe8e2d6, 0.02, true), crown });
+    crownColor(crown, [0x345a1c, 0x3a6220], c, 3);
+    const cards = leafCards(c, 0.58, 0.8, 0.58, 46, 0.52, 7, [0xc0e070, 0xb0d466, 0xd0e880]);
+    out.push({ trunk: trunkGeo(1.5, 0.065, 0xe8e2d6, 0.02, true), crown, cards });
   }
   // 3 palm
   {
@@ -179,17 +272,20 @@ export function buildTreeGeos(): TreeGeo[] {
     const c = new THREE.Vector3(0, 1.15, 0);
     const parts = [blob(0.5, 0, 1.2, 0, 21), blob(0.38, 0.32, 1.05, 0.1, 22), blob(0.36, -0.3, 1.1, -0.1, 23)];
     const crown = merge(parts);
+    crown.scale(0.75, 0.75, 0.75);
+    crown.translate(0, 1.15 * 0.25, 0);
     softNormals(crown, c, 0.75);
-    crownColor(crown, [0x5a8c34, 0x66983a], c, 9);
+    crownColor(crown, [0x2a4a18, 0x30521c], c, 9);
     const fruits: THREE.BufferGeometry[] = [];
     for (let k = 0; k < 9; k++) {
       const a = k * 2.4, yy = 0.95 + (k % 3) * 0.2;
       const f = new THREE.IcosahedronGeometry(0.05, 0);
-      f.translate(Math.cos(a) * 0.5, yy, Math.sin(a) * 0.5);
+      f.translate(Math.cos(a) * 0.6, yy, Math.sin(a) * 0.6);
       colorize(f, () => lin(k % 2 ? 0xd83a2a : 0xe8a020));
       fruits.push(f);
     }
-    out.push({ trunk: trunkGeo(0.95, 0.08, 0x5a4230, 0.04), crown: merge([crown, ...fruits]) });
+    const cards = leafCards(c, 0.64, 0.54, 0.64, 44, 0.56, 13, [0xa0cc60, 0x94c058]);
+    out.push({ trunk: trunkGeo(0.95, 0.08, 0x5a4230, 0.04), crown: merge([crown, ...fruits]), cards });
   }
   return out;
 }
@@ -228,6 +324,30 @@ export function buildRockGeos(): THREE.BufferGeometry[] {
   return out;
 }
 
+/** Make thin foliage double-sided with upward normals so both faces light like the ground. */
+function twoSidedUp(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const src = g.index ? g.toNonIndexed() : g;
+  const p = src.getAttribute('position').array as ArrayLike<number>;
+  const c = src.getAttribute('color')?.array as ArrayLike<number> | undefined;
+  const n = p.length / 9;
+  const pos: number[] = [], nrm: number[] = [], col: number[] = [];
+  for (let t = 0; t < n; t++) {
+    for (const order of [[0, 1, 2], [0, 2, 1]]) {
+      for (const v of order) {
+        const i = t * 3 + v;
+        pos.push(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+        nrm.push(0, 1, 0);
+        if (c) col.push(c[i * 3], c[i * 3 + 1], c[i * 3 + 2]);
+      }
+    }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  if (c) out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return out;
+}
+
 // ------------------------------------------------------------------ wheat field patch (1x1)
 export function buildWheatGeo(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
@@ -245,10 +365,10 @@ export function buildWheatGeo(): THREE.BufferGeometry {
   }
   const geo = merge(parts);
   colorize(geo, (_x, y) => {
-    const k = 0.55 + y * 1.3;
+    const k = 0.6 + y * 1.2;
     return [k, k, k];
   });
-  return geo;
+  return twoSidedUp(geo);
 }
 
 export function buildGrassTuft(): THREE.BufferGeometry {
@@ -266,10 +386,10 @@ export function buildGrassTuft(): THREE.BufferGeometry {
   }
   const geo = mergeGeometries(parts, false)!;
   colorize(geo, (_x, y) => {
-    const k = 0.5 + y * 3.2;
+    const k = 0.85 + y * 2.2;
     return [k, k, k];
   });
-  return geo;
+  return twoSidedUp(geo);
 }
 
 // ------------------------------------------------------------------ settlers
