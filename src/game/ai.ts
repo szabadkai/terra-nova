@@ -4,6 +4,7 @@ import type { Game } from './game';
 import { attackableSoldiers, launchAttack } from './military';
 import { SPELLS, castSpell, faithStatus } from './faith';
 import { colonySite, startExpedition } from './sea';
+import { geologistsAtWork, sendGeologist } from './geology';
 import type { Building } from './types';
 
 interface Want { type: BuildingType; n: number; cond?: () => boolean; }
@@ -25,6 +26,7 @@ export class AIController {
   private garrisonT = 5;
   private castT = 8;
   private seaT = 60;
+  private geoT = 30;
   private unmannedSince = new Map<number, number>();
 
   update(dt: number) {
@@ -47,6 +49,11 @@ export class AIController {
     if (this.seaT <= 0) {
       this.seaT = 20;
       this.seaStep();
+    }
+    this.geoT -= dt;
+    if (this.geoT <= 0) {
+      this.geoT = [60, 40, 30][this.level] ?? 40;
+      this.prospectStep();
     }
     if (this.t > 0) return;
     this.t = this.interval;
@@ -146,7 +153,7 @@ export class AIController {
     }
     // residences when out of carriers; a growing realm keeps needing more hands
     const homes = c('residence_s') * 8 + c('residence_m') * 18 + c('residence_l') * 32;
-    if (pop.idle < 2 && homes < 64 + t / 15 && sites < maxSites) {
+    if (pop.idle < 2 && homes < Math.min(200, 64 + t / 15) && sites < maxSites) {
       const big = stock.board >= 20 && stock.stone >= 14 && t > 1500;
       if (this.tryPlace(big ? 'residence_l' : pop.total > 60 ? 'residence_m' : 'residence_s')) return;
     }
@@ -176,9 +183,15 @@ export class AIController {
     const mine = [...g.buildings.values()].filter((b) => b.owner === this.p);
     const home = g.world.region[hq.door];
     const harbour = mine.find((b) => b.type === 'harbour' && g.world.region[b.door] === home);
-    let colonies = 0;
-    for (const b of mine) if (b.type === 'harbour' && g.world.region[b.door] !== home) colonies++;
-    if (colonies >= 2) return;
+    let colonies = 0, founding = false;
+    const settled = new Set<number>();
+    for (const b of mine) {
+      if (b.type !== 'harbour' || g.world.region[b.door] === home) continue;
+      colonies++;
+      settled.add(g.world.region[b.door]);
+      if (b.state !== 'done') founding = true;
+    }
+    if (colonies >= 2 || founding) return;
     let sites = 0;
     for (const b of mine) if (b.state === 'leveling' || b.state === 'building') sites++;
     if (!harbour) {
@@ -203,7 +216,7 @@ export class AIController {
         const d = Math.hypot(px - harbour.cx, pz - harbour.cz);
         if (d >= bd) continue;
         const cs = colonySite(g, this.p, harbour, px, pz);
-        if (typeof cs === 'string') continue;
+        if (typeof cs === 'string' || settled.has(g.world.region[cs.shore])) continue;
         bd = d;
         best = cs;
       }
@@ -237,12 +250,30 @@ export class AIController {
     }
     return n;
   }
+  /** Ore our geologists have found inside our borders. */
   private oreInTerritory(ore: string) {
     const w = this.g.world;
     const o = MINE_ORE[ore];
     let n = 0;
-    for (let i = 0; i < w.N; i++) if (w.owner[i] === this.p && w.ore[i] === o) n += w.oreAmt[i];
+    for (let i = 0; i < w.N; i++) if (w.owner[i] === this.p && w.ore[i] === o && w.known(i, this.p)) n += w.oreAmt[i];
     return n;
+  }
+
+  /** Send a geologist to the nearest rock inside our borders that nobody has probed. */
+  private prospectStep() {
+    const g = this.g, w = g.world;
+    if (geologistsAtWork(g, this.p) > 0) return;
+    const hq = g.buildings.get(g.players[this.p].hq);
+    if (!hq) return;
+    let best = -1, bd = Infinity, count = 0;
+    for (let i = 0; i < w.N; i++) {
+      if (w.owner[i] !== this.p || !w.isMountain(i) || w.known(i, this.p) || !w.walkable(i)) continue;
+      count++;
+      const d = (w.nx(i) - hq.cx) ** 2 + (w.ny(i) - hq.cz) ** 2 + g.rng.next() * 30;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (count < 8 || best < 0) return;
+    sendGeologist(g, this.p, w.nx(best), w.ny(best));
   }
 
   /** Interior towers keep a single guard; towers facing an enemy get a full garrison. */
@@ -270,8 +301,12 @@ export class AIController {
   private canExpand(): boolean {
     const g = this.g;
     let unmanned = 0, reserve = 0;
+    const hq = g.buildings.get(g.players[this.p].hq);
+    const home = hq ? g.world.region[hq.door] : 0;
     for (const b of g.buildings.values()) {
       if (b.owner !== this.p || !b.def.military) continue;
+      // colonies overseas wait for ships; they don't hold up the border at home
+      if (g.world.region[b.door] !== home && !b.occupied) continue;
       if (b.state !== 'done') { unmanned++; continue; }
       if (!b.occupied) {
         // a tower nobody can reach would block expansion forever: give up on it
@@ -336,7 +371,7 @@ export class AIController {
         case 'coalmine': case 'ironmine': case 'goldmine': case 'stonemine': {
           const ore = MINE_ORE[def.mine!];
           let n = 0;
-          w.forRadius(cx, cz, 3.5, (j) => { if (w.ore[j] === ore) n += w.oreAmt[j]; });
+          w.forRadius(cx, cz, 3.5, (j) => { if (w.ore[j] === ore && w.known(j, this.p)) n += w.oreAmt[j]; });
           if (n < 12) continue;
           score = n - dHQ * 0.2;
           break;

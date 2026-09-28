@@ -75,6 +75,7 @@ button { font-family: var(--font); cursor: pointer; }
 .bcard.on { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(226, 184, 87, 0.5), 0 0 18px rgba(226, 184, 87, 0.25); }
 .bcard > img { width: 84px; height: 84px; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5)); }
 .bcard.poor { opacity: .55; }
+.bcard .geoicon { width: 84px; height: 84px; display: grid; place-items: center; font-size: 48px; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5)) sepia(0.3); }
 .bname { font-size: 11.5px; font-weight: 600; text-align: center; line-height: 1.15; min-height: 26px; display: flex; align-items: center; }
 .bcost { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ci { width: 20px; height: 20px; vertical-align: middle; }

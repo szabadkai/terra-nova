@@ -12,6 +12,7 @@ import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStat
 import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition } from '../game/sea';
 import type { Ship } from '../game/types';
 import { MAX_SHIPS } from '../game/defs';
+import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
@@ -190,6 +191,18 @@ export class HUD {
       card.onclick = () => { this.startPlacing(t); };
       grid.appendChild(card);
     }
+    if (this.cat === 'industry') {
+      // not a building: an order for a geologist to prospect a mountain
+      const busy = geologistsAtWork(this.game, this.game.local);
+      const card = h('button', 'bcard geo' + (this.gr.prospecting ? ' on' : ''));
+      card.innerHTML = `<div class="geoicon">⛏</div>
+        <div class="bname">Geologist</div>
+        <div class="bcost">${busy ? `${busy} at work` : 'Prospect'}</div>`;
+      card.onmouseenter = (e) => this.showTip(e as MouseEvent, `<b>Send a geologist</b><br>Click a mountain inside your borders. He probes ${PROBES} spots and leaves signs: black lumps for coal, rust for iron, gold nuggets, grey granite — one to three for a poor, fair or rich vein, a red cross for nothing. Ore he finds glitters in the rock.<br><span class="muted">Any free carrier can take up the trade.</span>`);
+      card.onmouseleave = () => this.hideTip();
+      card.onclick = () => this.startProspecting(!this.gr.prospecting);
+      grid.appendChild(card);
+    }
     c.appendChild(grid);
     c.appendChild(h('p', 'note', 'Pick a building, then click a green marker on your land. <b>Shift</b>+click to place several. Right-click or <b>Esc</b> cancels.'));
   }
@@ -205,7 +218,7 @@ export class HUD {
   }
 
   startPlacing(t: BuildingType | null) {
-    if (t) { this.gr.casting = null; this.gr.expedition = 0; }
+    if (t) { this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; }
     this.gr.placing = t;
     if (t && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
@@ -314,7 +327,7 @@ export class HUD {
 
   startCasting(id: SpellId | null) {
     this.gr.casting = id;
-    if (id) { this.gr.placing = null; this.gr.expedition = 0; }
+    if (id) { this.gr.placing = null; this.gr.expedition = 0; this.gr.prospecting = false; }
     if (id && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (id) {
@@ -457,11 +470,35 @@ export class HUD {
     c.appendChild(btn);
   }
 
+  /** Geologist targeting: click a mountain inside the borders. */
+  startProspecting(on: boolean) {
+    this.gr.prospecting = on;
+    if (on) { this.gr.placing = null; this.gr.casting = null; this.gr.expedition = 0; }
+    if (on && window.innerWidth <= 700) this.left.classList.remove('open');
+    this.audio.play('ui');
+    if (on) {
+      this.hint.innerHTML = `Send a <b>geologist</b> — click a mountain inside your borders · <b>Shift</b> sends several · <b>Esc</b>/right-click cancels`;
+      this.hint.classList.remove('hidden');
+    } else if (!this.gr.placing && !this.gr.casting && !this.gr.expedition) this.hint.classList.add('hidden');
+    if (this.tab === 'build') this.renderTab();
+  }
+
+  prospectAt(x: number, z: number, keep: boolean) {
+    const g = this.game;
+    const err = sendGeologist(g, g.local, x, z);
+    if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+    this.message('A geologist sets out for the mountain', x, z, 'good');
+    this.audio.play('place');
+    if (!keep) this.startProspecting(false);
+    else if (this.tab === 'build') this.renderTab();
+  }
+
   /** Expedition targeting: pick a free coast for a colony founded from harbour `from`. */
   startExpedition(from: number) {
     this.gr.expedition = from;
     this.gr.placing = null;
     this.gr.casting = null;
+    this.gr.prospecting = false;
     if (window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (from) {
@@ -759,7 +796,7 @@ export class HUD {
       if (this.tab === 'build') {
         // refresh affordability without re-rendering on hover
         const st = this.game.totalStock(this.game.local);
-        this.content.querySelectorAll<HTMLElement>('.bcard').forEach((card, k) => {
+        this.content.querySelectorAll<HTMLElement>('.bcard:not(.geo)').forEach((card, k) => {
           const t = BUILD_ORDER[this.cat][k];
           const d = BUILDINGS[t];
           card.classList.toggle('poor', !(st.board >= d.cost.board && st.stone >= d.cost.stone));

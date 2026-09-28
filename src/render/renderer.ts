@@ -23,6 +23,8 @@ import { SpellFX } from './spells';
 import { SPELLS, SpellId, castError } from '../game/faith';
 import { ShipsRenderer } from './ships';
 import { findDock } from '../game/sea';
+import { SignsRenderer } from './signs';
+import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -117,6 +119,7 @@ export class GameRenderer {
   piles: PilesRenderer;
   buildings: BuildingsRenderer;
   ships: ShipsRenderer;
+  signs: SignsRenderer;
   particles: Particles;
   fx: PostFX;
   birds: Birds;
@@ -132,6 +135,9 @@ export class GameRenderer {
   casting: SpellId | null = null;
   /** Harbour an expedition is being planned from (target picking mode), 0 when off. */
   expedition = 0;
+  /** Picking a mountain to send a geologist to. */
+  prospecting = false;
+  private prospectOk = true;
   private castCheckT = 0;
   private castOk = true;
   hoverNode = -1;
@@ -197,6 +203,8 @@ export class GameRenderer {
     this.scene.add(this.particles.group);
     this.ships = new ShipsRenderer(game, this.piles, this.particles);
     this.scene.add(this.ships.group);
+    this.signs = new SignsRenderer(game);
+    this.scene.add(this.signs.group);
     this.birds = new Birds(game.world.W, game.world.H);
     this.scene.add(this.birds.mesh);
     this.borders = new BordersRenderer(game);
@@ -364,7 +372,7 @@ export class GameRenderer {
     if (!this.placing) {
       if (this.ghost) this.ghost.visible = false;
       this.markers.count = 0;
-      if (!this.casting) U.uRange.value.w = 0;
+      if (!this.casting && !this.prospecting) U.uRange.value.w = 0;
       return;
     }
     const type = this.placing;
@@ -403,6 +411,17 @@ export class GameRenderer {
       const h = w.h[i];
       m.makeTranslation(x, h + 0.04, y);
       this.markers.setMatrixAt(n, m);
+      if (def.mine) {
+        // mines: what our geologists found here — rich green, poor red, unknown grey
+        const k = knownOre(g, g.local, def.mine, a.x + (def.size - 1) / 2, a.y + (def.size - 1) / 2);
+        if (k.known < 4) col.setRGB(0.55, 0.58, 0.62);
+        else if (k.amount >= 12) col.setRGB(0.15, 0.9, 0.2);
+        else if (k.amount > 0) col.setRGB(0.95, 0.75, 0.1);
+        else col.setRGB(0.9, 0.2, 0.12);
+        this.markers.setColorAt(n, col);
+        n++;
+        return;
+      }
       // quality: flatter spots are greener
       let hmin = Infinity, hmax = -Infinity;
       for (const j of g.footprint(def.size, a.x, a.y)) { hmin = Math.min(hmin, w.h[j]); hmax = Math.max(hmax, w.h[j]); }
@@ -481,6 +500,17 @@ export class GameRenderer {
 
   private updateCasting(dt: number) {
     const U = this.terrain.uniforms;
+    if (this.prospecting && this.hoverPoint && !this.placing && !this.casting) {
+      const p = this.hoverPoint;
+      this.castCheckT -= dt;
+      if (this.castCheckT <= 0) {
+        this.castCheckT = 0.2;
+        this.prospectOk = prospectError(this.game, this.game.local, p.x, p.z) === null;
+      }
+      (U.uRangeCol.value as THREE.Color).setRGB(...(this.prospectOk ? [1.0, 0.72, 0.3] : [1, 0.3, 0.2]) as [number, number, number]);
+      (U.uRange.value as THREE.Vector4).set(p.x, 0, p.z, PROBE_RADIUS);
+      return;
+    }
     if (!this.casting || !this.hoverPoint) {
       this.spells.preview = null;
       if (!this.placing) (U.uRangeCol.value as THREE.Color).setRGB(0.45, 0.85, 1.0);
@@ -543,6 +573,14 @@ export class GameRenderer {
         case 'moor': P.splash(x, WATER_LEVEL, z); snd('creak', 0.6); break;
         case 'landed': P.sparkle(x, y + 1.5, z, 50, [0.8, 1.4, 2.0]); snd('fanfare'); break;
         case 'ashore': P.splash(x, WATER_LEVEL, z); break;
+        case 'sign': {
+          if (e.owner !== this.game.local) break;
+          const oc: [number, number, number][] = [[0.8, 0.75, 0.65], [0.3, 0.3, 0.32], [1.4, 0.6, 0.3], [2.2, 1.7, 0.5], [1.2, 1.2, 1.15]];
+          P.dust(x, y, z, 6, [0.6, 0.58, 0.55]);
+          if (e.s) P.sparkle(x, y + 0.5, z, e.s === 3 ? 26 : 10, oc[e.s ?? 0]);
+          snd(e.s === 3 ? 'chime' : 'pop', e.s ? 0.8 : 0.5);
+          break;
+        }
         case 'sink': for (let k = 0; k < 4; k++) P.splash(x + (Math.random() - 0.5), WATER_LEVEL, z + (Math.random() - 0.5)); snd('splash'); break;
       }
     }
@@ -722,6 +760,7 @@ export class GameRenderer {
     this.piles.begin();
     this.buildings.update(dt, this.time);
     this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z);
+    this.signs.update(this.time);
     this.piles.end();
     const WU = this.water.uniforms;
     WU.uWakeN.value = this.ships.wakeCount;

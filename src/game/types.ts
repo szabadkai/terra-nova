@@ -225,6 +225,16 @@ export interface Expedition {
   t: number;
 }
 
+/** A geologist's marker: what he found beneath one spot of a mountain. */
+export interface Sign {
+  id: number;
+  node: number;
+  owner: number;
+  ore: number; // 0 nothing, else ORE_*
+  amt: number; // richness at the spot
+  t: number; // game time placed
+}
+
 export interface Projectile {
   id: number;
   owner: number;

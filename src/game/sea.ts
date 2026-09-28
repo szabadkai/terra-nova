@@ -384,12 +384,13 @@ function loadStep(g: Game, sh: Ship, dt: number) {
   sh.timer -= 0.35;
   const ex = sh.expedition ? g.expeditions.find((e) => e.id === sh.expedition) : null;
   if (ex) {
-    // an expedition takes everything it needs in one go
+    // an expedition takes everything it needs; it never sails short, since nothing can follow it
     for (const s of waitingAt(g, hb, -ex.id)) board(g, s, sh);
     for (const gd of ['board', 'stone'] as const) {
-      const n = Math.min(ex.goods[gd] - sh.cargo[gd], hb.stock[gd] - hb.outgoing[gd]);
+      const n = Math.min(ex.goods[gd] - sh.cargo[gd], hb.stock[gd]);
       if (n > 0) { hb.stock[gd] -= n; sh.cargo[gd] += n; }
     }
+    if (sh.cargo.board < ex.goods.board || sh.cargo.stone < ex.goods.stone) return;
     ex.state = 'sailing';
     ex.ship = sh.id;
     sh.state = 'expedition';

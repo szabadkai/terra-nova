@@ -602,13 +602,15 @@ export class TerrainRenderer {
     this.terr.needsUpdate = true;
   }
 
+  /** Ore specks glitter only where the local player's geologists have probed. */
   updateOre() {
     const w = this.game.world;
     const O = this.ore.image.data as Uint8Array;
     O.fill(0);
+    const local = this.game.local;
     for (let i = 0; i < w.N; i++) {
       const o = w.ore[i];
-      if (o > 0) O[i * 4 + (o - 1)] = Math.min(255, 60 + w.oreAmt[i] * 10);
+      if (o > 0 && w.known(i, local)) O[i * 4 + (o - 1)] = Math.min(255, 60 + w.oreAmt[i] * 10);
     }
     this.ore.needsUpdate = true;
   }
@@ -693,8 +695,12 @@ export class TerrainRenderer {
     if (w.splatDirty) {
       w.splatDirty = false;
       this.updateSplat();
-      this.updateOre();
+      w.oreDirty = true;
       this.aoT = Math.min(this.aoT, 0.3);
+    }
+    if (w.oreDirty) {
+      w.oreDirty = false;
+      this.updateOre();
     }
     if (w.ownerDirty) {
       w.ownerDirty = false;

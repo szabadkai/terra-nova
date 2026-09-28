@@ -6,7 +6,7 @@ import {
 } from './defs';
 import { generateMap } from './mapgen';
 import { PathFinder } from './path';
-import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Stone, Tree } from './types';
+import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, Tree } from './types';
 import { WATER_LEVEL, World } from './world';
 import { abortPlan, updateSettler } from './settlers';
 import { updateEconomy, updateBuilding, onBuildingComplete } from './economy';
@@ -14,6 +14,7 @@ import { updateMilitary, recomputeTerritory, updateProjectiles } from './militar
 import { AIController } from './ai';
 import { updateFaith } from './faith';
 import { cancelVoyage, findDock, sinkFleet, updateSea } from './sea';
+import { updateSigns } from './geology';
 
 export interface PlayerState {
   id: number;
@@ -57,6 +58,8 @@ export class Game {
   fields = new Map<number, Field>();
   animals = new Map<number, Animal>();
   ships = new Map<number, Ship>();
+  signs = new Map<number, Sign>();
+  signsVersion = 1;
   seaOrders: SeaOrder[] = [];
   expeditions: Expedition[] = [];
   seaT = 0;
@@ -326,7 +329,20 @@ export class Game {
     const lim = mine ? 3.5 : size <= 2 ? 1.7 : size === 3 ? 1.4 : 1.2;
     if (hmax - hmin > lim) return 'Ground too steep';
     if (def.coastal && findDock(this, size, x, y) < 0) return 'Must be built on the coast, beside deep sea';
+    // carriers never cross water: the land needs a storehouse (or a colony harbour going up)
+    if (!unclaimed && !this.storageRegions(owner).has(w.region[door])) return 'Your settlers cannot reach this land — found a colony there from a harbour';
     return null;
+  }
+
+  private storageRegionCache = new Map<number, { t: number; n: number; set: Set<number> }>();
+  /** Landmasses where a player has (or is building) a storehouse. */
+  storageRegions(owner: number): Set<number> {
+    const c = this.storageRegionCache.get(owner);
+    if (c && c.t === this.time && c.n === this.buildings.size) return c.set;
+    const set = new Set<number>();
+    for (const b of this.buildings.values()) if (b.owner === owner && b.def.storage && b.state !== 'burning') set.add(this.world.region[b.door]);
+    this.storageRegionCache.set(owner, { t: this.time, n: this.buildings.size, set });
+    return set;
   }
 
   canPlace(type: BuildingType, owner: number, x: number, y: number) {
@@ -614,6 +630,7 @@ export class Game {
       this.checkT = 2;
       this.checkVictory();
       this.recordHistory();
+      updateSigns(this);
     }
   }
 

@@ -29,6 +29,8 @@ export class World {
   seaSize: number[] = [0];
   regionSize: number[] = [0];
   shoreDist: Uint8Array; // water nodes: steps to the nearest land (capped)
+  prospected: Uint8Array; // bit p set once player p's geologists have probed near the node
+  oreDirty = true;
   // dirty regions for renderer
   heightDirty: { x0: number; y0: number; x1: number; y1: number } | null = null;
   splatDirty = true;
@@ -57,6 +59,12 @@ export class World {
     this.region = new Int32Array(N);
     this.sea = new Int32Array(N);
     this.shoreDist = new Uint8Array(N);
+    this.prospected = new Uint8Array(N);
+  }
+
+  /** Does player p know what ore lies at node i? */
+  known(i: number, p: number) {
+    return (this.prospected[i] & (1 << p)) !== 0;
   }
 
   /** Ships need a little depth under the keel. */

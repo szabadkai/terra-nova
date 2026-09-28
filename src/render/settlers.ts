@@ -122,6 +122,7 @@ const JOB_LOOK: Record<Job, JobLook> = {
   vintner: { hat: 'straw', hatCol: 0x9a6ab0, apron: 0x5a2448 },
   priest: { hat: 'hood', hatCol: 0xf4efe2, apron: 0xf8f2e0, beardy: 0.6 },
   shipwright: { hat: 'bandana', hatCol: 0x2a5a8a, apron: 0x8a6440, beardy: 0.6 },
+  geologist: { hat: 'hood', hatCol: 0x7a5a30, beardy: 0.9 },
   swordsman: { hat: 'helmet', hatCol: 0xb8bcc4 },
   bowman: { hat: 'hood', hatCol: 0x4a5a2a },
 };
@@ -129,7 +130,7 @@ const JOB_LOOK: Record<Job, JobLook> = {
 const TOOL: Partial<Record<Job, Good>> = {
   woodcutter: 'axe', stonecutter: 'pickaxe', builder: 'hammer', digger: 'shovel', farmer: 'scythe', fisher: 'rod',
   hunter: 'bow', miner: 'pickaxe', forester: 'shovel', swordsman: 'sword', bowman: 'bow', sawyer: 'saw', waterman: 'water',
-  toolsmith: 'hammer', weaponsmith: 'hammer', shipwright: 'hammer',
+  toolsmith: 'hammer', weaponsmith: 'hammer', shipwright: 'hammer', geologist: 'hammer',
 };
 
 interface Look {

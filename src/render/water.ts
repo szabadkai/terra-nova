@@ -91,10 +91,10 @@ vec3 wEmis;
       float w0 = 0.05 + back * 0.03;
       // the arms are chains of short crests, not lines: modulate along their length
       float crest = 0.55 + 0.45 * sin(back * 7.0 - uTime * 2.6 + side * 3.0);
-      float arm = (1.0 - smoothstep(0.0, w0, abs(abs(side) - armX))) * exp(-back * 0.5) * spd * 0.55 * crest;
-      float trail = (1.0 - smoothstep(0.0, 0.16 + back * 0.05, abs(side))) * exp(-back * 0.42) * spd * 0.7;
+      float arm = (1.0 - smoothstep(0.0, w0, abs(abs(side) - armX))) * exp(-back * 0.85) * spd * 0.6 * crest;
+      float trail = (1.0 - smoothstep(0.0, 0.18 + back * 0.06, abs(side))) * exp(-back * 0.8) * spd * 0.75;
       // faint transverse ripples between the arms
-      float tr = smoothstep(0.7, 1.0, sin(back * 4.0 - uTime * 3.0)) * (1.0 - smoothstep(armX * 0.6, armX, abs(side))) * exp(-back * 0.5) * spd * 0.18;
+      float tr = smoothstep(0.75, 1.0, sin(back * 4.0 - uTime * 3.0)) * (1.0 - smoothstep(armX * 0.5, armX, abs(side))) * exp(-back * 0.9) * spd * 0.12;
       wake = max(wake, max(arm, max(trail, tr)));
     }
     wake = max(wake, ring);
@@ -109,7 +109,8 @@ vec3 wEmis;
   // soft light scattering in shallow water
   wEmis = C(40, 150, 140) * 0.06 * (1.0 - smoothstep(0.2, 2.0, depth)) * max(uSunCol.r, 0.2);
 `,
-      fragRough: 'roughnessFactor = mix(0.07, 0.8, wFoam);',
+      // only real foam roughens the surface: a faint trace would smear the sun glint along it
+      fragRough: 'roughnessFactor = mix(0.07, 0.8, smoothstep(0.18, 0.6, wFoam));',
       fragNormal: /* glsl */ `
   {
     vec2 p2 = vWPos.xz;

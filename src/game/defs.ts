@@ -30,7 +30,7 @@ export type Job =
   | 'woodcutter' | 'forester' | 'stonecutter' | 'sawyer'
   | 'fisher' | 'hunter' | 'farmer' | 'miller' | 'baker' | 'butcher' | 'pigfarmer' | 'waterman'
   | 'miner' | 'smelter' | 'toolsmith' | 'weaponsmith'
-  | 'vintner' | 'priest' | 'shipwright'
+  | 'vintner' | 'priest' | 'shipwright' | 'geologist'
   | 'swordsman' | 'bowman';
 
 export const JOB_NAMES: Record<Job, string> = {
@@ -38,7 +38,7 @@ export const JOB_NAMES: Record<Job, string> = {
   stonecutter: 'Stonecutter', sawyer: 'Sawyer', fisher: 'Fisher', hunter: 'Hunter', farmer: 'Farmer',
   miller: 'Miller', baker: 'Baker', butcher: 'Butcher', pigfarmer: 'Pig Farmer', waterman: 'Water Carrier',
   miner: 'Miner', smelter: 'Smelter', toolsmith: 'Toolsmith', weaponsmith: 'Weaponsmith',
-  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', swordsman: 'Swordsman', bowman: 'Bowman',
+  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', geologist: 'Geologist', swordsman: 'Swordsman', bowman: 'Bowman',
 };
 
 export const JOB_TOOL: Partial<Record<Job, Good>> = {
@@ -124,11 +124,11 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     worker: 'butcher', inputs: [{ goods: ['pig'], cap: 4 }], outputs: ['meat'], cycle: 6, desc: 'Turns pigs into meat.' }),
 
   coalmine: D({ type: 'coalmine', name: 'Coal Mine', size: 3, category: 'industry', cost: { board: 3, stone: 1 },
-    worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['coal'], cycle: 8, mine: 'coal', radius: 3, desc: 'Mines coal. Needs food. Build on mountains.' }),
+    worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['coal'], cycle: 8, mine: 'coal', radius: 3, desc: 'Mines coal. Needs food. Build on mountains where a geologist found coal.' }),
   ironmine: D({ type: 'ironmine', name: 'Iron Mine', size: 3, category: 'industry', cost: { board: 3, stone: 1 },
-    worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['ironore'], cycle: 9, mine: 'iron', radius: 3, desc: 'Mines iron ore. Needs food. Build on mountains.' }),
+    worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['ironore'], cycle: 9, mine: 'iron', radius: 3, desc: 'Mines iron ore. Needs food. Build where a geologist found iron.' }),
   goldmine: D({ type: 'goldmine', name: 'Gold Mine', size: 3, category: 'industry', cost: { board: 3, stone: 1 },
-    worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['goldore'], cycle: 10, mine: 'gold', radius: 3, desc: 'Mines gold ore. Needs food. Build on mountains.' }),
+    worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['goldore'], cycle: 10, mine: 'gold', radius: 3, desc: 'Mines gold ore. Needs food. Build where a geologist found gold.' }),
   stonemine: D({ type: 'stonemine', name: 'Stone Mine', size: 3, category: 'industry', cost: { board: 3, stone: 0 },
     worker: 'miner', inputs: [{ goods: ['bread', 'fish', 'meat'], cap: 6 }], outputs: ['stone'], cycle: 7, mine: 'stone', radius: 3, desc: 'Quarries stone inside a mountain. Needs food.' }),
   ironsmelter: D({ type: 'ironsmelter', name: 'Iron Smelter', size: 3, category: 'industry', cost: { board: 3, stone: 4 },
@@ -190,4 +190,5 @@ export const PLAYER_NAMES = ['Red Kingdom', 'Blue Empire', 'Golden Realm', 'Viol
 export const T_GRASS = 0, T_MEADOW = 1, T_FOREST = 2, T_DIRT = 3, T_SAND = 4, T_ROCK = 5, T_SNOW = 6, T_SWAMP = 7;
 
 export const ORE_COAL = 1, ORE_IRON = 2, ORE_GOLD = 3, ORE_STONE = 4;
+export const ORE_NAMES = ['nothing', 'coal', 'iron ore', 'gold', 'granite'];
 export const MINE_ORE: Record<string, number> = { coal: ORE_COAL, iron: ORE_IRON, gold: ORE_GOLD, stone: ORE_STONE };

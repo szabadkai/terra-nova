@@ -122,7 +122,7 @@ function setupGlobalInput() {
     if (state !== 'play' || !hud) return;
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
     const k = e.key;
-    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else if (gr.casting) hud.startCasting(null); else if (gr.expedition) hud.startExpedition(0); else hud.select(null); }
+    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else if (gr.casting) hud.startCasting(null); else if (gr.expedition) hud.startExpedition(0); else if (gr.prospecting) hud.startProspecting(false); else hud.select(null); }
     else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
     else if (k === '1') speed = pausedSpeed = 1;
     else if (k === '2') speed = pausedSpeed = 2;
@@ -163,7 +163,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (e.pointerType === 'touch') return;
     // hover tooltip for buildings (throttled)
     const now = performance.now();
-    if (!hud || gr.placing || gr.casting || gr.expedition || e.buttons) { hud?.hideTip(); return; }
+    if (!hud || gr.placing || gr.casting || gr.expedition || gr.prospecting || e.buttons) { hud?.hideTip(); return; }
     if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
     tipT = now;
     const shipId = gr.pickShip(e.clientX, e.clientY);
@@ -197,6 +197,7 @@ function bindCanvas(c: HTMLCanvasElement) {
       if (gr.placing) hud.startPlacing(null);
       else if (gr.casting) hud.startCasting(null);
       else if (gr.expedition) hud.startExpedition(0);
+      else if (gr.prospecting) hud.startProspecting(false);
       else hud.select(null);
     }
   };
@@ -214,6 +215,11 @@ function onClick(e: PointerEvent) {
   if (gr.expedition) {
     const p = gr.pickGround(e.clientX, e.clientY);
     if (p) hud.expeditionAt(p.x, p.z);
+    return;
+  }
+  if (gr.prospecting) {
+    const p = gr.pickGround(e.clientX, e.clientY);
+    if (p) hud.prospectAt(p.x, p.z, e.shiftKey);
     return;
   }
   if (gr.placing) {
