@@ -13,7 +13,7 @@ import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, Projecti
 import { SettlersRenderer } from './settlers';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
-import { Rain } from './rain';
+import { RAIN_FALL, Rain } from './rain';
 import { Seasons } from './seasons';
 import { PostFX } from './postfx';
 import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
@@ -40,7 +40,7 @@ export interface RenderSettings {
   ao: boolean;
   grade: boolean;
   dayCycle: boolean;
-  weather: 'auto' | 'clear' | 'rain' | 'snow';
+  weather: 'auto' | 'clear' | 'drizzle' | 'rain' | 'storm' | 'snow';
   borders: boolean;
   reflections: boolean;
 }
@@ -173,6 +173,8 @@ export class GameRenderer {
   private rainAmount = 0;
   private targetRain = 0;
   private precip: 'rain' | 'snow' = 'rain';
+  private rainStrength = 0; // strength of the current spell: drizzle ~0.3 .. downpour 1
+  private boltT = 20;
   seasons = new Seasons();
   onEvent: ((e: GameEvent) => void) | null = null;
   private sound: ((name: string, x?: number, z?: number, vol?: number) => void) | null = null;
@@ -785,26 +787,33 @@ export class GameRenderer {
   private updateWeather(dt: number) {
     const mode = this.settings.weather;
     const cold = this.seasons.cold;
-    if (mode === 'clear') this.targetRain = 0;
-    else if (mode === 'rain') { this.targetRain = 1; this.precip = 'rain'; }
-    else if (mode === 'snow') { this.targetRain = 1; this.precip = 'snow'; }
-    else {
+    const forced: Partial<Record<RenderSettings['weather'], number>> = { clear: 0, drizzle: 0.35, rain: 0.62, storm: 1, snow: 1 };
+    if (mode in forced) {
+      this.rainStrength = forced[mode]!;
+      if (mode !== 'clear') this.precip = mode === 'snow' ? 'snow' : 'rain';
+    } else {
       this.weatherT -= dt;
       // the first proper snowfall comes soon after winter sets in
-      if (cold > 0.8 && G.uSnow.value < 0.15 && this.targetRain < 0.5 && this.rainAmount < 0.05) this.weatherT = Math.min(this.weatherT, 10);
+      if (cold > 0.8 && G.uSnow.value < 0.15 && this.rainStrength === 0 && this.rainAmount < 0.05) this.weatherT = Math.min(this.weatherT, 10);
       if (this.weatherT <= 0) {
-        const raining = this.targetRain > 0.5;
-        this.targetRain = raining ? 0 : Math.random() < 0.4 + cold * 0.25 ? 1 : 0;
-        // snow in winter, rain the rest of the year
-        if (this.targetRain > 0.5 && this.rainAmount < 0.05) this.precip = cold > 0.5 ? 'snow' : 'rain';
-        this.weatherT = this.targetRain > 0.5 ? 60 + Math.random() * 70 : (120 + Math.random() * 180) * (1 - cold * 0.5);
+        if (this.rainStrength > 0) this.rainStrength = 0;
+        else if (Math.random() < 0.4 + cold * 0.25) {
+          // mostly showers, sometimes steady rain, now and then a downpour
+          const p = Math.random();
+          this.rainStrength = p < 0.4 ? 0.3 + Math.random() * 0.15 : p < 0.82 ? 0.5 + Math.random() * 0.25 : 0.88 + Math.random() * 0.12;
+          // snow in winter, rain the rest of the year
+          if (this.rainAmount < 0.05) this.precip = cold > 0.5 ? 'snow' : 'rain';
+        }
+        this.weatherT = this.rainStrength > 0 ? (60 + Math.random() * 70) * (1.3 - this.rainStrength * 0.5) : (120 + Math.random() * 180) * (1 - cold * 0.5);
       }
     }
-    // switching precipitation type waits until the current one has faded
-    if (this.rainAmount < 0.03 && mode === 'rain') this.precip = 'rain';
+    // gusts and lulls within a spell
+    const gust = 0.82 + 0.18 * Math.sin(this.time * 0.11) * Math.sin(this.time * 0.043 + 1);
+    this.targetRain = this.rainStrength * gust;
     this.rainAmount += (this.targetRain - this.rainAmount) * (1 - Math.exp(-dt * 0.25));
     const snowing = this.precip === 'snow';
-    this.sky.weather = this.rainAmount * (snowing ? 0.8 : 1);
+    // the sky closes over well before the rain gets heavy
+    this.sky.weather = Math.min(1, this.rainAmount * (snowing ? 0.8 : 1.6));
     // snow cover builds up while it snows; winter snow lies until the thaw, which leaves the ground wet
     const sn = G.uSnow.value;
     if (snowing && this.rainAmount > 0.3) G.uSnow.value = Math.min(1, sn + dt / 70 * this.rainAmount);
@@ -812,6 +821,20 @@ export class GameRenderer {
     const thaw = snowing ? 0 : Math.min(1, sn * 2) * (1 - cold);
     G.uWet.value = snowing ? 0 : Math.min(1, Math.max(this.rainAmount * 1.3, thaw * 0.7));
     G.uWindStrength.value = 1 + this.rainAmount * (snowing ? 0.5 : 1.2);
+    // thunder in heavy rain: mostly distant flashes, now and then a strike in view
+    if (!snowing && this.rainAmount > 0.55) {
+      this.boltT -= dt;
+      if (this.boltT <= 0) {
+        this.boltT = (18 + Math.random() * 40) / (this.rainAmount * this.rainAmount);
+        const t = this.cam.target, R = this.cam.viewSize, w = this.game.world;
+        const near = Math.random() < 0.3;
+        const a = Math.random() * Math.PI * 2, d = near ? Math.random() * R * 0.7 : R * 2 + Math.random() * 40;
+        const x = THREE.MathUtils.clamp(t.x + Math.cos(a) * d, 1, w.W - 2), z = THREE.MathUtils.clamp(t.z + Math.sin(a) * d, 1, w.H - 2);
+        this.spells.lightning(x, z, near);
+        const delay = near ? 200 + Math.random() * 500 : 1200 + Math.random() * 2500;
+        setTimeout(() => this.sound?.('thunder', near ? x : undefined, near ? z : undefined, near ? 1 : 0.25 + Math.random() * 0.25), delay);
+      }
+    } else this.boltT = Math.max(this.boltT, 8);
     const wind = G.uWind.value;
     const a = this.time * 0.01;
     wind.set(Math.cos(a) * 0.9, Math.sin(a) * 0.4 + 0.2);
@@ -839,8 +862,10 @@ export class GameRenderer {
     (this.water.uniforms.uSunCol.value as THREE.Color).copy(this.sky.sun.color).multiplyScalar(this.sky.sunIntensity / 3);
     const fogC = this.sky.fogColor;
     (this.scene.fog as THREE.Fog).color.copy(fogC);
-    (this.scene.fog as THREE.Fog).near = 60 + this.cam.dist;
-    (this.scene.fog as THREE.Fog).far = 200 + this.cam.dist * 2;
+    // rain hangs a veil over the distance
+    const haze = 1 - this.rainAmount * (this.precip === 'rain' ? 0.45 : 0.25);
+    (this.scene.fog as THREE.Fog).near = (60 + this.cam.dist) * haze;
+    (this.scene.fog as THREE.Fog).far = (200 + this.cam.dist * 2) * haze;
     (this.scene.background as THREE.Color).copy(new THREE.Color(0x0e3558).lerp(fogC, 0.3));
     const night = G.uNight.value;
     setWindowGlow(night * 2.2);
@@ -906,7 +931,9 @@ export class GameRenderer {
       U2.uReflOn.value = 1;
     } else U2.uReflOn.value = 0;
 
-    this.fx.render(this.time, zoom01, night);
+    const rainI = this.precip === 'rain' ? this.rainAmount : 0;
+    const right = new THREE.Vector3().setFromMatrixColumn(this.cam.camera.matrixWorld, 0);
+    this.fx.render(this.time, zoom01, night, rainI, (this.rain.drift.x * right.x + this.rain.drift.y * right.z) / RAIN_FALL);
   }
 
   private waterCheckT = 0;

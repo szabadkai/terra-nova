@@ -174,6 +174,19 @@ export class SpellFX {
     this.flash.col.copy(col);
   }
 
+  /** Storm lightning: a bolt striking the ground at (x, z), or only the far-off flash of one. */
+  lightning(x: number, z: number, near: boolean) {
+    if (near) {
+      this.makeBolt(x, z, new THREE.Color(0.65, 0.75, 1.0));
+      this.onFlash(0.14, 0.3);
+    } else {
+      this.setFlash(x, this.ground(x, z) + 35, z, 40, new THREE.Color(0.6, 0.7, 1.0));
+      this.onFlash(0.04 + Math.random() * 0.06, 0);
+    }
+    // lightning flickers
+    setTimeout(() => this.onFlash(near ? 0.06 : 0.03, 0), 60 + Math.random() * 90);
+  }
+
   onEvent(e: GameEvent, sound: (name: string, vol?: number) => void) {
     const P = this.particles;
     const x = e.x ?? 0, z = e.z ?? 0;

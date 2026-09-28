@@ -54,11 +54,14 @@ const GradeShader = {
     uRes: { value: new THREE.Vector2(1, 1) },
     uCA: { value: 0.0015 },
     uFlash: { value: 0 },
+    uRain: { value: 0 },
+    uRainSlant: { value: 0 },
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse; uniform float uTime; uniform float uSat; uniform float uContrast; uniform float uVignette;
     uniform vec3 uWarm; uniform vec3 uCool; uniform float uGrain; uniform vec2 uRes; uniform float uCA; uniform float uFlash;
+    uniform float uRain; uniform float uRainSlant;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -78,6 +81,27 @@ const GradeShader = {
       // vignette
       col *= 1.0 - uVignette * smoothstep(0.1, 0.55, r2 * 1.4);
       col += (hash(vUv * uRes + uTime) - 0.5) * uGrain;
+      if (uRain > 0.001) {
+        // rain right in front of the lens: two sheets of short thin streaks, slanted with the wind
+        vec2 q = vec2(vUv.x * uRes.x / uRes.y - (1.0 - vUv.y) * uRainSlant, vUv.y);
+        float sheet = 0.0;
+        for (int k = 0; k < 2; k++) {
+          float fk = float(k);
+          float cx = q.x * mix(96.0, 60.0, fk) + fk * 31.7;
+          float colId = floor(cx);
+          float h = hash(vec2(colId, 3.1 + fk));
+          float cyc = q.y * (1.6 + fk * 0.9) + uTime * (2.4 + fk * 1.1 + h * 0.6) + h * 9.0;
+          float v = fract(cyc);
+          float gate = step(0.62 - uRain * 0.42, hash(vec2(colId + fk * 7.0, floor(cyc))));
+          float len = 0.05 + hash(vec2(colId, floor(cyc) + 0.5)) * 0.07;
+          float seg = smoothstep(0.0, 0.015, v) * (1.0 - smoothstep(len * 0.5, len, v));
+          float across = 1.0 - abs(fract(cx) - 0.5) * 2.0;
+          sheet += smoothstep(0.82, 1.0, across) * seg * gate * (0.5 + 0.5 * h) * (1.0 - fk * 0.35);
+        }
+        // and a faint grey veil over everything
+        col = mix(col, vec3(l) * vec3(0.9, 0.95, 1.05) + 0.03, uRain * 0.1);
+        col += sheet * uRain * 0.16 * vec3(0.8, 0.86, 0.96);
+      }
       col += uFlash;
       gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
     }`,
@@ -137,7 +161,7 @@ export class PostFX {
     this.gtao?.setSize(w * pr, h * pr);
   }
 
-  render(time: number, zoom01: number, night: number) {
+  render(time: number, zoom01: number, night: number, rain = 0, rainSlant = 0) {
     this.bloom.enabled = this.settings.bloom;
     this.bloom.strength = 0.28 + night * 0.55;
     this.bloom.threshold = 0.9 - night * 0.35;
@@ -149,6 +173,8 @@ export class PostFX {
     this.grade.enabled = true;
     const u = this.grade.uniforms;
     u.uTime.value = time;
+    u.uRain.value = rain;
+    u.uRainSlant.value = rainSlant;
     if (this.settings.grade) {
       u.uSat.value = 1.1 - night * 0.25;
       u.uContrast.value = 1.05;

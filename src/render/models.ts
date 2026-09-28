@@ -373,8 +373,9 @@ export function buildRockGeos(): THREE.BufferGeometry[] {
     const n = 3 + v;
     for (let k = 0; k < n; k++) {
       const r = 0.26 + hash2(k, v, 3) * 0.24;
-      // indexed icosphere, randomly displaced; normals are a blend of flat + smooth
-      let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(r, 2);
+      const seed = v * 17 + k;
+      // indexed icosphere, randomly displaced, then split along cleavage planes
+      let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(r, 3);
       g.deleteAttribute('normal');
       g.deleteAttribute('uv');
       g = mergeVertices(g);
@@ -385,21 +386,42 @@ export function buildRockGeos(): THREE.BufferGeometry[] {
         const q = (a: number) => Math.round(a * 60);
         const rnd = hash2(q(x) + q(z) * 7, q(y) + k * 31, v * 13 + 5);
         const low = Math.sin(x * 7 + k * 3) * Math.cos(z * 6 + y * 3 + v) * 0.1;
-        let m = 1 + (rnd - 0.5) * 0.28 + low;
-        let yy = y * m * 0.72;
-        if (yy > r * 0.45) yy = r * 0.45 + (yy - r * 0.45) * 0.35; // flattened top
-        p.setXYZ(i, x * m * sx, yy, z * m * sz);
+        const m = 1 + (rnd - 0.5) * 0.16 + low;
+        p.setXYZ(i, x * m * sx, y * m * 0.78, z * m * sz);
+      }
+      // cleavage planes, mostly facing up and sideways (the bottom is buried): every vertex
+      // beyond one is pushed onto it, leaving flat faces with sharp edges
+      const plane = new Int8Array(p.count).fill(-1);
+      const cuts = 7 + Math.floor(hash2(k, v, 21) * 4);
+      for (let c = 0; c < cuts; c++) {
+        const th = hash2(c, seed, 22) * Math.PI * 2;
+        const ny = c === 0 ? 0.92 : -0.15 + hash2(c, seed, 23) * 0.95;
+        const hr = Math.sqrt(1 - ny * ny);
+        const nx = Math.cos(th) * hr, nz = Math.sin(th) * hr;
+        const reach = r * Math.hypot(nx * sx, ny * 0.78, nz * sz);
+        const d = reach * (c === 0 ? 0.55 : 0.64 + hash2(c, seed, 24) * 0.24);
+        for (let i = 0; i < p.count; i++) {
+          const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+          const s = x * nx + y * ny + z * nz - d;
+          if (s <= 0) continue;
+          p.setXYZ(i, x - nx * s, y - ny * s, z - nz * s);
+          plane[i] = c;
+        }
       }
       g.computeVertexNormals();
       const smooth = g.getAttribute('normal').clone() as THREE.BufferAttribute;
       const flat = g.toNonIndexed();
       flat.computeVertexNormals();
-      // blend flat face normals with the smooth ones for chiselled but natural stone
+      // cut faces keep their flat normal (crisp edges); elsewhere flat blends with smooth
+      // for chiselled but natural stone
       const idx = g.index!.array;
       const fn = flat.getAttribute('normal') as THREE.BufferAttribute;
       for (let t = 0; t < idx.length; t++) {
         const si = idx[t];
-        const nx = fn.getX(t) * 0.55 + smooth.getX(si) * 0.45, ny = fn.getY(t) * 0.55 + smooth.getY(si) * 0.45, nz = fn.getZ(t) * 0.55 + smooth.getZ(si) * 0.45;
+        const f0 = t - (t % 3);
+        const pl = plane[idx[f0]];
+        if (pl >= 0 && plane[idx[f0 + 1]] === pl && plane[idx[f0 + 2]] === pl) continue;
+        const nx = fn.getX(t) * 0.4 + smooth.getX(si) * 0.6, ny = fn.getY(t) * 0.4 + smooth.getY(si) * 0.6, nz = fn.getZ(t) * 0.4 + smooth.getZ(si) * 0.6;
         const l = Math.hypot(nx, ny, nz);
         fn.setXYZ(t, nx / l, ny / l, nz / l);
       }
@@ -412,16 +434,14 @@ export function buildRockGeos(): THREE.BufferGeometry[] {
     const geo = merge(parts);
     const nrm = geo.getAttribute('normal') as THREE.BufferAttribute;
     let vi = 0;
+    // a multiplier on the shader's rock colour: crevices (downward facing / low) darker,
+    // each boulder a slightly different tone
     colorize(geo, (x, y, z) => {
       const ny = nrm.getY(vi++);
       const h = hash2(Math.round(x * 14), Math.round(z * 14) + Math.round(y * 14) * 3, v);
-      const base = 0.13 + h * 0.05 + Math.max(0, y) * 0.05;
       const warm = hash2(Math.round(x * 5), Math.round(z * 5), v + 9);
-      // crevices (downward facing / low) darker, lichen on upward facing tops
-      const crev = THREE.MathUtils.clamp(0.65 + ny * 0.35 + y * 0.4, 0.45, 1.05);
-      const lichen = ny > 0.75 && h > 0.62 ? 1 : 0;
-      if (lichen) return [0.09 * crev, 0.11 * crev, 0.05 * crev];
-      return [base * (1.0 + warm * 0.15) * crev, base * 0.97 * crev, base * (0.9 - warm * 0.08) * crev];
+      const crev = THREE.MathUtils.clamp(0.8 + ny * 0.22 + y * 0.4, 0.55, 1.1) * (0.94 + h * 0.1);
+      return [crev * (1 + warm * 0.06), crev, crev * (1 - warm * 0.06)];
     });
     out.push(geo);
   }

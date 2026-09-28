@@ -70,7 +70,7 @@ vec3 seasonGrass(vec3 c, float n) {
   // summer straw is golden, dormant winter grass a duller olive-brown
   vec3 dry = mix(vec3(1.35, 1.0, 0.32) * 1.15, vec3(1.12, 1.0, 0.58) * 0.9, uSeasonB.w);
   c = mix(c, lum * dry, d * 0.8);
-  return mix(c, c * vec3(1.06, 1.12, 0.8), uSeasonA.z * 0.7);
+  return mix(c, c * vec3(1.04, 1.1, 0.88), uSeasonA.z * 0.7);
 }
 vec3 hash32(vec2 q) {
   vec3 p3 = fract(vec3(q.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -158,10 +158,10 @@ const TERRAIN_MAP = /* glsl */ `
 
   // grass
   if (v[0] > 0.0) {
-    vec3 c = mix(C(84,130,40), C(124,150,50), smoothstep(0.3, 0.75, n0.r));
-    c = mix(c, C(54,96,32), smoothstep(0.45, 0.8, n1.g) * 0.5);
+    vec3 c = mix(C(60,118,32), C(92,140,42), smoothstep(0.3, 0.75, n0.r));
+    c = mix(c, C(40,90,30), smoothstep(0.45, 0.8, n1.g) * 0.5);
     c *= 0.88 + 0.24 * mix(0.5, n4.r * 0.7 + n5.g * 0.3, farFade * (1.0 - detK));
-    c = mix(c, C(152,158,72), smoothstep(0.74, 0.95, n2.g) * 0.3);
+    c = mix(c, C(118,150,54), smoothstep(0.74, 0.95, n2.g) * 0.25);
     c *= dMod(dA0, detK);
     c = seasonGrass(c, n1.g);
     dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * v[0]; dCav += dM0.z * v[0]; dRough += dM0.w * v[0];
@@ -169,34 +169,34 @@ const TERRAIN_MAP = /* glsl */ `
   }
   // meadow with flowers
   if (v[1] > 0.0) {
-    vec3 c = mix(C(106,150,48), C(142,166,62), n0.g);
+    vec3 c = mix(C(72,128,38), C(104,150,48), n0.g);
     c *= 0.88 + 0.24 * mix(0.5, n4.g, farFade * (1.0 - detK));
     c *= dMod(dA0, detK);
     c = seasonGrass(c, n0.r);
-    // flowers carpet the meadows in spring and are gone by winter
+    // flowers grow in scattered drifts through spring and summer and are gone by winter;
+    // the drifts follow the lighter, drier patches of the sward
     float bloom = uSeasonB.z;
+    float fpatch = smoothstep(0.52, 0.7, n0.r * 0.55 + n1.r * 0.45) * min(bloom, 1.0);
     vec4 fl = texture2D(tNoise, pr1 * 0.62 + vec2(0.2, 0.9));
-    float f = (1.0 - smoothstep(0.14 * bloom, 0.3 * bloom + 1e-4, fl.b)) * step(0.5, fl.a) * farFade;
-    vec3 fc = fl.a > 0.88 ? C(248,244,236) : fl.a > 0.78 ? C(252,212,58) : fl.a > 0.67 ? C(176,118,222) : C(232,96,84);
-    f *= 1.0 - detK;
+    float f = (1.0 - smoothstep(0.1, 0.24, fl.b)) * step(0.95, fl.a) * farFade * fpatch * (1.0 - detK);
+    vec3 fc = fl.a > 0.98 ? C(252,212,58) : fl.a > 0.965 ? C(176,118,222) : C(248,244,236);
     c = mix(c, fc, f);
-    // up close: analytic five-petal flowers, crisp at any zoom, clustered like the far speckles
-    vec2 fp = p * 6.0;
+    // up close: analytic five-petal flowers, crisp at any zoom, in the same drifts
+    vec2 fp = p * 4.0;
     float fw = (fwidth(fp.x) + fwidth(fp.y)) * 0.7;
-    if (detK > 0.001) {
+    if (detK > 0.001 && fpatch > 0.001) {
       vec2 fi = floor(fp), ff = fract(fp) - 0.5;
       vec3 hh = hash32(fi);
       float h1 = hh.x, h2 = hh.y, h3 = hh.z;
-      float dens = smoothstep(0.3, 0.7, fl.a * 0.55 + n2.b * 0.45);
-      if (h1 < (0.6 * dens + 0.12) * bloom) {
-        vec2 d = ff - (vec2(h2, h3) - 0.5) * 0.4;
+      if (h1 < 0.25 * fpatch) {
+        vec2 d = ff - (vec2(h2, h3) - 0.5) * 0.5;
         float r = length(d);
-        float R = 0.15 + h2 * 0.1;
+        float R = 0.1 + h2 * 0.07;
         float petal = R * (0.6 + 0.4 * abs(cos(atan(d.y, d.x) * 2.5 + h3 * 6.28)));
         float fm = (1.0 - smoothstep(petal - fw, petal + fw, r)) * detK;
         float core = 1.0 - smoothstep(R * 0.28 - fw, R * 0.28 + fw, r);
         float hc = fract(h3 * 7.13);
-        vec3 pc = hc > 0.7 ? C(250,248,240) : hc > 0.5 ? C(255,214,50) : hc > 0.3 ? C(170,110,230) : hc > 0.15 ? C(236,84,70) : C(96,140,236);
+        vec3 pc = hc > 0.55 ? C(250,248,240) : hc > 0.3 ? C(255,214,50) : hc > 0.15 ? C(170,110,230) : C(236,110,130);
         pc *= 0.85 + 0.3 * smoothstep(0.0, R, r);
         c = mix(c, mix(pc, C(240,170,30), core), fm);
         f = max(f, fm);

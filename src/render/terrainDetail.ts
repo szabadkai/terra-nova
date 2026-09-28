@@ -125,10 +125,11 @@ function grassLayer(): Layer {
   const rng = new RNG(101);
   L.fill((u, v, i) => {
     const n = pfbm(u, v, 16, 3, 7);
-    L.set(i, [0.07, 0.075, 0.025], 0.8 + n * 0.4, n * 0.08, 1);
+    // shaded ground under the sward reads as dark green, not bare soil
+    L.set(i, [0.035, 0.07, 0.02], 0.8 + n * 0.4, n * 0.08, 1);
   });
   // clover and small round-leaved weeds sitting between the blades
-  for (let k = 0; k < 70; k++) {
+  for (let k = 0; k < 50; k++) {
     const cx = rng.next() * S, cy = rng.next() * S;
     const n = 4 + Math.floor(rng.next() * 12);
     for (let j = 0; j < n; j++) {
@@ -142,19 +143,19 @@ function grassLayer(): Layer {
       }
     }
   }
-  // blades
+  // blades: a dense sward in close shades of green, hardly any straw
   const cols: [RGB, number][] = [
-    [[0.13, 0.29, 0.045], 50], [[0.2, 0.33, 0.05], 18], [[0.09, 0.22, 0.05], 16], [[0.3, 0.32, 0.08], 8], [[0.42, 0.36, 0.15], 4],
+    [[0.12, 0.3, 0.045], 46], [[0.16, 0.34, 0.05], 22], [[0.085, 0.24, 0.045], 20], [[0.21, 0.33, 0.07], 9], [[0.3, 0.32, 0.11], 3],
   ];
-  for (let k = 0; k < 42000; k++) {
+  for (let k = 0; k < 56000; k++) {
     const x = rng.next() * S, y = rng.next() * S;
     const depth = rng.next();
-    const len = 6 + rng.next() * 12;
+    const len = 7 + rng.next() * 13;
     const a = rng.next() * 6.283;
     const bend = (rng.next() - 0.5) * 0.9;
-    const w = 1.5 + rng.next() * 1.6;
-    const col = jitter(rng, pick(rng, cols), 0.2);
-    const k2 = 0.5 + depth * 0.5; // blades deep in the sward are in shadow
+    const w = 1.2 + rng.next() * 1.4;
+    const col = jitter(rng, pick(rng, cols), 0.15);
+    const k2 = 0.55 + depth * 0.45; // blades deep in the sward are in shadow
     const c: RGB = [col[0] * k2, col[1] * k2, col[2] * k2];
     const mx = x + Math.cos(a) * len * 0.55, my = y + Math.sin(a) * len * 0.55;
     const tx = mx + Math.cos(a + bend) * len * 0.45, ty = my + Math.sin(a + bend) * len * 0.45;

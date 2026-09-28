@@ -403,7 +403,7 @@ export class GameMenu {
     c.appendChild(this.toggle('Grass tufts', 'Wind-swept grass blades (always off on Low)', () => s.grass, set('grass')));
     c.appendChild(this.toggle('Water reflections', 'The land mirrored in lakes and sea', () => s.reflections, set('reflections')));
     c.appendChild(h('h3', '', 'World'));
-    c.appendChild(this.select('Weather', '', [['auto', 'Changing'], ['clear', 'Always clear'], ['rain', 'Rain'], ['snow', 'Snow']],
+    c.appendChild(this.select('Weather', '', [['auto', 'Changing'], ['clear', 'Always clear'], ['drizzle', 'Drizzle'], ['rain', 'Rain'], ['storm', 'Storm'], ['snow', 'Snow']],
       () => s.weather, (v) => set('weather')(v as RenderSettings['weather'])));
     c.appendChild(this.select('Season', 'Picking one runs the year forward to it', [['auto', 'Changing'], ['spring', 'Spring'], ['summer', 'Summer'], ['autumn', 'Autumn'], ['winter', 'Winter']],
       () => prefs.season, (v) => { prefs.season = v as SeasonMode; gr.seasons.mode = prefs.season; }));

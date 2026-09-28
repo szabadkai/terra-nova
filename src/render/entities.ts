@@ -6,6 +6,7 @@ import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
+import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
 
 const tmpM = new THREE.Matrix4();
@@ -263,12 +264,87 @@ export class TreesRenderer {
 }
 
 // ------------------------------------------------------------------ rocks
+// Stone deposits wear the mountains' rock: the same macro palette and, up close, the same
+// painted detail layer (facets, cracks, lichen) mapped triplanar in world space, so a
+// quarry reads as a broken-off piece of the cliff. Vertex colours only darken crevices.
+const ROCK_FRAG_HEAD = /* glsl */ `
+uniform sampler2DArray tDetail;
+uniform sampler2DArray tDetailN;
+varying vec3 vWNormal;
+varying float vRockR;
+vec3 sDetG;
+float sRough;
+#define C(r,g,b) pow(vec3(float(r),float(g),float(b))/255.0, vec3(2.2))
+vec4 rockN(vec3 wp, vec3 w3, float s, vec2 off) {
+  return texture2D(tNoise, wp.zy * s + off) * w3.x + texture2D(tNoise, wp.xz * s + off) * w3.y + texture2D(tNoise, wp.xy * s + off) * w3.z;
+}
+`;
+const ROCK_MAP = /* glsl */ `
+  {
+    vec3 wn = normalize(vWNormal);
+    vec3 tw = pow(abs(wn), vec3(4.0));
+    tw /= tw.x + tw.y + tw.z;
+    float camDist = length(vViewPosition);
+    float farFade = 1.0 - smoothstep(30.0, 90.0, camDist);
+    float detK = 1.0 - smoothstep(24.0, 66.0, camDist);
+    vec2 ro = vec2(vRockR, fract(vRockR * 7.31));
+    vec4 r1 = rockN(vWPos, tw, 0.17, vec2(0.63, 0.41) + ro);
+    vec4 r2 = rockN(vWPos, tw, 0.61, vec2(0.11, 0.87) + ro);
+    vec4 r3 = rockN(vWPos, tw, 1.73, vec2(0.47, 0.29));
+    vec4 r4 = rockN(vWPos, tw, 4.9, vec2(0.77, 0.19));
+    vec3 c = mix(C(96,90,82), C(128,120,108), clamp(r1.r * 0.35 + r2.r * 0.35 + r3.g * 0.3 + (vRockR - 0.5) * 0.4, 0.0, 1.0));
+    c = mix(c, C(80,76,72), smoothstep(0.55, 0.8, r1.g) * 0.45);
+    c = mix(c, C(118,100,82), smoothstep(0.6, 0.85, r2.a) * 0.3);
+    float crack = (1.0 - smoothstep(0.0, 0.1, r2.b)) * step(0.55, r2.a) * 0.6 * farFade;
+    c *= 1.0 - crack * 0.35;
+    c *= 0.9 + 0.2 * r3.r * farFade * (1.0 - detK);
+    // close-up detail: the mountain's rock layer, a little denser to suit boulders
+    vec3 q = vWPos * 0.45;
+    vec4 ax = texture(tDetail, vec3(q.zy, 4.0)), ay = texture(tDetail, vec3(q.xz, 4.0)), az = texture(tDetail, vec3(q.xy, 4.0));
+    vec4 mx = texture(tDetailN, vec3(q.zy, 4.0)), my = texture(tDetailN, vec3(q.xz, 4.0)), mz = texture(tDetailN, vec3(q.xy, 4.0));
+    vec4 ra = ax * tw.x + ay * tw.y + az * tw.z;
+    float rc = mx.b * tw.x + my.b * tw.y + mz.b * tw.z;
+    float rr = mx.a * tw.x + my.a * tw.y + mz.a * tw.z;
+    sDetG = (vec3(0.0, mx.g, mx.r) * 2.0 - vec3(0.0, 1.0, 1.0)) * tw.x
+          + (vec3(my.r, 0.0, my.g) * 2.0 - vec3(1.0, 0.0, 1.0)) * tw.y
+          + (vec3(mz.r, mz.g, 0.0) * 2.0 - vec3(1.0, 1.0, 0.0)) * tw.z;
+    sDetG *= 1.05 * detK;
+    // patchy moss and lichen on the tops
+    float mossN = r2.g * 0.45 + r3.r * 0.15 + r4.r * 0.2 + mix(0.5, ra.a, detK) * 0.3 + (vRockR - 0.5) * 0.25;
+    float moss = smoothstep(0.65, 0.69, mossN) * smoothstep(0.45, 0.9, wn.y);
+    c = mix(c, mix(C(96,110,58), C(72,86,42), smoothstep(0.4, 0.7, r3.g)), moss * 0.65);
+    c *= mix(vec3(1.0), ra.rgb * 2.5, detK);
+    c *= mix(1.0, rc, detK * 0.75);
+    c *= 1.0 - uWet * 0.28;
+    sRough = mix(clamp(0.78 * mix(1.0, rr * 2.0, detK), 0.04, 1.0), 0.25, uWet * 0.7);
+    diffuseColor.rgb *= c;
+  }
+`;
+
 export class StonesRenderer {
   group = new THREE.Group();
   private meshes: THREE.InstancedMesh[] = [];
   private version = -1;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.9 }, 'none', 1, { snow: 1, key: 'rock' });
+    const detail = getTerrainDetail();
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+    patchMaterial(mat, {
+      key: 'stones',
+      snow: 1,
+      grime: 0.5,
+      uniforms: { tDetail: { value: detail.albedo }, tDetailN: { value: detail.normal } },
+      vertexHead: 'varying vec3 vWNormal;\nvarying float vRockR;',
+      vertexBegin: `vWNormal = normalize((vec4(transformedNormal, 0.0) * viewMatrix).xyz);
+  #ifdef USE_INSTANCING
+    vRockR = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+  #else
+    vRockR = 0.5;
+  #endif`,
+      fragHead: ROCK_FRAG_HEAD,
+      fragMap: ROCK_MAP,
+      fragRough: 'roughnessFactor = sRough;',
+      fragNormal: 'normal = normalize(normal + (viewMatrix * vec4(sDetG, 0.0)).xyz);',
+    });
     for (const g of buildRockGeos()) {
       const m = inst(g, mat, 2000);
       this.meshes.push(m);
@@ -398,7 +474,7 @@ export class GrassRenderer {
     const w = g.world;
     let n = 0;
     const cap = 60000;
-    const colors: Record<number, number[]> = { [T_GRASS]: [0.09, 0.2, 0.03], [T_MEADOW]: [0.14, 0.26, 0.05], [T_FOREST]: [0.06, 0.14, 0.03] };
+    const colors: Record<number, number[]> = { [T_GRASS]: [0.07, 0.19, 0.03], [T_MEADOW]: [0.1, 0.23, 0.04], [T_FOREST]: [0.06, 0.14, 0.03] };
     for (let i = 0; i < w.N && n < cap; i++) {
       const t = w.terrain[i];
       const col = colors[t];
