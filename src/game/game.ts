@@ -65,6 +65,9 @@ export class Game {
   seaT = 0;
   isles: { x: number; y: number; r: number }[] = [];
   projectiles: Projectile[] = [];
+  /** melee blows landing a moment after the swing */
+  hits: { at: number; a: number; v: number; dmg: number }[] = [];
+  towerT = 0;
   events: GameEvent[] = [];
   ai: AIController[] = [];
   time = 0;
@@ -83,11 +86,13 @@ export class Game {
   over = false;
   starts: { x: number; y: number }[] = [];
 
-  constructor(opts: GameOptions) {
+  /** `generate = false` leaves an empty world and no players, for restoring a saved game into. */
+  constructor(opts: GameOptions, generate = true) {
     this.opts = opts;
     this.rng = new RNG(opts.seed ^ 0x5bd1e995);
     this.world = new World(opts.size, opts.size);
     this.path = new PathFinder(this.world);
+    if (!generate) return;
     const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands });
     this.starts = gen.starts;
     this.isles = gen.isles;
@@ -98,13 +103,7 @@ export class Game {
     this.deerTarget = gen.deer.length;
 
     for (let p = 0; p < opts.players; p++) {
-      const toolPrio: Record<string, number> = {};
-      for (const t of TOOLS) toolPrio[t] = 1;
-      this.players.push({
-        id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
-        swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
-        produced: emptyStock(), history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0,
-      });
+      this.players.push(this.newPlayer(p));
       this.setupStart(p, gen.starts[p].x, gen.starts[p].y);
       if (p !== 0) this.ai.push(new AIController(this, p, opts.aiLevel));
     }
@@ -114,6 +113,16 @@ export class Game {
 
   id() {
     return this.nextId++;
+  }
+
+  newPlayer(p: number): PlayerState {
+    const toolPrio: Record<string, number> = {};
+    for (const t of TOOLS) toolPrio[t] = 1;
+    return {
+      id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
+      swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
+      produced: emptyStock(), history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0,
+    };
   }
 
   emit(e: GameEvent) {
@@ -354,18 +363,7 @@ export class Game {
     const size = def.size;
     const w = this.world;
     const door = this.doorOf(size, x, y);
-    const b: Building = {
-      id: this.id(), type, def, owner, x, y, size, door,
-      cx: x + (size - 1) / 2, cz: y + (size - 1) / 2,
-      state: 'leveling', created: this.time, targetH: 0, levelWork: 0, levelTotal: 0,
-      buildWork: 0, buildTotal: def.cost.board + def.cost.stone, delivered: { board: 0, stone: 0 }, used: 0,
-      diggers: [], builders: [], stock: emptyStock(), incoming: emptyStock(), outgoing: emptyStock(),
-      worker: 0, workerIncoming: 0, working: false, workT: 0, paused: false, status: '',
-      garrison: [], soldiersIncoming: 0, desiredSoldiers: def.military?.capacity ?? 0, occupied: false,
-      spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
-      weaponRatio: 0.65, underAttackT: 0,
-      dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null,
-    };
+    const b = this.newBuilding(this.id(), type, owner, x, y);
     this.buildings.set(b.id, b);
     const fp = this.footprint(size, x, y);
     let sum = 0;
@@ -398,6 +396,24 @@ export class Game {
       onBuildingComplete(this, b, true);
     }
     return b;
+  }
+
+  /** A fresh construction site record, not yet placed in the world. */
+  newBuilding(id: number, type: BuildingType, owner: number, x: number, y: number): Building {
+    const def = BUILDINGS[type];
+    const size = def.size;
+    return {
+      id, type, def, owner, x, y, size, door: this.doorOf(size, x, y),
+      cx: x + (size - 1) / 2, cz: y + (size - 1) / 2,
+      state: 'leveling', created: this.time, targetH: 0, levelWork: 0, levelTotal: 0,
+      buildWork: 0, buildTotal: def.cost.board + def.cost.stone, delivered: { board: 0, stone: 0 }, used: 0,
+      diggers: [], builders: [], stock: emptyStock(), incoming: emptyStock(), outgoing: emptyStock(),
+      worker: 0, workerIncoming: 0, working: false, workT: 0, paused: false, status: '',
+      garrison: [], soldiersIncoming: 0, desiredSoldiers: def.military?.capacity ?? 0, occupied: false,
+      spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
+      weaponRatio: 0.65, underAttackT: 0,
+      dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null,
+    };
   }
 
   computeLevelWork(b: Building) {

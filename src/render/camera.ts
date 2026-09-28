@@ -42,6 +42,11 @@ export class RTSCamera {
     if (instant) this.target.copy(this.goal);
   }
 
+  /** Face the view along `yaw` straight away (restoring a saved game). */
+  setYaw(yaw: number) {
+    this.yaw = this.goalYaw = yaw;
+  }
+
   zoomTo(d: number, instant = false) {
     this.goalDist = THREE.MathUtils.clamp(d, this.minDist, this.maxDist);
     if (instant) this.dist = this.goalDist;

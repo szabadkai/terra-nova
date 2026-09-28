@@ -545,16 +545,32 @@ function sendToHarbour(g: Game, s: Settler, from: Building, to: number) {
   s.idle = false;
   if (isSoldier(s)) { s.sstate = 'ship'; s.home = 0; }
   else if (s.job !== 'carrier') s.home = from.id; // keeps other jobs from claiming them
-  s.task = 'Walking to the harbour';
+  waitForShip(g, s, from);
+}
+
+function waitForShip(g: Game, s: Settler, from: Building) {
+  const inside = s.inside === from.id;
+  s.task = inside ? 'Waiting for a ship' : 'Walking to the harbour';
   plan(s, [
-    A.walk(from.door),
-    A.do(() => {
-      if (!harbourAlive(g, from.id, s.owner)) return false;
-      enter(g, s, from);
-      s.task = 'Waiting for a ship';
-    }),
+    ...(inside ? [] : [
+      A.walk(from.door),
+      A.do(() => {
+        if (!harbourAlive(g, from.id, s.owner)) return false;
+        enter(g, s, from);
+        s.task = 'Waiting for a ship';
+      }),
+    ]),
     A.wait(1e9),
   ], () => cancelVoyage(g, s));
+}
+
+/** A settler booked on a voyage (after loading a game) walks back to, or keeps waiting in, his harbour. */
+export function resumeVoyage(g: Game, s: Settler) {
+  const from = harbourAlive(g, s.voyageFrom, s.owner);
+  const ex = s.voyage < 0 ? g.expeditions.find((e) => e.id === -s.voyage && e.state === 'gathering') : null;
+  if (!from || (s.voyage < 0 && !ex) || (s.voyage > 0 && !harbourAlive(g, s.voyage, s.owner))) { cancelVoyage(g, s); return; }
+  s.idle = false;
+  waitForShip(g, s, from);
 }
 
 // ------------------------------------------------------------------ expeditions

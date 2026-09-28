@@ -8,6 +8,7 @@ import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
 import { applyAudioPrefs, applyRenderPrefs, defaultPrefs, prefs, savePrefs } from './prefs';
+import { AUTO, playTime, saveSubtitle, type SaveSummary } from './saveStore';
 
 const h = (tag: string, cls = '', html = '') => {
   const e = document.createElement(tag);
@@ -20,16 +21,16 @@ const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
-type Page = 'overview' | 'graphics' | 'sound' | 'controls' | 'restart' | 'quit';
-type NavId = Page | 'resume' | 'close' | 'save' | 'load' | '-';
+type Page = 'overview' | 'save' | 'load' | 'graphics' | 'sound' | 'controls' | 'restart' | 'quit';
+type NavId = Page | 'resume' | 'close' | '-';
 
 interface NavItem { id: NavId; icon?: string; label?: string; cls?: string; kbd?: string; soon?: boolean }
 
 const GAME_NAV: NavItem[] = [
   { id: 'resume', icon: '▶', label: 'Resume', cls: 'primary', kbd: 'Esc' },
   { id: 'overview', icon: '⚜', label: 'Overview' },
-  { id: 'save', icon: '💾', label: 'Save game', soon: true },
-  { id: 'load', icon: '📂', label: 'Load game', soon: true },
+  { id: 'save', icon: '💾', label: 'Save game' },
+  { id: 'load', icon: '📂', label: 'Load game' },
   { id: '-' },
   { id: 'graphics', icon: '🖼', label: 'Graphics' },
   { id: 'sound', icon: '🔊', label: 'Sound' },
@@ -40,6 +41,8 @@ const GAME_NAV: NavItem[] = [
 ];
 
 const TITLE_NAV: NavItem[] = [
+  { id: 'load', icon: '📂', label: 'Load game' },
+  { id: '-' },
   { id: 'graphics', icon: '🖼', label: 'Graphics' },
   { id: 'sound', icon: '🔊', label: 'Sound' },
   { id: 'controls', icon: '🎮', label: 'Controls' },
@@ -49,6 +52,8 @@ const TITLE_NAV: NavItem[] = [
 
 const PAGES: Record<Page, [string, string]> = {
   overview: ['Overview', 'The world stands still while this menu is open.'],
+  save: ['Save game', 'Your game also saves itself every half minute and whenever you leave the page.'],
+  load: ['Load game', 'Saved games live in this browser. Download a save file to keep one elsewhere.'],
   graphics: ['Graphics', 'Changes apply at once. The land behind this menu shows them.'],
   sound: ['Sound', ''],
   controls: ['Controls', ''],
@@ -101,10 +106,25 @@ export interface GameMenuOptions {
   /** a running game (pause menu) rather than the title screen (settings only) */
   inGame: boolean;
   objectives?: Objectives;
+  /** page to open on (default: overview in a game, graphics on the title screen) */
+  page?: Page;
+  saves?: SaveHooks;
   onClose(): void;
   onRestart?(): void;
   onQuit?(): void;
 }
+
+export interface SaveHooks {
+  list(): Promise<SaveSummary[]>;
+  /** save the running game under `name`, over slot `id` if given */
+  save(name: string, id?: string): Promise<void>;
+  load(id: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  exportFile(): Promise<void>;
+  importFile(file: File): Promise<void>;
+}
+
+const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 export class GameMenu {
   el: HTMLElement;
@@ -138,7 +158,7 @@ export class GameMenu {
     for (const sib of parent.children) { sib.setAttribute('inert', ''); this.inerted.push(sib); }
     parent.appendChild(this.el);
     this.el.addEventListener('keydown', (e) => this.navKeys(e));
-    this.page = o.inGame ? 'overview' : 'graphics';
+    this.page = o.page ?? (o.inGame ? 'overview' : 'graphics');
     this.show(this.page);
     this.nav.querySelector<HTMLElement>('.gm-item:not(:disabled)')?.focus();
   }
@@ -165,10 +185,11 @@ export class GameMenu {
       : `<div class="crest">⚜</div><h2>Options</h2>`));
     for (const it of this.o.inGame ? GAME_NAV : TITLE_NAV) {
       if (it.id === '-') { this.nav.appendChild(h('div', 'gm-sep')); continue; }
+      if ((it.id === 'save' || it.id === 'load') && !this.o.saves) continue;
       const extra = it.soon ? '<span class="tag">Soon</span>' : it.kbd ? `<kbd>${it.kbd}</kbd>` : '';
       const b = h('button', `gm-item ${it.cls ?? ''}`, `<span class="ic">${it.icon}</span><span>${it.label}</span>${extra}`) as HTMLButtonElement;
       b.dataset.id = it.id;
-      if (it.soon) { b.disabled = true; b.title = 'Saving and loading games is not built yet'; }
+      if (it.soon) b.disabled = true;
       b.onclick = () => {
         this.o.audio.play('ui');
         if (it.id === 'resume' || it.id === 'close') this.close();
@@ -208,6 +229,8 @@ export class GameMenu {
     c.scrollTop = 0;
     switch (page) {
       case 'overview': return this.renderOverview(c);
+      case 'save': return this.renderSave(c);
+      case 'load': return this.renderLoad(c);
       case 'graphics': return this.renderGraphics(c);
       case 'sound': return this.renderSound(c);
       case 'controls': return this.renderControls(c);
@@ -239,7 +262,126 @@ export class GameMenu {
       kv(`<i class="sw" style="background:${hex(PLAYER_COLORS[p.id])}"></i>${p.name}${p.id === g.local ? ' (you)' : ''}${p.alive ? '' : ' · defeated'}`,
         `👥 ${pop.total} · ⚔ ${pop.soldiers} · 🏠 ${g.countBuildings(p.id, undefined, false)}`);
     }
-    c.appendChild(h('p', 'note', 'Games cannot be saved yet, so restarting or quitting ends this one for good.'));
+  }
+
+  private renderSave(c: HTMLElement) {
+    const saves = this.o.saves!;
+    const g = this.o.game;
+    c.appendChild(h('h3', '', 'New save'));
+    const form = h('form', 'save-new') as HTMLFormElement;
+    form.innerHTML = `<input type="text" maxlength="48" aria-label="Name of the saved game" spellcheck="false"><button class="wide primary" type="submit">Save</button>`;
+    const name = form.querySelector('input')!;
+    name.value = `Seed ${g.opts.seed} · ${playTime(g.time)}`;
+    const status = h('p', 'note save-status');
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      this.o.audio.play('ui');
+      void this.act(status, () => saves.save(name.value.trim() || name.placeholder || 'Saved game'), 'Game saved', () => this.show('save'));
+    };
+    c.append(form, status);
+    c.appendChild(h('h3', '', 'Save over'));
+    const list = h('div', 'save-list');
+    c.appendChild(list);
+    this.fillList(list, status, (sv) => sv.id !== AUTO, (sv) => [
+      this.confirmButton('Overwrite', 'Overwrite?', () => this.act(status, () => saves.save(sv.name, sv.id), 'Game saved', () => this.show('save'))),
+      this.deleteButton(sv, status),
+    ], 'No saved games yet.');
+    c.appendChild(h('h3', '', 'Save file'));
+    const dl = h('button', 'wide gm-file', '⬇ Download a save file');
+    dl.onclick = () => { this.o.audio.play('ui'); void this.act(status, () => saves.exportFile(), 'Save file downloaded'); };
+    c.appendChild(dl);
+    c.appendChild(h('p', 'note', 'Keep a copy outside this browser, or carry a game over to another computer.'));
+    name.focus();
+    name.select();
+  }
+
+  private renderLoad(c: HTMLElement) {
+    const saves = this.o.saves!;
+    const status = h('p', 'note save-status');
+    if (this.o.inGame) c.appendChild(h('p', 'note', 'Loading ends this game. Anything since you last saved it is lost.'));
+    const list = h('div', 'save-list');
+    c.append(status, list);
+    this.fillList(list, status, () => true, (sv) => {
+      const load = h('button', 'wide primary', 'Load') as HTMLButtonElement;
+      load.onclick = () => {
+        this.o.audio.play('ui');
+        this.el.querySelectorAll<HTMLButtonElement>('.save-list button').forEach((b) => (b.disabled = true));
+        void this.act(status, () => saves.load(sv.id), '', () => this.el.querySelectorAll<HTMLButtonElement>('.save-list button').forEach((b) => (b.disabled = false)));
+      };
+      return sv.id === AUTO ? [load] : [load, this.deleteButton(sv, status)];
+    }, 'No saved games yet. Your game saves itself as you play, and the Save game page keeps as many as you like.');
+    c.appendChild(h('h3', '', 'Save file'));
+    const pick = document.createElement('input');
+    pick.type = 'file';
+    pick.accept = '.tnsave';
+    pick.hidden = true;
+    pick.onchange = () => {
+      const f = pick.files?.[0];
+      if (f) void this.act(status, () => saves.importFile(f), '');
+      pick.value = '';
+    };
+    const up = h('button', 'wide gm-file', '⬆ Load a save file…');
+    up.onclick = () => { this.o.audio.play('ui'); pick.click(); };
+    c.append(up, pick);
+  }
+
+  /** Run a save action and report how it went (in the page's status line, which `after` may rebuild). */
+  private async act(status: HTMLElement, fn: () => Promise<void>, ok: string, after?: () => void) {
+    status.classList.remove('bad');
+    status.textContent = 'One moment…';
+    let msg = ok, bad = false;
+    try { await fn(); } catch (e) { msg = (e as Error)?.message ?? String(e); bad = true; }
+    if (!this.el.isConnected) return; // a game was loaded and the menu closed
+    after?.();
+    const line = this.body.querySelector<HTMLElement>('.save-status') ?? status;
+    line.textContent = msg;
+    line.classList.toggle('bad', bad);
+  }
+
+  private fillList(list: HTMLElement, status: HTMLElement, keep: (s: SaveSummary) => boolean, actions: (s: SaveSummary) => HTMLElement[], empty: string) {
+    list.innerHTML = '<p class="note">Reading saved games…</p>';
+    this.o.saves!.list().then((all) => {
+      const shown = all.filter(keep);
+      list.innerHTML = '';
+      if (!shown.length) { list.appendChild(h('p', 'note', empty)); return; }
+      for (const sv of shown) {
+        const m = sv.meta;
+        const row = h('div', 'save-row');
+        const thumb = h('div', 'save-thumb');
+        if (m.thumb) thumb.style.backgroundImage = `url("${m.thumb}")`;
+        const text = h('div', 'save-text', `<b>${esc(sv.id === AUTO ? 'Autosave — the last game played' : sv.name)}</b>
+          <small>${esc(saveSubtitle(m))}</small>
+          <small>👥 ${m.pop} · ⚔ ${m.soldiers} · 🏠 ${m.buildings} · seed ${m.seed}${m.over ? (m.won ? ' · won' : ' · lost') : ''}</small>`);
+        const acts = h('div', 'save-acts');
+        acts.append(...actions(sv));
+        row.append(thumb, text, acts);
+        list.appendChild(row);
+      }
+    }).catch((e) => {
+      list.innerHTML = '';
+      status.textContent = `Saved games are unavailable: ${(e as Error)?.message ?? e}`;
+      status.classList.add('bad');
+    });
+  }
+
+  /** A button that asks once more before it acts. */
+  private confirmButton(label: string, ask: string, fn: () => Promise<void> | void, cls = '') {
+    const b = h('button', `wide ${cls}`, label) as HTMLButtonElement;
+    let armed = false;
+    b.onclick = () => {
+      this.o.audio.play('ui');
+      if (!armed) { armed = true; b.textContent = ask; b.classList.add('danger'); return; }
+      void fn();
+    };
+    b.onblur = () => { armed = false; b.textContent = label; b.classList.remove('danger'); };
+    return b;
+  }
+
+  private deleteButton(sv: SaveSummary, status: HTMLElement) {
+    const b = this.confirmButton('🗑', 'Delete?', () => this.act(status, () => this.o.saves!.remove(sv.id), 'Deleted', () => this.show(this.page)), 'save-del');
+    b.title = 'Delete this saved game';
+    b.setAttribute('aria-label', `Delete ${sv.name}`);
+    return b;
   }
 
   private renderGraphics(c: HTMLElement) {
@@ -325,7 +467,7 @@ export class GameMenu {
     const box = h('div', 'gm-confirm', `
       <div class="crest">${restart ? '↻' : '⏏'}</div>
       <p>${restart ? 'Start this map again from the beginning? The land, the seed and your rivals stay the same.' : 'Leave this game and return to the title screen?'}</p>
-      <p class="muted">Games cannot be saved yet, so your progress will be lost.</p>
+      <p class="muted">${restart ? 'The autosave is replaced by the new start — save the game first to keep it.' : 'Your game stays in the autosave; continue it from the title screen.'}</p>
       <div class="row"><button class="wide" data-a="no">Keep playing</button><button class="wide danger" data-a="yes">${restart ? 'Restart map' : 'Quit to title'}</button></div>`);
     c.appendChild(box);
     const no = box.querySelector<HTMLButtonElement>('[data-a=no]')!;

@@ -17,7 +17,7 @@ function alive(g: Game, b: Building) {
   return g.buildings.has(b.id) && b.state === 'done';
 }
 
-function returnHome(g: Game, s: Settler, b: Building, deposit: boolean) {
+export function returnHome(g: Game, s: Settler, b: Building, deposit: boolean) {
   return [
     A.walk(b.door),
     A.do(() => {

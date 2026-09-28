@@ -8,6 +8,8 @@ import { GameMenu } from './ui/gameMenu';
 import { applyAudioPrefs, applyRenderPrefs } from './ui/prefs';
 import { Audio } from './audio/audio';
 import { G } from './render/shaderPatch';
+import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
+import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, warmUp } from './ui/saveStore';
 
 let canvas = document.getElementById('c') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui')!;
@@ -36,12 +38,131 @@ let state: 'menu' | 'play' = 'menu';
 let speed = 1;
 let pausedSpeed = 1;
 let iconsReady = false;
+let islands = params.get('islands') !== '0';
+
+// ---------------------------------------------------------------- saving
+/** Set while a game is being played, so reloading the page picks it up again. */
+const RESUME_KEY = 'terra-nova.resume.v1';
+const AUTOSAVE_EVERY = 30; // seconds of real time
+let autosaveT = AUTOSAVE_EVERY;
+let autosavedAt = -1; // game time of the last autosave
+
+function setResume(on: boolean) {
+  try {
+    if (on) localStorage.setItem(RESUME_KEY, '1');
+    else localStorage.removeItem(RESUME_KEY);
+  } catch { /* storage blocked */ }
+}
+function wantsResume() {
+  try { return localStorage.getItem(RESUME_KEY) === '1'; } catch { return false; }
+}
+
+/** The running game as a save, with the view and chronicle so it looks the same when loaded. */
+function capture(): { data: SaveData; meta: SaveMeta } {
+  const ui = {
+    cam: { x: gr.cam.target.x, z: gr.cam.target.z, dist: gr.cam.dist, yaw: gr.cam.yaw },
+    tod: gr.sky.timeOfDay,
+    season: gr.seasons.phase,
+    speed: pausedSpeed,
+    objective: hud?.objectives.index ?? 0,
+  };
+  const meta = describe(game);
+  meta.thumb = thumbnail();
+  return { data: snapshot(game, ui), meta };
+}
+
+/** The explored part of the minimap, squared up, as a small picture for the save list. */
+function thumbnail(): string | undefined {
+  const mm = hud?.minimap.canvas;
+  if (!mm) return undefined;
+  try {
+    const w = game.world;
+    let x0 = w.W, y0 = w.H, x1 = 0, y1 = 0;
+    for (let i = 0; i < w.N; i++) {
+      if (!w.explored[i]) continue;
+      const x = i % w.W, y = (i / w.W) | 0;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+    if (x1 < x0) return undefined;
+    const side = Math.min(w.W, Math.max(x1 - x0, y1 - y0, 24) + 6);
+    const sx = Math.max(0, Math.min(w.W - side, (x0 + x1 - side) / 2)), sy = Math.max(0, Math.min(w.H - side, (y0 + y1 - side) / 2));
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    c.getContext('2d')!.drawImage(mm, sx * mm.width / w.W, sy * mm.height / w.H, side * mm.width / w.W, side * mm.height / w.H, 0, 0, 96, 96);
+    return c.toDataURL('image/jpeg', 0.8);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep the autosave slot up to date. `now` commits at once, for a page that is going away. */
+function autosave(now = false) {
+  if (state !== 'play' || !game || game.time === autosavedAt) return;
+  try {
+    const { data, meta } = capture();
+    autosavedAt = game.time;
+    putSave(AUTO, 'Autosave', meta, data, now).catch((e) => console.warn('Autosave failed:', e));
+  } catch (e) {
+    console.warn('Autosave failed:', e);
+  }
+}
+
+async function saveGame(name: string, id = `save-${Date.now()}`) {
+  const { data, meta } = capture();
+  await putSave(id, name, meta, data);
+}
+
+async function loadSave(id: string) {
+  const data = await getSave(id);
+  if (!data) throw new Error('That saved game is gone');
+  await loadGame(data);
+}
+
+async function loadGame(data: SaveData) {
+  await buildWorld(data);
+  startGame(data.ui ?? {});
+}
+
+async function exportSave() {
+  const { data } = capture();
+  const bytes = await encodeSave(data);
+  const a = document.createElement('a');
+  const mins = Math.floor(game.time / 60);
+  a.download = `terra-nova-seed${game.opts.seed}-${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}.tnsave`;
+  a.href = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+async function importSave(file: File) {
+  const data = await decodeSave(new Uint8Array(await file.arrayBuffer()));
+  await loadGame(data);
+}
+
+const saveHooks = {
+  list: listSaves,
+  save: saveGame,
+  load: loadSave,
+  remove: deleteSave,
+  exportFile: exportSave,
+  importFile: importSave,
+};
 
 /** Create (or re-create) the world in place — no page reloads, so it also works inside sandboxed frames. */
-async function buildWorld() {
-  const loading = showLoading(uiRoot, 'Shaping the land…');
+async function buildWorld(from?: SaveData) {
+  const loading = showLoading(uiRoot, from ? 'Unrolling the map…' : 'Shaping the land…');
   await new Promise((r) => setTimeout(r, 30));
+  let loaded: Game | null = null;
+  if (from) {
+    // a save that fails to load leaves the current world as it was
+    try { loaded = restore(from); } catch (e) { loading.remove(); throw e; }
+  }
   gameMenu?.close();
+  menuEl?.remove();
+  menuEl = null;
   if (gr) {
     gr.dispose();
     const fresh = document.createElement('canvas');
@@ -52,7 +173,13 @@ async function buildWorld() {
   if (hud) { hud.root.remove(); hud = null; }
   state = 'menu';
   speed = pausedSpeed = 1;
-  game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands: params.get('islands') !== '0' });
+  if (loaded) {
+    game = loaded;
+    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel });
+    islands = game.opts.islands !== false;
+  } else {
+    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands });
+  }
   gr = new GameRenderer(canvas, game);
   applyRenderPrefs(gr);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
@@ -69,19 +196,41 @@ function showMainMenu() {
   gr.cam.zoomTo(46, true);
   gr.sky.timeOfDay = params.has('tod') ? num('tod', 0.62) : 0.62;
   menuEl?.remove();
-  menuEl = showMenu(uiRoot, opts, startGame, async (o) => {
+  const menu = showMenu(uiRoot, opts, () => startGame(), async (o) => {
     Object.assign(opts, o);
     menuEl?.remove();
     menuEl = null;
     await buildWorld();
     showMainMenu();
-  }, openOptions).el;
+  }, () => openOptions(), () => openOptions('load'));
+  menuEl = menu.el;
+  // the last game, if there is one, can be picked up where it was left
+  getSummary(AUTO).then((sum) => {
+    if (sum && menuEl === menu.el) menu.offerContinue(sum.meta, () => { void resumeAuto(menu.el); });
+  }).catch(() => { /* no saves */ });
 }
 
-/** Settings modal over the title screen. */
-function openOptions() {
+async function resumeAuto(from: HTMLElement) {
+  try {
+    await loadSave(AUTO);
+  } catch (e) {
+    if (from.isConnected) showMenuError(from, e);
+  }
+}
+
+function showMenuError(menu: HTMLElement, e: unknown) {
+  const card = menu.querySelector('.menu-card');
+  card?.querySelector('.menu-err')?.remove();
+  const p = document.createElement('p');
+  p.className = 'menu-err';
+  p.textContent = `Could not load the game: ${(e as Error)?.message ?? e}`;
+  card?.prepend(p);
+}
+
+/** Settings (and saved games) over the title screen. */
+function openOptions(page?: 'load') {
   if (gameMenu) return;
-  gameMenu = new GameMenu(uiRoot, { game, gr, audio, inGame: false, onClose: () => { gameMenu = null; } });
+  gameMenu = new GameMenu(uiRoot, { game, gr, audio, inGame: false, page, saves: saveHooks, onClose: () => { gameMenu = null; } });
 }
 
 /** The Esc menu: pauses the game until it is closed. */
@@ -91,7 +240,7 @@ function openGameMenu() {
   gr.cam.inputEnabled = false;
   audio.setPaused(true);
   gameMenu = new GameMenu(uiRoot, {
-    game, gr, audio, inGame: true, objectives: hud?.objectives,
+    game, gr, audio, inGame: true, objectives: hud?.objectives, saves: saveHooks,
     onClose: () => { gameMenu = null; gr.cam.inputEnabled = true; audio.setPaused(false); },
     onRestart: () => { void restartMap(); },
     onQuit: () => { void restart(); },
@@ -104,33 +253,59 @@ async function restartMap() {
   startGame();
 }
 
+/** Back to the title screen. The game stays in the autosave slot, to be continued from there. */
 async function restart() {
+  autosave();
+  setResume(false);
   opts.seed = Math.floor(Math.random() * 99999) + 1;
   await buildWorld();
   showMainMenu();
 }
 
 async function boot() {
-  await buildWorld();
+  void warmUp();
+  // a game that was being played when the page went away carries on (unless the URL asks for a new one)
+  let resumed: SaveData | null = null;
+  if (wantsResume() && !params.has('play') && !params.has('seed')) {
+    try {
+      resumed = await getSave(AUTO);
+      if (resumed) await buildWorld(resumed);
+    } catch (e) {
+      console.warn('Could not resume the last game:', e);
+      resumed = null;
+      setResume(false);
+    }
+  }
+  if (!resumed) await buildWorld();
   setupGlobalInput();
   if (params.has('tod')) gr.sky.timeOfDay = num('tod', 0.4);
   if (params.has('season')) gr.seasons.phase = num('season', 0.3) % 1;
-  if (params.get('play') === '1') startGame();
+  if (resumed) startGame(resumed.ui ?? {});
+  else if (params.get('play') === '1') startGame();
   else showMainMenu();
   requestAnimationFrame(loop);
 }
 
-function startGame() {
+/** Start playing the world that was built, fresh or (with `resumed`) from a save's view. */
+function startGame(resumed?: Record<string, unknown>) {
   state = 'play';
   menuEl = null;
   G.uFogOn.value = 1;
   gr.cam.cinematic = false;
   game.ai.forEach((a) => (a.level = opts.ai));
+  const view = resumed as { cam?: { x: number; z: number; dist: number; yaw: number }; tod?: number; season?: number; speed?: number; objective?: number } | undefined;
   const hq = game.buildings.get(game.players[game.local].hq);
-  if (hq) {
+  if (view?.cam) {
+    gr.cam.jumpTo(view.cam.x, view.cam.z, true);
+    gr.cam.zoomTo(view.cam.dist, true);
+    gr.cam.setYaw(view.cam.yaw);
+  } else if (hq) {
     gr.cam.jumpTo(hq.cx, hq.cz + 3);
     gr.cam.zoomTo(28);
   }
+  if (typeof view?.tod === 'number') gr.sky.timeOfDay = view.tod;
+  if (typeof view?.season === 'number') gr.seasons.phase = view.season;
+  speed = pausedSpeed = view?.speed || 1;
   hud = new HUD(game, gr, audio, {
     getSpeed: () => speed,
     setSpeed: (s) => { speed = s; if (s > 0) pausedSpeed = s; },
@@ -139,8 +314,19 @@ function startGame() {
   }, uiRoot);
   gr.onEvent = (e) => hud?.onEvent(e);
   (window as any).hud = hud;
-  hud.message('Welcome, my liege! Build woodcutters, a sawmill and a stonecutter to begin.', undefined, undefined, 'good');
+  if (view) {
+    hud.objectives.index = view.objective ?? 0;
+    hud.objectives.render();
+    hud.message(`Welcome back, my liege — ${playTime(game.time)} into your reign.`, undefined, undefined, 'good');
+  } else {
+    hud.message('Welcome, my liege! Build woodcutters, a sawmill and a stonecutter to begin.', undefined, undefined, 'good');
+  }
   try { audio.start(); } catch { /* needs a gesture */ }
+  setResume(true);
+  autosaveT = AUTOSAVE_EVERY;
+  // a new game replaces the autosave at once, so reloading can never bring back the previous one
+  autosavedAt = resumed ? game.time : -1;
+  if (!resumed) autosave();
 }
 
 // ---------------------------------------------------------------- input
@@ -347,6 +533,11 @@ function loop() {
       gr.handleEvents(game.events.splice(0));
       gr.frame(dt, gdt);
       if (!gameMenu) hud?.update(dt);
+      autosaveT -= dt;
+      if (autosaveT <= 0) {
+        autosaveT = AUTOSAVE_EVERY;
+        autosave();
+      }
     } else {
       game.events.length = 0;
       gr.frame(dt, dt * 0.3);
@@ -356,6 +547,10 @@ function loop() {
   }
   requestAnimationFrame(loop);
 }
+
+// the running game is saved whenever the page is hidden or closed, so a reload picks it up again
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave(true); });
+window.addEventListener('pagehide', () => autosave(true));
 
 // debug helper: advance the game manually (used when the tab is not animating)
 (window as any).step = (n = 1, dt = 0.05) => {

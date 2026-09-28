@@ -1,4 +1,7 @@
 // Main menu shown over a live, slowly orbiting preview of the generated map.
+import type { SaveMeta } from '../game/save';
+import { saveSubtitle } from './saveStore';
+
 export interface MenuOptions {
   seed: number;
   size: number;
@@ -6,7 +9,7 @@ export interface MenuOptions {
   ai: number;
 }
 
-export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void) {
+export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void) {
   const el = document.createElement('div');
   el.className = 'menu';
   el.innerHTML = `
@@ -32,7 +35,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <div class="field"><label>World seed</label>
           <div class="seedrow"><input type="number" value="${opts.seed}" id="seed"><button id="dice" title="Random world">🎲</button></div></div>
         <button class="wide primary big" id="start">Found your settlement</button>
-        <div class="row"><button class="wide" id="help">How to play</button><button class="wide" id="options">Options</button></div>
+        <div class="row"><button class="wide" id="help">How to play</button><button class="wide" id="load">Load game</button><button class="wide" id="options">Options</button></div>
       </div>
       <div class="menu-foot">All graphics and most sounds are generated procedurally in your browser.</div>
     </div>
@@ -78,7 +81,21 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   el.querySelector<HTMLButtonElement>('#help')!.onclick = () => help.classList.remove('hidden');
   el.querySelector<HTMLButtonElement>('#helpclose')!.onclick = () => help.classList.add('hidden');
   el.querySelector<HTMLButtonElement>('#options')!.onclick = () => onOptions?.();
-  return { el, cur };
+  el.querySelector<HTMLButtonElement>('#load')!.onclick = () => onLoad?.();
+  /** Put the last game at the top of the card as the main action. */
+  const offerContinue = (meta: SaveMeta, go: () => void) => {
+    if (el.querySelector('.continue')) return;
+    const box = document.createElement('div');
+    box.className = 'continue';
+    box.innerHTML = `<button class="wide primary big">Continue your reign</button><small></small>`;
+    box.querySelector('small')!.textContent = saveSubtitle(meta);
+    const b = box.querySelector('button')!;
+    b.onclick = () => { b.disabled = true; go(); };
+    el.querySelector('.menu-card')!.prepend(box);
+    el.querySelector('#start')!.classList.remove('primary');
+    el.querySelector('#start')!.textContent = 'Found a new settlement';
+  };
+  return { el, cur, offerContinue };
 }
 
 export function showLoading(parent: HTMLElement, text: string) {

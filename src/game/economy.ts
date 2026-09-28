@@ -220,11 +220,23 @@ function updateBarracks(g: Game, b: Building, dt: number) {
       b.stock[weapon]--;
       b.outgoing[weapon]--;
       taken = true;
+      s.carrying = weapon; // held while training, so a saved game knows what the recruit will become
       b.status = 'Training soldier';
     }),
+    ...training(g, s, b, weapon),
+  ], () => {
+    if (!taken) b.outgoing[weapon]--;
+    b.workerIncoming = 0;
+    s.carrying = null;
+  });
+}
+
+function training(g: Game, s: Settler, b: Building, weapon: Good) {
+  return [
     A.wait(b.def.cycle ?? 6),
     A.do(() => {
       b.workerIncoming = 0;
+      s.carrying = null;
       s.job = weapon === 'sword' ? 'swordsman' : 'bowman';
       s.hp = s.maxHp = s.job === 'bowman' ? 80 : 100;
       s.sstate = 'idle';
@@ -234,9 +246,17 @@ function updateBarracks(g: Game, b: Building, dt: number) {
       g.message(s.owner, `A new ${s.job} has been trained`, s.x, s.z, 'good');
       b.prodCount++;
     }),
-  ], () => {
-    if (!taken) b.outgoing[weapon]--;
+  ];
+}
+
+/** A recruit inside the barracks with his weapon (after loading a game) finishes his training. */
+export function resumeTraining(g: Game, s: Settler, b: Building) {
+  const weapon = s.carrying!;
+  b.workerIncoming = s.id;
+  b.status = 'Training soldier';
+  plan(s, training(g, s, b, weapon), () => {
     b.workerIncoming = 0;
+    s.carrying = null;
   });
 }
 
@@ -386,24 +406,25 @@ function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) 
   ], () => {
     if (!picked) from.outgoing[gd] = Math.max(0, from.outgoing[gd] - (g.buildings.has(from.id) ? 1 : 0));
     if (g.buildings.has(to.id)) to.incoming[gd] = Math.max(0, to.incoming[gd] - 1);
-    if (picked && s.carrying) {
-      // bring it back to a storage
-      const st = g.nearestStorage(s.owner, s.x, s.z, regS(g, s));
-      const good = s.carrying;
-      s.carrying = good;
-      if (st) {
-        st.incoming[good]++;
-        plan(s, [A.walk(st.door), A.do(() => {
-          st.incoming[good]--;
-          if (g.buildings.has(st.id)) st.stock[good]++;
-          s.carrying = null;
-        })], () => {
-          if (g.buildings.has(st.id)) st.incoming[good] = Math.max(0, st.incoming[good] - 1);
-          s.carrying = null;
-        });
-      } else s.carrying = null;
-    }
+    if (picked && s.carrying) storeCarried(g, s);
     s.task = '';
+  });
+}
+
+/** Bring whatever the carrier holds to the nearest storehouse on his landmass. */
+export function storeCarried(g: Game, s: Settler) {
+  const good = s.carrying;
+  if (!good) return;
+  const st = g.nearestStorage(s.owner, s.x, s.z, regS(g, s));
+  if (!st) { s.carrying = null; return; }
+  st.incoming[good]++;
+  plan(s, [A.walk(st.door), A.do(() => {
+    st.incoming[good]--;
+    if (g.buildings.has(st.id)) st.stock[good]++;
+    s.carrying = null;
+  })], () => {
+    if (g.buildings.has(st.id)) st.incoming[good] = Math.max(0, st.incoming[good] - 1);
+    s.carrying = null;
   });
 }
 

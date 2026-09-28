@@ -71,7 +71,17 @@ export function sendGeologist(g: Game, owner: number, x: number, z: number): str
 }
 
 function tour(g: Game, s: Settler, x: number, z: number) {
-  plan(s, tourActions(g, s, x, z), () => { s.task = ''; });
+  // the destination is kept on the settler so a saved game can send him out again
+  s.target = g.world.idx(Math.round(x), Math.round(z));
+  plan(s, tourActions(g, s, x, z), () => { s.task = ''; s.target = 0; });
+}
+
+/** A geologist whose tour was cut short by loading a game sets out for the same mountain again. */
+export function resumeTour(g: Game, s: Settler) {
+  const w = g.world;
+  const x = w.nx(s.target), z = w.ny(s.target);
+  if (prospectError(g, s.owner, x, z)) { s.task = ''; s.target = 0; return; }
+  tour(g, s, x, z);
 }
 
 function tourActions(g: Game, s: Settler, x: number, z: number) {
@@ -96,6 +106,7 @@ function tourActions(g: Game, s: Settler, x: number, z: number) {
   }
   acts.push(A.do(() => {
     s.task = '';
+    s.target = 0;
     const st = g.nearestStorage(s.owner, s.x, s.z, w.region[s.node]);
     if (st) s.actions.push(A.walk(st.door));
     g.message(s.owner, 'A geologist has finished prospecting', x, z, 'good');

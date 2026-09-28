@@ -410,15 +410,15 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
 }
 
 // Delay damage slightly so it lines up with the swing animation
-const pendingHits: { at: number; a: number; v: number; dmg: number }[] = [];
 function setTimeoutHit(g: Game, a: Settler, v: Settler, dmg: number) {
-  pendingHits.push({ at: g.time + 0.3, a: a.id, v: v.id, dmg });
+  g.hits.push({ at: g.time + 0.3, a: a.id, v: v.id, dmg });
 }
 export function flushHits(g: Game) {
-  for (let i = pendingHits.length - 1; i >= 0; i--) {
-    const h = pendingHits[i];
+  const hits = g.hits;
+  for (let i = hits.length - 1; i >= 0; i--) {
+    const h = hits[i];
     if (g.time < h.at) continue;
-    pendingHits.splice(i, 1);
+    hits.splice(i, 1);
     const a = g.settlers.get(h.a), v = g.settlers.get(h.v);
     if (!a || !v || a.dead || v.dead) continue;
     hit(g, a, v, h.dmg);
@@ -564,9 +564,9 @@ export function updateProjectiles(g: Game, dt: number) {
     }
   }
   // towers with bowmen shoot at nearby enemies
-  towerT -= dt;
-  if (towerT > 0) return;
-  towerT = 0.5;
+  g.towerT -= dt;
+  if (g.towerT > 0) return;
+  g.towerT = 0.5;
   for (const b of g.buildings.values()) {
     if (!b.def.military || b.state !== 'done' || !b.garrison.length) continue;
     b.shootT -= 0.5;
@@ -596,4 +596,3 @@ export function updateProjectiles(g: Game, dt: number) {
     g.emit({ type: 'bow', x: b.cx, z: b.cz });
   }
 }
-let towerT = 0;
