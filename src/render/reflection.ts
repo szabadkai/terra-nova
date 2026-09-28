@@ -70,6 +70,7 @@ export class PlanarReflection {
     const vis = hide.map((o) => o.visible);
     hide.forEach((o) => (o.visible = false));
     const oldTarget = renderer.getRenderTarget();
+    // the shadow map from this frame stays as it is
     const shadowAuto = renderer.shadowMap.autoUpdate;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = false;

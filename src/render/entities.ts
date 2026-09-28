@@ -379,10 +379,17 @@ const ROCK_MAP = /* glsl */ `
   }
 `;
 
+/** Geometric error allowed in a far rock (model units). */
+const ROCK_FAR_ERR = 0.02;
+
 export class StonesRenderer {
   group = new THREE.Group();
-  private meshes: THREE.InstancedMesh[] = [];
+  private pairs: LodPair[] = [];
   private version = -1;
+  // every deposit's instance, rebuilt when the stones change; culled and sorted by level every frame
+  private n = 0;
+  private mats = new Float32Array(0);
+  private info = new Float32Array(0); // x, y, z, radius, variant
   constructor(private game: Game) {
     const detail = getTerrainDetail();
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
@@ -404,28 +411,44 @@ export class StonesRenderer {
       fragNormal: 'normal = normalize(normal + (viewMatrix * vec4(sDetG, 0.0)).xyz);',
     });
     for (const g of buildRockGeos()) {
-      const m = inst(g, mat, 2000);
-      this.meshes.push(m);
-      this.group.add(m);
+      // cut faces keep their crisp edges in the far copy too
+      const p = new LodPair(g, simplify(g, 0.2, ROCK_FAR_ERR, false, Math.PI / 4).geo, mat, 2000);
+      this.pairs.push(p);
+      this.group.add(...p.meshes);
     }
   }
   update() {
     const g = this.game;
-    if (g.stonesVersion === this.version) return;
-    this.version = g.stonesVersion;
-    const w = g.world;
-    const counts = [0, 0, 0];
-    for (const s of g.stones.values()) {
-      const v = s.variant;
-      const x = w.nx(s.node), z = w.ny(s.node);
-      const y = w.heightAt(x, z) - 0.08;
-      const k = 0.55 + 0.6 * (s.amount / s.max);
-      tmpE.set(0, s.rot, 0);
-      tmpQ.setFromEuler(tmpE);
-      tmpM.compose(tmpS.set(x, y, z), tmpQ, tmpV.set(k * 1.3, k * 1.25, k * 1.3));
-      this.meshes[v].setMatrixAt(counts[v]++, tmpM);
+    if (g.stonesVersion !== this.version) {
+      this.version = g.stonesVersion;
+      const w = g.world;
+      const n = g.stones.size;
+      if (this.mats.length < n * 16) { this.mats = new Float32Array(n * 32); this.info = new Float32Array(n * 10); }
+      let i = 0;
+      for (const s of g.stones.values()) {
+        const x = w.nx(s.node), z = w.ny(s.node);
+        const y = w.heightAt(x, z) - 0.08;
+        const k = 0.55 + 0.6 * (s.amount / s.max);
+        tmpE.set(0, s.rot, 0);
+        tmpQ.setFromEuler(tmpE);
+        tmpM.compose(tmpS.set(x, y, z), tmpQ, tmpV.set(k * 1.3, k * 1.25, k * 1.3));
+        tmpM.toArray(this.mats, i * 16);
+        const f = this.info;
+        f[i * 5] = x; f[i * 5 + 1] = y + 0.35 * k; f[i * 5 + 2] = z; f[i * 5 + 3] = 1.1 * k; f[i * 5 + 4] = s.variant;
+        i++;
+      }
+      this.n = i;
     }
-    this.meshes.forEach((m, i) => commitInstances(m, counts[i]));
+    const V = lodView, f = this.info;
+    for (let i = 0; i < this.n; i++) {
+      const x = f[i * 5], y = f[i * 5 + 1], z = f[i * 5 + 2], r = f[i * 5 + 3];
+      const c = V.cull(x, y, z, r);
+      if (!c) continue;
+      // the matrix scales the rock by about 1.3 k
+      const lv = c === 1 ? -1 : V.px(x, y, z) * ROCK_FAR_ERR * r * 1.2 < LOD_PIXELS ? 1 : 0;
+      this.pairs[f[i * 5 + 4]].addArray(lv, this.mats, i * 16);
+    }
+    for (const p of this.pairs) p.finish();
   }
 }
 

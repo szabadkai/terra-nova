@@ -97,6 +97,9 @@ export const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : 
 /** Set while the water reflection renders, so instanced LODs can switch to their coarse level. */
 export const lodPass = { reflect: false };
 
+/** Pixels per world unit at distance 1 on a 1440-pixel-high view (the size LOD distances are tuned for). */
+export const K_REF = 1440 / (2 * Math.tan((36 * Math.PI) / 360));
+
 /** What the frame's cameras see: main view frustum, shadow frustum and the pixel scale. */
 export class LodView {
   /** pixels per world unit at distance 1 */
@@ -141,6 +144,31 @@ export class LodView {
 
 /** The frame's view, updated by the renderer before any instanced renderer runs. */
 export const lodView = new LodView();
+
+/**
+ * THREE.LOD whose switch distances follow the view's pixel density (tuned on a 1440-pixel-high
+ * view, so a smaller or scaled-down view switches sooner), and which shows its coarsest level to
+ * the water reflection. `showCoarsest` does the same for the shadow map, drawn before the view picks.
+ */
+export class ScreenLod extends THREE.LOD {
+  private base: number[] = [];
+
+  override update(camera: THREE.Camera) {
+    if (lodPass.reflect) { this.showCoarsest(); return; }
+    const L = this.levels;
+    const k = lodView.enabled ? lodView.K / K_REF : 1e9;
+    for (let i = 0; i < L.length; i++) {
+      if (this.base[i] === undefined) this.base[i] = L[i].distance;
+      L[i].distance = this.base[i] * k;
+    }
+    super.update(camera);
+  }
+
+  showCoarsest() {
+    const L = this.levels;
+    for (let i = 0; i < L.length; i++) L[i].object.visible = i === L.length - 1;
+  }
+}
 
 // ------------------------------------------------------------------ instanced pairs
 export interface PairOpts {

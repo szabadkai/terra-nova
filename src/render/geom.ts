@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
 import { ROOF_TILE, SHINGLE_ROWS } from './textures';
+import { ScreenLod } from './lod';
 
 /** Materials whose texture grain should run along the longest axis of a box. */
 const GRAIN_MATS = new Set(['timber', 'wood']);
@@ -689,7 +690,7 @@ export class ModelBuilder {
   build(materials: (key: string) => THREE.Material): THREE.Group {
     const near = this.buildLevel(materials);
     if (!this.far) return near;
-    const lod = new THREE.LOD();
+    const lod = new ScreenLod();
     lod.addLevel(near, 0);
     lod.addLevel(this.far.buildLevel(materials), FAR_DIST, 0.1);
     const group = new THREE.Group();

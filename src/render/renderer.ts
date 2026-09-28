@@ -206,6 +206,12 @@ export class GameRenderer {
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
     this.renderer = r;
+    // the shadow map draws every building on its far model: at shadow-map resolution nobody can tell
+    const drawShadows = r.shadowMap.render.bind(r.shadowMap);
+    r.shadowMap.render = (lights, scene, camera) => {
+      if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera));
+      else drawShadows(lights, scene, camera);
+    };
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     r.setSize(w, h, false);
@@ -976,6 +982,11 @@ export class GameRenderer {
       if (hov.foe) c.setRGB(1.2, 0.1, 0.05); else c.setRGB(0.8, 0.78, 0.65);
     } else U.uHov.value.w = 0;
 
+    // one matrix update serves the reflection and the view (and its shadow map)
+    this.scene.updateMatrixWorld();
+    this.scene.matrixWorldAutoUpdate = false;
+    this.renderer.shadowMap.autoUpdate = this.shadowsLive;
+
     // planar water reflections (only when water is on screen)
     const U2 = this.water.uniforms;
     const waterSeen = this.waterInView();
@@ -988,7 +999,11 @@ export class GameRenderer {
     const rainI = this.precip === 'rain' ? this.rainAmount : 0;
     const right = new THREE.Vector3().setFromMatrixColumn(this.cam.camera.matrixWorld, 0);
     this.fx.render(this.time, zoom01, night, rainI, (this.rain.drift.x * right.x + this.rain.drift.y * right.z) / RAIN_FALL);
+    this.scene.matrixWorldAutoUpdate = true;
   }
+
+  /** off: the shadow map keeps its last picture (for comparisons) */
+  shadowsLive = true;
 
   private waterCheckT = 0;
   private waterVisible = false;

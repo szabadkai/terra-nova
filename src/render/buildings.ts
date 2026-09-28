@@ -13,6 +13,7 @@ import { lanternLit, lanternSpot } from './lanterns';
 import { hash2 } from '../core/rng';
 import { burnPose, collapseAt } from './demolition';
 import { getBurnMaterial } from './materials';
+import { ScreenLod } from './lod';
 
 /** charred wood and soot, and the ember glow that shows through a burning wall */
 const CHAR = new THREE.Color(0.09, 0.075, 0.065);
@@ -36,6 +37,8 @@ interface BView {
   /** per-building material copies while it burns: animated char and glow */
   burnMats: Map<string, { m: THREE.MeshStandardMaterial; base: THREE.Color }> | null;
   sea: Seaworks | null;
+  /** near and far models, when the design has a far one */
+  lod: ScreenLod | null;
 }
 
 export class BuildingsRenderer {
@@ -43,6 +46,18 @@ export class BuildingsRenderer {
   views = new Map<number, BView>();
   private scaffoldMat: THREE.Material;
   private ropeMat: THREE.Material;
+
+  private shown: boolean[] = [];
+  /** Run fn (the shadow map) with every building on its far model, then put back the levels the view picked. */
+  withFar(fn: () => void) {
+    const shown = this.shown;
+    shown.length = 0;
+    for (const v of this.views.values()) if (v.lod) { for (const l of v.lod.levels) shown.push(l.object.visible); v.lod.showCoarsest(); }
+    try { fn(); } finally {
+      let k = 0;
+      for (const v of this.views.values()) if (v.lod) for (const l of v.lod.levels) l.object.visible = shown[k++];
+    }
+  }
 
   constructor(private game: Game, private piles: PilesRenderer) {
     this.scaffoldMat = getMaterial('timber');
@@ -69,6 +84,7 @@ export class BuildingsRenderer {
     const v: BView = {
       id: b.id, type: b.type, owner: b.owner, group, anchors, height: Math.max(0.8, box.max.y - y),
       state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnMats: null, sea,
+      lod: (group.children.find((o) => o instanceof ScreenLod) as ScreenLod | undefined) ?? null,
     };
     this.views.set(b.id, v);
     return v;
