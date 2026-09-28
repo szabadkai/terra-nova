@@ -8,6 +8,8 @@ export interface Prefs {
   render: RenderSettings;
   season: SeasonMode;
   dayLength: number;
+  /** master switch; off by default on the dev server so the game stays quiet while working on it */
+  soundOn: boolean;
   volume: number;
   music: number;
   musicOn: boolean;
@@ -15,6 +17,8 @@ export interface Prefs {
   ambience: number;
   edgeScroll: boolean;
   scrollSpeed: number;
+  /** fill the screen (fullscreen) whenever a game starts; follows what the user last chose */
+  immersive: boolean;
   showFps: boolean;
 }
 
@@ -24,6 +28,7 @@ export const defaultPrefs = (): Prefs => ({
   render: { ...DEFAULT_RENDER_SETTINGS },
   season: 'auto',
   dayLength: 600,
+  soundOn: !import.meta.env.DEV,
   volume: 0.7,
   music: 1,
   musicOn: true,
@@ -31,6 +36,7 @@ export const defaultPrefs = (): Prefs => ({
   ambience: 1,
   edgeScroll: true,
   scrollSpeed: 1,
+  immersive: false,
   showFps: true,
 });
 
@@ -70,7 +76,8 @@ export function applyRenderPrefs(gr: GameRenderer) {
 }
 
 export function applyAudioPrefs(audio: Audio) {
-  audio.setVolume(prefs.volume);
-  audio.setMusic(prefs.musicOn);
+  audio.setVolume(prefs.soundOn ? prefs.volume : 0);
+  // music off as well, so the soundtrack stops streaming rather than playing silently
+  audio.setMusic(prefs.soundOn && prefs.musicOn);
   audio.setMix(prefs.music, prefs.sfx, prefs.ambience);
 }

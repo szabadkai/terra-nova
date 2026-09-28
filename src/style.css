@@ -51,6 +51,9 @@ button { font-family: var(--font); cursor: pointer; }
 }
 .speed button.on { background: var(--gold); color: #2a1c0c; border-color: var(--gold); }
 .fps { color: var(--muted); font-size: 11px; width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.imm { display: grid; place-items: center; margin-left: 4px; width: 30px; height: 26px; padding: 0; color: var(--muted); }
+.imm:hover { color: var(--text); border-color: var(--gold); }
+.imm.on { color: var(--gold); border-color: var(--gold); }
 
 /* ------------------------------------------------ left panel */
 .left { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); width: 244px; display: flex; flex-direction: column; overflow: hidden; }

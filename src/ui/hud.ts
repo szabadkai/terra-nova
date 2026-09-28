@@ -20,6 +20,11 @@ import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
 import { prefs } from './prefs';
+import { immersiveAvailable, isImmersive, leaveHint, toggleImmersive } from './immersive';
+
+// corner brackets pointing out (fill the screen) and in (leave it) for the top-bar button
+const IMM_ON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>';
+const IMM_OFF = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4"/></svg>';
 
 const SEASON_ICON = ['🌸', '🌿', '🍂', '❄'];
 
@@ -131,11 +136,20 @@ export class HUD {
       <div class="speed">
         ${[0, 1, 2, 4].map((s) => `<button data-speed="${s}" class="${speed === s ? 'on' : ''}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}
       </div>
+      ${immersiveAvailable ? `<button class="mini imm${isImmersive() ? ' on' : ''}" id="imm" aria-pressed="${isImmersive()}" aria-label="Immersive mode" title="${isImmersive() ? `Leave immersive mode (F, or ${leaveHint})` : 'Immersive mode: fill the screen, so scrolling at the top edge never leaves the window (F)'}">${isImmersive() ? IMM_OFF : IMM_ON}</button>` : ''}
       <div class="fps${prefs.showFps ? '' : ' hidden'}" id="fps"></div>`;
     this.top.querySelectorAll<HTMLButtonElement>('button[data-speed]').forEach((b) => {
       b.onclick = () => { this.hooks.setSpeed(Number(b.dataset.speed)); this.audio.play('ui'); this.refreshTop(); };
     });
+    const imm = this.top.querySelector<HTMLButtonElement>('#imm');
+    if (imm) imm.onclick = () => { this.audio.play('ui'); void toggleImmersive(); };
     this.fpsEl = this.top.querySelector('#fps')!;
+  }
+
+  /** Fullscreen came or went (button, F, Esc or the browser itself): redraw the button, say how to get back out. */
+  immersiveChanged(on: boolean) {
+    this.refreshTop();
+    if (on) this.message(`Immersive mode: the game fills the screen. F switches it off, ${leaveHint}.`);
   }
 
   // ------------------------------------------------------------ left panel

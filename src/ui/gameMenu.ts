@@ -9,6 +9,7 @@ import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
 import { applyAudioPrefs, applyRenderPrefs, defaultPrefs, prefs, savePrefs } from './prefs';
 import { AUTO, playTime, saveSubtitle, type SaveSummary } from './saveStore';
+import { enterImmersive, immersiveAvailable, isImmersive, leaveHint, leaveImmersive } from './immersive';
 
 const h = (tag: string, cls = '', html = '') => {
   const e = document.createElement(tag);
@@ -88,6 +89,7 @@ const KEYS_ARMY: [string, string][] = [
 const KEYS_GAME: [string, string][] = [
   ['<kbd>Esc</kbd>', 'Cancel or deselect, then open this menu'],
   ['<kbd>F10</kbd>', 'Open or close this menu'],
+  ...(immersiveAvailable ? [['<kbd>F</kbd>', `Immersive mode: fill the screen (${leaveHint.replace('Esc', '<kbd>Esc</kbd>')})`]] as [string, string][] : []),
   ['<kbd>Space</kbd>', 'Pause without the menu'],
   ['<kbd>1</kbd> – <kbd>4</kbd>', 'Game speed'],
   ['<kbd>N</kbd>', 'Next music track (<kbd>Shift</kbd> for the previous one)'],
@@ -427,6 +429,7 @@ export class GameMenu {
     const apply = () => applyAudioPrefs(a);
     if (!a.started) c.appendChild(h('p', 'note', 'Sound starts with your first click or key press. Browsers require it.'));
     c.appendChild(h('h3', '', 'Volume'));
+    c.appendChild(this.toggle('Sound', import.meta.env.DEV ? 'Off by default on the dev server' : 'Everything: effects, ambience and music', () => prefs.soundOn, (v) => { prefs.soundOn = v; apply(); }));
     c.appendChild(this.slider('Master volume', '', 0, 1, 0.01, () => prefs.volume, (v) => { prefs.volume = v; apply(); }, pct));
     c.appendChild(this.slider('Effects', 'Work, building and battle sounds', 0, 1, 0.01, () => prefs.sfx, (v) => { prefs.sfx = v; apply(); }, pct, () => a.play('built')));
     c.appendChild(this.slider('Ambience', 'Wind, rain and birdsong', 0, 1, 0.01, () => prefs.ambience, (v) => { prefs.ambience = v; apply(); }, pct));
@@ -435,7 +438,7 @@ export class GameMenu {
     c.appendChild(this.slider('Music volume', '', 0, 1, 0.01, () => prefs.music, (v) => { prefs.music = v; apply(); }, pct));
     this.resetButton(c, 'Reset sound to defaults', () => {
       const d = defaultPrefs();
-      Object.assign(prefs, { volume: d.volume, sfx: d.sfx, ambience: d.ambience, musicOn: d.musicOn, music: d.music });
+      Object.assign(prefs, { soundOn: d.soundOn, volume: d.volume, sfx: d.sfx, ambience: d.ambience, musicOn: d.musicOn, music: d.music });
       apply();
     });
   }
@@ -445,6 +448,13 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Camera'));
     c.appendChild(this.toggle('Edge scrolling', 'Move the view when the pointer touches the edge of the screen', () => prefs.edgeScroll, (v) => { prefs.edgeScroll = v; cam.edgeScroll = v; }));
     c.appendChild(this.slider('Scroll speed', 'Keyboard and edge scrolling', 0.5, 2, 0.1, () => prefs.scrollSpeed, (v) => { prefs.scrollSpeed = v; cam.scrollSpeed = v; }, (v) => `${v.toFixed(1)}×`));
+    if (immersiveAvailable) {
+      c.appendChild(h('h3', '', 'Screen'));
+      c.appendChild(this.toggle('Immersive mode', `Fills the screen, so scrolling at the top edge never slips into the browser's tabs. F switches it; ${leaveHint}.`, isImmersive, (v) => {
+        // the switch shows the real state: put it back if the browser refused
+        void (v ? enterImmersive() : leaveImmersive()).then(() => { if (isImmersive() !== v && this.page === 'controls') this.show('controls'); });
+      }));
+    }
     const keys = (title: string, rows: [string, string][]) => {
       c.appendChild(h('h3', '', title));
       c.appendChild(h('dl', 'keys-grid', rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')));
@@ -456,9 +466,10 @@ export class GameMenu {
     keys('Touch', KEYS_TOUCH);
     this.resetButton(c, 'Reset controls to defaults', () => {
       const d = defaultPrefs();
-      Object.assign(prefs, { edgeScroll: d.edgeScroll, scrollSpeed: d.scrollSpeed });
+      Object.assign(prefs, { edgeScroll: d.edgeScroll, scrollSpeed: d.scrollSpeed, immersive: d.immersive });
       cam.edgeScroll = prefs.edgeScroll;
       cam.scrollSpeed = prefs.scrollSpeed;
+      void leaveImmersive();
     });
   }
 

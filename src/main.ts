@@ -5,7 +5,8 @@ import { HUD } from './ui/hud';
 import { generateIcons } from './ui/icons';
 import { showLoading, showMenu, MenuOptions } from './ui/menu';
 import { GameMenu } from './ui/gameMenu';
-import { applyAudioPrefs, applyRenderPrefs } from './ui/prefs';
+import { applyAudioPrefs, applyRenderPrefs, prefs } from './ui/prefs';
+import { enterImmersive, onImmersiveChange, toggleImmersive } from './ui/immersive';
 import { Audio } from './audio/audio';
 import { G } from './render/shaderPatch';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
@@ -322,6 +323,8 @@ function startGame(resumed?: Record<string, unknown>) {
     hud.message('Welcome, my liege! Build woodcutters, a sawmill and a stonecutter to begin.', undefined, undefined, 'good');
   }
   try { audio.start(); } catch { /* needs a gesture */ }
+  // fills the screen when the game was started by a click; a resumed page has no gesture to spend
+  if (prefs.immersive) void enterImmersive();
   setResume(true);
   autosaveT = AUTOSAVE_EVERY;
   // a new game replaces the autosave at once, so reloading can never bring back the previous one
@@ -339,6 +342,7 @@ function setupGlobalInput() {
   };
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
+  onImmersiveChange((on) => hud?.immersiveChanged(on));
   window.addEventListener('keydown', (e) => {
     const k = e.key;
     if (gameMenu) {
@@ -347,6 +351,9 @@ function setupGlobalInput() {
       else if (k === 'F10') { e.preventDefault(); gameMenu.close(); }
       return;
     }
+    const typing = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT';
+    // F fills the screen on the title screen as well as in a game (never Cmd/Ctrl+F: that is find)
+    if ((k === 'f' || k === 'F') && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) { void toggleImmersive(); return; }
     if (state !== 'play' || !hud) return;
     if (k === 'F10') { e.preventDefault(); openGameMenu(); return; }
     if (k === 'Escape') {
