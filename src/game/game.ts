@@ -426,7 +426,7 @@ export class Game {
       state: 'leveling', created: this.time, targetH: 0, levelWork: 0, levelTotal: 0,
       buildWork: 0, buildTotal: def.cost.board + def.cost.stone, delivered: { board: 0, stone: 0 }, used: 0,
       diggers: [], builders: [], stock: emptyStock(), incoming: emptyStock(), outgoing: emptyStock(),
-      worker: 0, workerIncoming: 0, working: false, workT: 0, paused: false, status: '',
+      worker: 0, workerIncoming: 0, working: false, workT: 0, paused: false, status: '', stall: null, stallT: 0,
       garrison: [], soldiersIncoming: 0, desiredSoldiers: def.military?.capacity ?? 0, occupied: false,
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,

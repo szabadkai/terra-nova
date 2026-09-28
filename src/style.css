@@ -44,6 +44,35 @@ button { font-family: var(--font); cursor: pointer; }
 .res.warn span { color: var(--warn); }
 .res .emo { font-size: 16px; width: 28px; text-align: center; }
 .sep { width: 1px; height: 26px; background: var(--line); margin: 0 6px; }
+/* the ⚠ stalled-buildings button: muted while nothing is stuck */
+.stallbtn { border: 1px solid transparent; color: var(--muted); font-size: 13px; min-width: 0; }
+.stallbtn .emo { width: 22px; font-size: 15px; }
+.stallbtn.on { color: var(--bad); border-color: rgba(255, 122, 100, 0.45); background: rgba(255, 122, 100, 0.1); }
+.stallbtn:hover { border-color: var(--gold); }
+
+/* stall badges over the roofs of stuck buildings (ui/stallBadges.ts) */
+.hud > .stall-layer { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+.stall { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: auto; cursor: pointer; }
+.stall .bubble {
+  position: absolute; left: -18px; bottom: 7px; width: 32px; height: 32px; display: grid; place-items: center;
+  border-radius: 50%; background: radial-gradient(circle at 50% 35%, #fff8ea, #e9d8b8); border: 2px solid var(--bad); box-shadow: 0 0 0 1px rgba(40, 14, 8, 0.55), 0 3px 10px rgba(0, 0, 0, 0.45);
+  animation: stallpop .3s ease-out, stallbob 2.6s ease-in-out .3s infinite; transition: scale .12s;
+}
+.stall .bubble::after { content: ''; position: absolute; left: 50%; bottom: -8px; margin-left: -5px; border: 5px solid transparent; border-top: 6px solid var(--bad); border-bottom: 0; }
+.stall img { width: 30px; height: 30px; pointer-events: none; }
+.stall .glyph { font-size: 17px; line-height: 1; font-weight: 800; color: #b3321f; }
+.stall i { position: absolute; right: -9px; top: -7px; font-style: normal; font-size: 9px; font-weight: 800; line-height: 13px; padding: 0 4px; border-radius: 6px; background: var(--bad); color: #2a0c06; text-transform: uppercase; letter-spacing: .03em; }
+.stall:hover .bubble { scale: 1.14; }
+.stall.mild .bubble { border-color: var(--warn); }
+.stall.mild .bubble::after { border-top-color: var(--warn); }
+.stall.mild i { background: var(--warn); }
+/* far out: a small tinted dot */
+.stall.dot .bubble { left: -5px; bottom: 3px; width: 10px; height: 10px; border: 0; background: var(--bad); box-shadow: 0 0 0 2px rgba(20, 14, 10, 0.7), 0 0 8px rgba(255, 122, 100, 0.6); animation: none; }
+.stall.dot.mild .bubble { background: var(--warn); box-shadow: 0 0 0 2px rgba(20, 14, 10, 0.7), 0 0 8px rgba(255, 198, 90, 0.5); }
+.stall.dot .bubble > *, .stall.dot .bubble::after { display: none; }
+@keyframes stallpop { from { opacity: 0; scale: 0.4; } }
+@keyframes stallbob { 50% { translate: 0 -3px; } }
+@media (prefers-reduced-motion: reduce) { .stall .bubble { animation: none; } }
 .clock { font-variant-numeric: tabular-nums; color: var(--muted); padding: 0 6px; white-space: nowrap; }
 .speed { display: flex; gap: 3px; margin-left: auto; }
 .speed button, .mini {

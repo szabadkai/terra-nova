@@ -28,6 +28,8 @@ import {
 } from '../game/orders';
 import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder, placeOrder } from '../game/trade';
 import { buildingIcons, goodIcons } from './icons';
+import { StallBadges } from './stallBadges';
+import { stalled } from '../game/status';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
 import { prefs } from './prefs';
@@ -108,10 +110,16 @@ export class HUD {
   private groupBar!: HTMLElement;
   private lastGroupKey = '';
   private recalled = { slot: -1, at: 0 };
+  /** badges over stalled buildings, and the one the ⚠ button went to last */
+  stalls: StallBadges;
+  private stallAt = 0;
 
   constructor(private game: Game, private gr: GameRenderer, private audio: Audio, private hooks: HudHooks, parent: HTMLElement) {
     this.root = h('div', 'hud');
     parent.appendChild(this.root);
+    // first, so every panel sits above the badges
+    this.stalls = new StallBadges(game, gr, (b) => { this.audio.play('ui'); this.select({ kind: 'building', id: b.id }); });
+    this.root.appendChild(this.stalls.layer);
     this.buildTop();
     this.buildLeft();
     this.info = h('div', 'panel info hidden');
@@ -138,6 +146,13 @@ export class HUD {
   private buildTop() {
     this.top = h('div', 'panel topbar');
     this.root.appendChild(this.top);
+    // the bar is redrawn twice a second, so the ⚠ button is handled here rather than on the button
+    this.top.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('#stalls')) this.nextStall((e as MouseEvent).shiftKey); });
+    this.top.addEventListener('mousemove', (e) => {
+      if ((e.target as HTMLElement).closest('#stalls')) this.showTip(e, this.stallTip());
+      else if ((e.target as HTMLElement).closest('.topbar')) this.hideTip();
+    });
+    this.top.addEventListener('mouseleave', () => this.hideTip());
     const menu = h('button', 'panel menu-btn', '☰');
     menu.title = 'Menu: settings, restart, quit (Esc)';
     menu.setAttribute('aria-label', 'Open the menu');
@@ -176,6 +191,7 @@ export class HUD {
       <div class="sep"></div>
       ${item('<span class="emo">⚔</span>', pop.soldiers, 'Soldiers')}
       ${item('<span class="emo">👥</span>', `${pop.idle}/${pop.total}`, 'Idle carriers / total population', pop.idle < 2)}
+      <button class="res stallbtn${this.stalls.stalled.length ? ' on' : ''}" id="stalls" aria-label="${this.stalls.stalled.length} buildings stalled: go to the next (.)"><span class="emo">⚠</span><span>${this.stalls.stalled.length}</span></button>
       <div class="sep"></div>
       <div class="clock" title="${season.name}, day ${season.day(this.gr.sky.dayLength)}">${SEASON_ICON[season.index]} ${season.name}</div>
       <div class="clock" title="Time of day">${isNight ? '☾' : '☀'} ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</div>
@@ -1217,7 +1233,10 @@ export class HUD {
       if (b.type === 'toolsmith' && mine) {
         body += `<div class="kv"><span>Forge</span><select data-act="tool"><option value="auto">Auto (by demand)</option>${TOOLS.map((t) => `<option value="${t}" ${b.toolChoice === t ? 'selected' : ''}>${GOOD_NAMES[t]}</option>`).join('')}</select></div>`;
       }
-      if (b.status && !d.military) body += `<div class="status ${/Missing|No |Waiting|full|exhausted/.test(b.status) ? 'warn' : ''}">${b.status}</div>`;
+      if (b.status && !d.military) {
+        const since = stalled(g, b) ? g.time - b.stallT : 0;
+        body += `<div class="status ${b.stall || (b.state !== 'done' && /Waiting/.test(b.status)) ? 'warn' : ''}">${b.status}${since >= 60 ? ` <span class="muted">· ${Math.floor(since / 60)} min</span>` : ''}</div>`;
+      }
     }
     const buttons: string[] = [];
     if (mine && b.state === 'done' && b.type === 'harbour') {
@@ -1421,6 +1440,36 @@ export class HUD {
     if (rb) rb.onclick = () => { this.audio.play('ui'); recallPioneer(g, s); this.lastInfoKey = ''; this.refreshInfo(); };
   }
 
+  // ------------------------------------------------------------ stalls
+  /** Go to the next stalled building (Shift: the one before) and open it, like an RTS's idle-worker button. */
+  nextStall(back = false) {
+    const list = this.stalls.stalled;
+    if (!list.length) { this.message('Every workshop is busy — nothing is stuck.', undefined, undefined, 'good'); return; }
+    let i = list.findIndex((b) => b.id === this.stallAt);
+    i = i < 0 ? (back ? list.length - 1 : 0) : (i + (back ? list.length - 1 : 1)) % list.length;
+    const b = list[i];
+    this.stallAt = b.id;
+    this.audio.play('ui');
+    this.gr.cam.jumpTo(b.cx, b.cz + 2);
+    this.select({ kind: 'building', id: b.id });
+  }
+
+  /** The ⚠ button's tooltip: what is stuck, grouped by reason. */
+  private stallTip(): string {
+    const list = this.stalls.stalled;
+    if (!list.length) return '<b>⚠ Stalled buildings</b><br><span class="muted">None: every workshop is busy or has nothing to wait for.</span>';
+    const by = new Map<string, string[]>();
+    for (const b of list) { const r = by.get(b.status) ?? []; r.push(b.def.name); by.set(b.status, r); }
+    const named = (names: string[]) => {
+      const n = new Map<string, number>();
+      for (const x of names) n.set(x, (n.get(x) ?? 0) + 1);
+      return [...n].map(([x, k]) => (k > 1 ? `${x} ×${k}` : x)).join(', ');
+    };
+    const rows = [...by].sort((a, b) => b[1].length - a[1].length).slice(0, 8)
+      .map(([why, names]) => `${why}: <span class="muted">${named(names)}</span>`);
+    return `<b>⚠ ${list.length} stalled building${list.length > 1 ? 's' : ''}</b><br>${rows.join('<br>')}${by.size > 8 ? '<br>…' : ''}<br><span class="muted">Click or press <b>.</b> to go to the next (Shift: back)</span>`;
+  }
+
   // ------------------------------------------------------------ messages / tooltip
   message(text: string, x?: number, z?: number, kind = 'info') {
     const m = h('div', `msg msg-${kind}`, text); // prefixed: a bare 'info' class would pick up the selection panel's fixed layout
@@ -1488,6 +1537,7 @@ export class HUD {
     this.infoT -= dt;
     this.minimap.update(dt);
     this.objectives.update(dt);
+    this.stalls.update(dt);
     if (this.t <= 0) {
       this.t = 0.5;
       this.refreshTop();

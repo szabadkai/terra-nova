@@ -11,6 +11,7 @@ import { offer } from './faith';
 import { donkeyCap, donkeysOf, marketsOf, spawnDonkey } from './trade';
 import { catapultCap, catapultsOf, mendWalls, spawnCatapult } from './siege';
 import { CATAPULT_PARTS } from './defs';
+import { setStall, setStatus } from './status';
 
 const SITE_DIGGERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 const SITE_BUILDERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
@@ -57,14 +58,14 @@ export function updateBuilding(g: Game, b: Building, dt: number) {
         g.emit({ type: 'spawn', x: s.x, z: s.z, owner: b.owner });
       }
     }
-    b.status = b.spawned < b.def.residence ? `Settlers moving in (${b.spawned}/${b.def.residence})` : 'Fully occupied';
+    setStatus(b, b.spawned < b.def.residence ? `Settlers moving in (${b.spawned}/${b.def.residence})` : 'Fully occupied');
     return;
   }
   updateProduction(g, b, dt);
 }
 
 export function onBuildingComplete(g: Game, b: Building, instant: boolean) {
-  b.status = '';
+  setStatus(b, '');
   for (const id of [...b.builders, ...b.diggers]) {
     const s = g.settlers.get(id);
     if (s && s.home === b.id) s.home = 0;
@@ -124,12 +125,13 @@ function updateProduction(g: Game, b: Building, dt: number) {
     if (b.type === 'barracks') updateBarracks(g, b, dt);
     return;
   }
-  if (b.paused) { b.status = 'Paused'; b.working = false; return; }
+  if (b.paused) { setStatus(b, 'Paused'); b.working = false; return; }
   if (def.worker) {
     const w = b.worker ? g.settlers.get(b.worker) : null;
     if (!w || w.inside !== b.id) {
       b.working = false;
-      if (!b.worker) b.status = b.workerIncoming ? 'Worker on the way' : b.status || 'Waiting for worker';
+      if (!b.worker && b.workerIncoming) setStatus(b, 'Worker on the way');
+      else if (!b.worker && !b.status) setStall(g, b, { kind: 'settlers' }, 'Waiting for worker');
       return;
     }
   }
@@ -141,26 +143,27 @@ function updateProduction(g: Game, b: Building, dt: number) {
     else out = def.outputs?.[0] ?? null;
     let outCount = 0;
     for (const o of def.outputs ?? []) outCount += b.stock[o];
-    if (outCount >= OUT_CAP) { b.status = 'Output storage full'; return; }
+    if (outCount >= OUT_CAP) { setStall(g, b, { kind: 'full' }); return; }
     for (const inp of def.inputs ?? []) {
       if (!hasInput(b, inp.goods)) {
-        b.status = `Waiting for ${inp.goods.length > 1 ? 'food' : GOOD_NAMES[inp.goods[0]].toLowerCase()}`;
+        setStall(g, b, { kind: 'input', goods: inp.goods });
         return;
       }
     }
     if (def.mine) {
-      if (g.mineOreLeft(b) <= 0) { b.status = 'Deposit exhausted'; return; }
+      if (g.mineOreLeft(b) <= 0) { setStall(g, b, { kind: 'exhausted' }); return; }
     }
     if (b.type === 'donkeyfarm' && donkeysOf(g, b.owner) >= donkeyCap(g, b.owner)) {
-      b.status = marketsOf(g, b.owner).length ? 'The stables are full' : 'Waiting for a market place to work for';
+      if (marketsOf(g, b.owner).length) setStatus(b, 'The stables are full');
+      else setStall(g, b, { kind: 'market' });
       return;
     }
-    if (b.type === 'siegeworks' && catapultsOf(g, b.owner) >= catapultCap(g, b.owner)) { b.status = 'The yard is full of catapults'; return; }
+    if (b.type === 'siegeworks' && catapultsOf(g, b.owner) >= catapultCap(g, b.owner)) { setStatus(b, 'The yard is full of catapults'); return; }
     for (const inp of def.inputs ?? []) takeInput(b, inp.goods);
     b.working = true;
     b.workT = 0;
     (b as any).curOut = out;
-    b.status = def.mana ? 'Offering wine to the gods' : b.type === 'siegeworks' ? `Building a catapult (${Math.round(b.shipProgress * 100)}%)` : 'Working';
+    setStatus(b, def.mana ? 'Offering wine to the gods' : b.type === 'siegeworks' ? `Building a catapult (${Math.round(b.shipProgress * 100)}%)` : 'Working');
   } else {
     b.workT += dt;
     if (b.workT >= def.cycle) {
@@ -217,22 +220,22 @@ function updateProduction(g: Game, b: Building, dt: number) {
 }
 
 function updateBarracks(g: Game, b: Building, dt: number) {
-  if (b.paused) { b.status = 'Paused'; return; }
-  if (b.workerIncoming) { b.status = 'Recruit on the way'; return; }
+  if (b.paused) { setStatus(b, 'Paused'); return; }
+  if (b.workerIncoming) { setStatus(b, 'Recruit on the way'); return; }
   const sw = b.stock.sword - b.outgoing.sword, bw = b.stock.bow - b.outgoing.bow;
-  if (sw <= 0 && bw <= 0) { b.status = 'Waiting for weapons'; return; }
+  if (sw <= 0 && bw <= 0) { setStall(g, b, { kind: 'input', goods: ['sword', 'bow'] }); return; }
   // find idle carrier (always keep a few carriers for transport)
   let best: Settler | null = null, bd = Infinity;
   let idleCount = 0;
   const r = reg(g, b);
   for (const s of g.settlers.values()) if (s.owner === b.owner && s.job === 'carrier' && s.idle && !s.dead && regS(g, s) === r) idleCount++;
-  if (idleCount <= 4) { b.status = 'Keeping carriers for transport'; return; }
+  if (idleCount <= 4) { setStall(g, b, { kind: 'settlers' }, 'Keeping carriers for transport'); return; }
   for (const s of g.settlers.values()) {
     if (s.owner !== b.owner || s.job !== 'carrier' || !s.idle || s.dead || regS(g, s) !== r) continue;
     const d = dist2(s.x, s.z, b.cx, b.cz);
     if (d < bd) { bd = d; best = s; }
   }
-  if (!best) { b.status = 'No free settlers to recruit'; return; }
+  if (!best) { setStall(g, b, { kind: 'settlers' }, 'No free settlers to recruit'); return; }
   const ratio = g.players[b.owner].swordRatio;
   const weapon: Good = sw > 0 && (bw <= 0 || g.rng.next() < ratio) ? 'sword' : 'bow';
   const s = best;
@@ -249,7 +252,7 @@ function updateBarracks(g: Game, b: Building, dt: number) {
       b.outgoing[weapon]--;
       taken = true;
       s.carrying = weapon; // held while training, so a saved game knows what the recruit will become
-      b.status = 'Training soldier';
+      setStatus(b, 'Training soldier');
     }),
     ...training(g, s, b, weapon),
   ], () => {
@@ -281,7 +284,7 @@ function training(g: Game, s: Settler, b: Building, weapon: Good) {
 export function resumeTraining(g: Game, s: Settler, b: Building) {
   const weapon = s.carrying!;
   b.workerIncoming = s.id;
-  b.status = 'Training soldier';
+  setStatus(b, 'Training soldier');
   plan(s, training(g, s, b, weapon), () => {
     b.workerIncoming = 0;
     s.carrying = null;
@@ -544,7 +547,7 @@ function assignCrewIn(g: Game, owner: number, sites: Building[], carriers: Settl
         b.diggers.push(s.id);
         if (s.actions.length) { s.actions.length = 0; s.onAbort = null; }
       }
-      b.status = b.diggers.length ? 'Levelling the ground' : 'Waiting for diggers';
+      setStatus(b, b.diggers.length ? 'Levelling the ground' : 'Waiting for diggers');
     } else if (b.state === 'building') {
       const want = SITE_BUILDERS(b);
       while (b.builders.length < want) {
@@ -555,7 +558,7 @@ function assignCrewIn(g: Game, owner: number, sites: Building[], carriers: Settl
         b.builders.push(s.id);
         if (s.actions.length) { s.actions.length = 0; s.onAbort = null; }
       }
-      b.status = siteStatus(b);
+      setStatus(b, siteStatus(b));
     }
   }
   // the prioritised site takes crew from the other sites when none are free
@@ -573,12 +576,12 @@ function assignCrewIn(g: Game, owner: number, sites: Building[], carriers: Settl
           s.idle = false;
           first[list].push(id);
         }
-        o.status = siteStatus(o);
+        setStatus(o, siteStatus(o));
       }
     };
     if (first.state === 'leveling') pull('diggers', SITE_DIGGERS(first));
     else pull('builders', SITE_BUILDERS(first));
-    first.status = siteStatus(first);
+    setStatus(first, siteStatus(first));
   }
   // recruit extra crew from carriers with tools
   const recruit = (job: Job, want: number, total: number) => {
@@ -696,28 +699,28 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
       })], () => { if (b.workerIncoming === s.id) b.workerIncoming = 0; s.home = 0; });
       continue;
     }
-    if (!carriers.length) { b.status = 'No free settlers'; continue; }
+    if (!carriers.length) { setStall(g, b, { kind: 'settlers' }); continue; }
     const tool = JOB_TOOL[job];
     if (tool) {
       const src = findToolSource(g, owner, tool, b.cx, b.cz, r);
       if (!src) {
-        b.status = `Missing tool: ${GOOD_NAMES[tool].replace(/s$/, '').toLowerCase()}`;
+        setStall(g, b, { kind: 'tool', good: tool });
         // iron and coal keep the toolsmith going: borrow a miner from a gold or stone mine rather than deadlock
         if (b.type === 'ironmine' || b.type === 'coalmine') reassignMiner(g, owner, b, mine);
         continue;
       }
       const c = nearestCarrier(carriers, src.cx, src.cz, g, r);
-      if (!c) { b.status = 'No free settlers'; continue; }
+      if (!c) { setStall(g, b, { kind: 'settlers' }); continue; }
       equip(g, c, src, tool, job, b);
-      b.status = 'Worker on the way';
+      setStatus(b, 'Worker on the way');
     } else {
       const c = nearestCarrier(carriers, b.cx, b.cz, g, r);
-      if (!c) { b.status = 'No free settlers'; continue; }
+      if (!c) { setStall(g, b, { kind: 'settlers' }); continue; }
       claim(g, c);
       c.job = job;
       c.home = b.id;
       b.workerIncoming = c.id;
-      b.status = 'Worker on the way';
+      setStatus(b, 'Worker on the way');
       plan(c, [A.walk(b.door), A.do(() => {
         if (!g.buildings.has(b.id)) return false;
         enter(g, c, b);
@@ -738,13 +741,13 @@ function reassignMiner(g: Game, owner: number, b: Building, mine: Building[]) {
     o.working = false;
     abortPlan(g, w);
     exit(g, w);
-    o.status = `Miner sent to the ${b.def.name}`;
+    setStatus(o, `Miner sent to the ${b.def.name}`);
     // straight to the mine that needs him, or the old one would simply hire him back
     const s = w;
     s.home = b.id;
     s.idle = false;
     b.workerIncoming = s.id;
-    b.status = 'Worker on the way';
+    setStatus(b, 'Worker on the way');
     plan(s, [A.walk(b.door), A.do(() => {
       if (!g.buildings.has(b.id)) return false;
       enter(g, s, b);

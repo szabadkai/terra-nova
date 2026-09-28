@@ -76,6 +76,7 @@ const KEYS_VIEW: [string, string][] = [
   ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrows or the screen edge', 'Scroll (hold <kbd>Shift</kbd> to go faster)'],
   ['<kbd>Q</kbd> <kbd>E</kbd> · <kbd>+</kbd> <kbd>−</kbd>', 'Turn · zoom'],
   ['<kbd>H</kbd>', 'Jump to your headquarters'],
+  ['<kbd>.</kbd> or ⚠ in the top bar', 'Go to the next stalled building (<kbd>Shift</kbd>: the one before)'],
   ['Click or drag on the minimap', 'Jump there'],
 ];
 const KEYS_ORDERS: [string, string][] = [

@@ -6,6 +6,7 @@ import { A, enter, exit, plan } from './settlers';
 import type { Building, Settler, Tree } from './types';
 import { DX8, DY8, WATER_LEVEL } from './world';
 import { shipwrightThink } from './sea';
+import { setStall, setStatus } from './status';
 
 function outFull(b: Building) {
   let n = 0;
@@ -37,7 +38,7 @@ export function returnHome(g: Game, s: Settler, b: Building, deposit: boolean) {
 
 export function workerThink(g: Game, s: Settler, b: Building) {
   if (b.paused) {
-    b.status = 'Paused';
+    setStatus(b, 'Paused');
     plan(s, [A.wait(2)]);
     return;
   }
@@ -58,7 +59,7 @@ export function workerThink(g: Game, s: Settler, b: Building) {
 }
 
 function woodcutter(g: Game, s: Settler, b: Building) {
-  if (outFull(b)) { b.status = 'Output storage full'; plan(s, [A.wait(3)]); return; }
+  if (outFull(b)) { setStall(g, b, { kind: 'full' }); plan(s, [A.wait(3)]); return; }
   const w = g.world;
   const R = b.def.radius!;
   let best: Tree | null = null, bd = Infinity;
@@ -71,10 +72,10 @@ function woodcutter(g: Game, s: Settler, b: Building) {
     if (w.region[i] !== w.region[b.door]) return;
     if (d2 < bd) { bd = d2; best = t; }
   });
-  if (!best) { b.status = 'No trees in range'; plan(s, [A.wait(5)]); return; }
+  if (!best) { setStall(g, b, { kind: 'range', lack: 'trees' }); plan(s, [A.wait(5)]); return; }
   const tree: Tree = best;
   tree.reserved = true;
-  b.status = 'Felling trees';
+  setStatus(b, 'Felling trees');
   let felled = false;
   plan(s, [
     A.do(() => { exit(g, s); }),
@@ -138,8 +139,8 @@ function forester(g: Game, s: Settler, b: Building) {
     if (w.owner[i] !== b.owner || w.region[i] !== w.region[b.door]) continue;
     if (plantable(g, i, true)) { spot = i; break; }
   }
-  if (spot < 0) { b.status = 'No space to plant'; plan(s, [A.wait(6)]); return; }
-  b.status = 'Planting trees';
+  if (spot < 0) { setStall(g, b, { kind: 'range', lack: 'space' }, 'No space to plant'); plan(s, [A.wait(6)]); return; }
+  setStatus(b, 'Planting trees');
   const t = w.terrain[spot];
   const hh = w.h[spot] - WATER_LEVEL;
   plan(s, [
@@ -163,7 +164,7 @@ function forester(g: Game, s: Settler, b: Building) {
 }
 
 function stonecutter(g: Game, s: Settler, b: Building) {
-  if (outFull(b)) { b.status = 'Output storage full'; plan(s, [A.wait(3)]); return; }
+  if (outFull(b)) { setStall(g, b, { kind: 'full' }); plan(s, [A.wait(3)]); return; }
   const w = g.world;
   let best = null as import('./types').Stone | null, bd = Infinity;
   for (const st of g.stones.values()) {
@@ -174,10 +175,10 @@ function stonecutter(g: Game, s: Settler, b: Building) {
     if (d2 > b.def.radius! ** 2) continue;
     if (d2 < bd) { bd = d2; best = st; }
   }
-  if (!best) { b.status = 'No rocks in range'; plan(s, [A.wait(5)]); return; }
+  if (!best) { setStall(g, b, { kind: 'range', lack: 'rocks' }); plan(s, [A.wait(5)]); return; }
   const stone = best;
   stone.reserved++;
-  b.status = 'Cutting stone';
+  setStatus(b, 'Cutting stone');
   let done = false;
   plan(s, [
     A.do(() => { exit(g, s); }),
@@ -233,10 +234,10 @@ function shoreSpot(g: Game, b: Building, R: number, needFish: boolean): { land: 
 }
 
 function fisher(g: Game, s: Settler, b: Building) {
-  if (outFull(b)) { b.status = 'Output storage full'; plan(s, [A.wait(3)]); return; }
+  if (outFull(b)) { setStall(g, b, { kind: 'full' }); plan(s, [A.wait(3)]); return; }
   const spot = shoreSpot(g, b, b.def.radius!, true);
-  if (!spot) { b.status = 'No fish in range'; plan(s, [A.wait(6)]); return; }
-  b.status = 'Fishing';
+  if (!spot) { setStall(g, b, { kind: 'range', lack: 'fish' }); plan(s, [A.wait(6)]); return; }
+  setStatus(b, 'Fishing');
   const w = g.world;
   let caught = false;
   plan(s, [
@@ -257,7 +258,7 @@ function fisher(g: Game, s: Settler, b: Building) {
 }
 
 function hunter(g: Game, s: Settler, b: Building) {
-  if (outFull(b)) { b.status = 'Output storage full'; plan(s, [A.wait(3)]); return; }
+  if (outFull(b)) { setStall(g, b, { kind: 'full' }); plan(s, [A.wait(3)]); return; }
   const w = g.world;
   let best = null as import('./types').Animal | null, bd = Infinity;
   for (const a of g.animals.values()) {
@@ -266,10 +267,10 @@ function hunter(g: Game, s: Settler, b: Building) {
     if (d2 > b.def.radius! ** 2) continue;
     if (d2 < bd) { bd = d2; best = a; }
   }
-  if (!best) { b.status = 'No game in range'; plan(s, [A.wait(8)]); return; }
+  if (!best) { setStall(g, b, { kind: 'range', lack: 'game' }); plan(s, [A.wait(8)]); return; }
   const deer = best;
   deer.reserved = true;
-  b.status = 'Hunting';
+  setStatus(b, 'Hunting');
   let shot = false;
   const approach = () => A.do(() => {
     if (!deer.alive) return;
@@ -343,7 +344,7 @@ function farmer(g: Game, s: Settler, b: Building) {
   if (ripe && !outFull(b)) {
     const f = ripe;
     f.reserved = true;
-    b.status = 'Harvesting';
+    setStatus(b, 'Harvesting');
     plan(s, [
       A.do(() => { exit(g, s); }),
       A.walk(f.node),
@@ -369,7 +370,7 @@ function farmer(g: Game, s: Settler, b: Building) {
       if (sc < sd) { sd = sc; spot = i; }
     });
     if (spot >= 0) {
-      b.status = 'Sowing';
+      setStatus(b, 'Sowing');
       plan(s, [
         A.do(() => { exit(g, s); }),
         A.walk(spot),
@@ -385,7 +386,8 @@ function farmer(g: Game, s: Settler, b: Building) {
       return;
     }
   }
-  b.status = count ? 'Waiting for the grain to ripen' : 'No space for fields';
+  if (count) setStatus(b, 'Waiting for the grain to ripen');
+  else setStall(g, b, { kind: 'range', lack: 'space' }, 'No space for fields');
   plan(s, [A.wait(3)]);
 }
 
@@ -406,7 +408,7 @@ function vintner(g: Game, s: Settler, b: Building) {
     // pick the grapes; the vine stays and fruits again
     const f = ripe;
     f.reserved = true;
-    b.status = 'Picking grapes';
+    setStatus(b, 'Picking grapes');
     plan(s, [
       A.do(() => { exit(g, s); }),
       A.walk(f.node, true),
@@ -435,7 +437,7 @@ function vintner(g: Game, s: Settler, b: Building) {
       if (sc < sd) { sd = sc; spot = i; }
     });
     if (spot >= 0) {
-      b.status = 'Planting vines';
+      setStatus(b, 'Planting vines');
       plan(s, [
         A.do(() => { exit(g, s); }),
         A.walk(spot, true),
@@ -451,15 +453,16 @@ function vintner(g: Game, s: Settler, b: Building) {
       return;
     }
   }
-  b.status = count ? 'Waiting for the grapes to ripen' : 'No space for vines';
+  if (count) setStatus(b, 'Waiting for the grapes to ripen');
+  else setStall(g, b, { kind: 'range', lack: 'space' }, 'No space for vines');
   plan(s, [A.wait(3)]);
 }
 
 function waterman(g: Game, s: Settler, b: Building) {
-  if (outFull(b)) { b.status = 'Output storage full'; plan(s, [A.wait(3)]); return; }
+  if (outFull(b)) { setStall(g, b, { kind: 'full' }); plan(s, [A.wait(3)]); return; }
   const spot = shoreSpot(g, b, b.def.radius!, false);
-  if (!spot) { b.status = 'No water in range'; plan(s, [A.wait(6)]); return; }
-  b.status = 'Drawing water';
+  if (!spot) { setStall(g, b, { kind: 'range', lack: 'water' }); plan(s, [A.wait(6)]); return; }
+  setStatus(b, 'Drawing water');
   const w = g.world;
   plan(s, [
     A.do(() => { exit(g, s); }),

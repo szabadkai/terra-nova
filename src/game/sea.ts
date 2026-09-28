@@ -13,6 +13,7 @@ import { WATER_LEVEL } from './world';
 import { isSoldier } from './military';
 import { Need, availableAt, needsOf } from './economy';
 import { afloat, mendShip, shipFields, sinkStep, tradeShipsOf, warshipStep, warshipsOf } from './naval';
+import { setStall, setStatus } from './status';
 
 const SHIP_SPEED = 2.7; // nodes per second at full sail
 const WARSHIP_SPEED = 3.1; // sail and oars
@@ -506,12 +507,12 @@ export function shipwrightThink(g: Game, s: Settler, b: Building) {
   const w = g.world;
   const war = b.shipKind === 'war';
   if (war ? warshipsOf(g, b.owner) >= MAX_WARSHIPS : tradeShipsOf(g, b.owner) >= MAX_SHIPS) {
-    b.status = war ? 'The navy is complete' : 'The fleet is complete'; b.working = false; plan(s, [A.wait(5)]); return;
+    setStatus(b, war ? 'The navy is complete' : 'The fleet is complete'); b.working = false; plan(s, [A.wait(5)]); return;
   }
-  if (b.stock.board <= 0) { b.status = 'Waiting for boards'; b.working = false; plan(s, [A.wait(3)]); return; }
+  if (b.stock.board <= 0) { setStall(g, b, { kind: 'input', goods: ['board'] }); b.working = false; plan(s, [A.wait(3)]); return; }
   const iron = warshipWantsIron(b);
-  if (iron && b.stock.iron <= 0) { b.status = 'Waiting for iron'; b.working = false; plan(s, [A.wait(3)]); return; }
-  b.status = `Building a ${war ? 'warship' : 'ship'} (${Math.round(b.shipProgress * 100)}%)`;
+  if (iron && b.stock.iron <= 0) { setStall(g, b, { kind: 'input', goods: ['iron'] }); b.working = false; plan(s, [A.wait(3)]); return; }
+  setStatus(b, `Building a ${war ? 'warship' : 'ship'} (${Math.round(b.shipProgress * 100)}%)`);
   b.working = true;
   // work from the footprint edge closest to the slipway
   const dx = w.nx(b.dock), dz = w.ny(b.dock);

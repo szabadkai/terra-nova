@@ -1,4 +1,5 @@
 import type { BuildingDef, BuildingType, Good, Job } from './defs';
+import type { Stall } from './status';
 
 export type TreeState = 'grow' | 'mature' | 'falling' | 'fallen';
 
@@ -141,7 +142,11 @@ export interface Building {
   working: boolean;
   workT: number;
   paused: boolean;
+  /** what it is doing, for the panel */
   status: string;
+  /** why it has stopped, while it is stuck (see status.ts), and since when (game time) */
+  stall: Stall | null;
+  stallT: number;
   // military
   garrison: number[];
   soldiersIncoming: number;
