@@ -533,7 +533,8 @@ export class GrassRenderer {
   /** one instanced mesh per patch of land */
   mesh = new THREE.Group();
   enabled = true;
-  private t = 6;
+  // the first look comes straight away (the world may have changed since the renderer was made)
+  private t = 0;
   private geo: THREE.BufferGeometry;
   private mat: THREE.Material;
   private cols: number;
