@@ -53,17 +53,27 @@ export function resetPose(p: Pose): Pose {
 /** Whole turns count for nothing, so blending a spin or a flip in or out takes the short way round. */
 const wrap = (a: number) => a - Math.round(a / TAU) * TAU;
 
-function blendPose(p: Pose, a: Pose, e: number) {
+export function blendPose(p: Pose, a: Pose, e: number) {
   for (const k of KEYS) {
     const v = TURNS.has(k) ? wrap(a[k]) : a[k];
     p[k] += (v - p[k]) * e;
   }
 }
 
+/** Ease a pose in from an earlier one: p ends up e of the way from `from` to where it was. */
+export function mixPose(p: Pose, from: Pose, e: number) {
+  for (const k of KEYS) p[k] = from[k] + (p[k] - from[k]) * e;
+}
+
+export function copyPose(to: Pose, from: Pose) {
+  for (const k of KEYS) to[k] = from[k];
+  return to;
+}
+
 const ARM = -RIG.handY;
 
 /** Point an arm at a spot in body space (settler units), stretching it a little when it falls short. */
-function reach(p: Pose, side: -1 | 1, x: number, y: number, z: number) {
+export function reach(p: Pose, side: -1 | 1, x: number, y: number, z: number) {
   const dx = x - side * RIG.shoulderX, dy = y - RIG.shoulderY;
   const d = Math.hypot(dx, dy, z) || 1e-6;
   const g = Math.asin(clamp(dx / d, -1, 1));
@@ -74,14 +84,14 @@ function reach(p: Pose, side: -1 | 1, x: number, y: number, z: number) {
 }
 
 /** Piecewise smooth keyframes: v[i] at t[i], eased in between, held outside. */
-function kf(x: number, t: readonly number[], v: readonly number[]) {
+export function kf(x: number, t: readonly number[], v: readonly number[]) {
   if (x <= t[0]) return v[0];
   for (let i = 1; i < t.length; i++) if (x < t[i]) return v[i - 1] + (v[i] - v[i - 1]) * sm(t[i - 1], t[i], x);
   return v[v.length - 1];
 }
 
 /** 1 inside [a, b], easing over r at both ends. */
-const win = (x: number, a: number, b: number, r: number) => sm(a - r, a, x) * (1 - sm(b, b + r, x));
+export const win = (x: number, a: number, b: number, r: number) => sm(a - r, a, x) * (1 - sm(b, b + r, x));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /** A spin that winds up, turns at about `rate` and slows to a stop after whole turns when the act ends. */

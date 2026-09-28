@@ -652,6 +652,23 @@ function furnace(mb: MB, x: number, z: number, r = 0.3, stackH = 1.9, glow = 'gl
   mb.anchors.chimneys.push(new THREE.Vector3(x + r * 0.45, stackH + 0.12, sz));
 }
 
+/** Smelter's yard kit: a pair of bellows on a stand blowing into the furnace's right flank (the top
+ *  board is the 'bellows' mover, hinged at the nozzle, that work.ts pumps), and a clay ingot mould
+ *  in front of the furnace mouth. */
+function smeltYard(mb: MB, fx: number, fz: number) {
+  const bx = fx + 0.31, bz = fz + 0.15;
+  for (const px of [0.05, 0.17]) mb.add('timber', box(0.05, 0.18, 0.18), bx + px, 0.09, bz);
+  mb.add('planks', box(0.22, 0.025, 0.18, 3), bx + 0.1, 0.19, bz);
+  mb.add('iron', cone(0.028, 0.1, 6), bx - 0.03, 0.21, bz, 0, 0, Math.PI / 2);
+  const top = mb.mover('bellows', bx, 0.2, bz, 'z');
+  top.add('dark', box(0.2, 0.045, 0.16), 0.1, 0.022, 0);
+  top.add('planks', box(0.22, 0.02, 0.18, 3), 0.11, 0.05, 0);
+  top.add('timber', box(0.11, 0.025, 0.025), 0.26, 0.05, 0);
+  // the mould: a block of fired clay with an ingot-shaped hollow
+  mb.add('stoneDark', box(0.3, 0.07, 0.17, 3), fx, 0.035, fz + 0.82);
+  mb.add('dark', box(0.2, 0.012, 0.09), fx, 0.066, fz + 0.82);
+}
+
 /** Open hearth on a brick base with a grill and glowing coals, and an anvil on a stump nearby. */
 function hearth(mb: MB, x: number, z: number) {
   mb.add('brick', wallPrism(0.5, 0.42, 0.32, { r: 0.12, batter: 0.03, wobble: 0.004, cap: true }), x, 0.02, z);
@@ -680,13 +697,17 @@ function mound(mb: MB, seed: number, r = 1.3) {
   boulder(mb, -0.7, 0.0, 0.7, 0.14, seed + 9);
 }
 
-/** Mine railway: sleepers, rails and a tub of ore coming out of the entrance at z0. */
+/** Mine railway: sleepers, rails and a tub of ore at the end of them, out of the entrance at z0.
+ *  The tub ('tub', pivot on its front axle) and its load ('tubore') are movers: work.ts rolls the
+ *  tub in and out of the adit and tips it. */
 function railway(mb: MB, z0: number, ore: string) {
   for (const s of [-1, 1]) mb.add('iron', box(0.022, 0.022, 0.95), s * 0.12, 0.03, z0 + 0.45);
   for (let k = 0; k < 5; k++) mb.add('timber', box(0.36, 0.025, 0.06), 0, 0.012, z0 + 0.05 + k * 0.2);
-  mb.add('planks', box(0.3, 0.16, 0.36, 3), 0, 0.15, z0 + 0.72);
-  mb.add(ore, sphere(0.14, 8, 6, Math.PI * 2, Math.PI / 2), 0, 0.22, z0 + 0.72);
-  for (const s of [-1, 1]) for (const zz of [z0 + 0.6, z0 + 0.84]) mb.add('iron', new THREE.CylinderGeometry(0.05, 0.05, 0.03, 8), s * 0.16, 0.06, zz, 0, 0, Math.PI / 2);
+  const ax = z0 + 0.84;
+  const tub = mb.mover('tub', 0, 0.06, ax, 'x');
+  tub.add('planks', box(0.3, 0.16, 0.36, 3), 0, 0.09, -0.12);
+  for (const s of [-1, 1]) for (const zz of [-0.24, 0]) tub.add('iron', new THREE.CylinderGeometry(0.05, 0.05, 0.03, 8), s * 0.16, 0, zz, 0, 0, Math.PI / 2);
+  mb.mover('tubore', 0, 0.06, ax, 'x').add(ore, sphere(0.14, 8, 6, Math.PI * 2, Math.PI / 2), 0, 0.16, -0.12);
 }
 
 // ------------------------------------------------------------------ building designs
@@ -956,6 +977,10 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.add('glowFire', halfDisc(0.09, 0.02), 0.85, 0.12, 0.4);
     mb.anchors.fires.push(new THREE.Vector3(0.85, 0.2, 0.52));
     chimney(mb, 0.85, 0.55, -0.12, 0.45, 0.14);
+    // the kneading table
+    mb.add('planks', box(0.42, 0.03, 0.22, 3), 0.2, 0.27, 0.64);
+    for (const [lx, lz] of [[-0.18, -0.08], [0.18, -0.08], [-0.18, 0.08], [0.18, 0.08]]) mb.add('timber', box(0.03, 0.26, 0.03), 0.2 + lx, 0.13, 0.64 + lz);
+    mb.add('canvas', box(0.16, 0.005, 0.12), 0.14, 0.287, 0.63);
     // peel and firewood
     mb.add('timber', box(0.025, 0.02, 0.7), 1.3, 0.3, 0.3, 0.3, 0.3, 0);
     logPile(mb, 1.25, 0, -0.55, 2, 0.5, Math.PI / 2);
@@ -1026,23 +1051,20 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.anchors.piles.push(new THREE.Vector3(0.1, 0, 1.0));
   },
   ironsmelter(mb, owner) {
-    // rubble smelting house with a dormer, a round brick furnace and tall stack, cauldron and ore
+    // rubble smelting house with a dormer, a round brick furnace and tall stack, bellows, mould and ore
     house(mb, { w: 1.4, d: 1.1, wallH: 0.84, roofH: 0.62, x: -0.5, z: -0.45, roofMat: `roof${owner}`, door: 0.2, wins: [-0.35], chim: null, dormer: -0.4 });
     furnace(mb, 0.72, 0.15, 0.3, 1.95);
-    mb.add('iron', new THREE.SphereGeometry(0.17, 12, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), 0.35, 0.3, 0.72);
-    for (let k = 0; k < 3; k++) mb.add('iron', box(0.02, 0.3, 0.02), 0.35 + Math.sin(k * 2.1) * 0.13, 0.15, 0.72 + Math.cos(k * 2.1) * 0.13);
-    mb.add('glowFire', new THREE.CircleGeometry(0.15, 12), 0.35, 0.3, 0.72, 0, -Math.PI / 2, 0);
+    smeltYard(mb, 0.72, 0.15);
     mb.add('ironore', sphere(0.2, 8, 6, Math.PI * 2, Math.PI / 2), -1.05, 0, 0.62);
     mb.add('coal', sphere(0.17, 8, 6, Math.PI * 2, Math.PI / 2), -0.72, 0, 0.72);
     barrel(mb, 1.1, 0, 0.75, 0.9);
     mb.anchors.piles.push(new THREE.Vector3(0.15, 0, 1.05));
   },
   goldsmelter(mb, owner) {
-    // sandstone house, a brick furnace glowing gold, a crucible and a basket of ore
+    // sandstone house, a brick furnace glowing gold, bellows, a mould and a basket of ore
     house(mb, { w: 1.4, d: 1.1, wallH: 0.84, roofH: 0.62, x: -0.5, z: -0.45, wall: 'sandstone', roofMat: `roof${owner}`, door: 0.2, wins: [-0.35], chim: null, dormer: -0.4 });
     furnace(mb, 0.72, 0.15, 0.3, 1.8, 'glowGold');
-    mb.add('terracotta', cyl(0.12, 0.08, 0.14, 10), 0.35, 0.02, 0.72);
-    mb.add('glowGold', new THREE.CircleGeometry(0.1, 10), 0.35, 0.161, 0.72, 0, -Math.PI / 2, 0);
+    smeltYard(mb, 0.72, 0.15);
     const basket = new THREE.LatheGeometry([[0.08, 0], [0.14, 0.04], [0.16, 0.12]].map(([r, y]) => new THREE.Vector2(r, y)), 10);
     mb.add('wood', basket, -0.9, 0.0, 0.7);
     mb.add('goldore', sphere(0.14, 8, 6, Math.PI * 2, Math.PI / 2), -0.9, 0.06, 0.7);
@@ -1082,6 +1104,15 @@ const designs: Partial<Record<BuildingType, Design>> = {
     }
     for (let k = 0; k < 3; k++) mb.add('metal', box(0.025, 0.36, 0.01), 0.3 + k * 0.08, 0.19, 0.62, 0, 0, 0.1);
     mb.add('timber', box(0.36, 0.04, 0.04), 0.38, 0.32, 0.64);
+    // a grindstone in a trough, turned by a crank ('grind' spins while the smith sharpens a blade)
+    const gx = 0.86, gz = 0.76;
+    mb.add('wood', box(0.22, 0.1, 0.12, 3), gx, 0.05, gz);
+    mb.add('water', box(0.18, 0.01, 0.08), gx, 0.1, gz);
+    for (const s of [-1, 1]) mb.add('timber', box(0.04, 0.26, 0.04), gx, 0.13, gz + s * 0.07);
+    const wheel = mb.mover('grind', gx, 0.22, gz, 'z');
+    wheel.add('stone', new THREE.CylinderGeometry(0.12, 0.12, 0.045, 16), 0, 0, 0, Math.PI / 2, 0, 0);
+    wheel.add('iron', box(0.012, 0.012, 0.2), 0, 0, 0);
+    wheel.add('iron', box(0.07, 0.012, 0.012), 0.035, 0, 0.1);
     mb.anchors.piles.push(new THREE.Vector3(0.1, 0, 1.0));
   },
   vineyard(mb, owner) {
@@ -1329,10 +1360,16 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.add('timber', box(0.07, 0.08, 0.85), 1.02, 0.34, -0.55);
     for (const pz of [-0.9, -0.2]) mb.add('timber', box(0.5, 0.06, 0.07), 0.82, 0.34, pz);
     for (const pz of [-0.85, -0.25]) { mb.add('dark', box(0.05, 0.3, 0.05), 0.62, 0.15, pz); mb.add('dark', box(0.05, 0.3, 0.05), 1.02, 0.15, pz); }
-    for (const px of [0.62, 1.02]) { mb.add('timber', box(0.06, 0.5, 0.06), px, 0.6, -0.45); mb.add('timber', box(0.05, 0.45, 0.05), px, 0.58, -0.25, 0, -0.55, 0); }
-    mb.add('timber', box(0.52, 0.06, 0.08), 0.82, 0.86, -0.45);
-    mb.add('timber', box(0.06, 0.06, 0.95), 0.82, 0.05, 0.55, 0, 0, 0.0);
-    mb.add('rope', cyl(0.05, 0.05, 0.42, 8), 0.82, 0.48, -0.5, 0, 0, Math.PI / 2);
+    // the catapult on the stocks gains a part with every cycle (buildings.ts shows 'cat1'..'cat3'
+    // as b.shipProgress rises): the uprights, then the cross beam and the skein, then the arm,
+    // which lies on the ground in front ('arm0') until it is fitted
+    const c1 = mb.mover('cat1', 0, 0, 0, 'y'), c2 = mb.mover('cat2', 0, 0, 0, 'y'), c3 = mb.mover('cat3', 0, 0, 0, 'y');
+    for (const px of [0.62, 1.02]) { c1.add('timber', box(0.06, 0.5, 0.06), px, 0.6, -0.45); c1.add('timber', box(0.05, 0.45, 0.05), px, 0.58, -0.25, 0, -0.55, 0); }
+    c2.add('timber', box(0.52, 0.06, 0.08), 0.82, 0.86, -0.45);
+    c2.add('rope', cyl(0.05, 0.05, 0.42, 8), 0.82, 0.48, -0.5, 0, 0, Math.PI / 2);
+    c3.add('timber', box(0.06, 0.06, 0.62), 0.82, 0.66, -0.34, -0.95, 0, 0);
+    c3.add('wood', cyl(0.07, 0.05, 0.05, 8), 0.82, 0.93, -0.12);
+    mb.mover('arm0', 0, 0, 0, 'y').add('timber', box(0.06, 0.06, 0.95), 0.82, 0.05, 0.55);
     for (const [px, pz, ry] of [[-0.1, 0.25, 0.25], [0.12, 0.3, -0.2]]) mb.add('dark', new THREE.TorusGeometry(0.16, 0.03, 6, 14), px, 0.19, pz, ry, 0, 0.35);
     mb.add('planks', box(0.7, 0.06, 0.4, 2), -0.6, 0.5, 0.65);
     for (const px of [-0.9, -0.3]) mb.add('timber', box(0.05, 0.5, 0.05), px, 0.25, 0.65);

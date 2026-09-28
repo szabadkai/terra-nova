@@ -1164,3 +1164,80 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
     axe, pickaxe, saw, hammer, shovel, scythe, rod,
   };
 }
+
+// ------------------------------------------------------------------ workshop props
+/** What a worker handles in the yard (work.ts): smiths' tongs and the hot blanks they shape, the
+ *  smelter's crucible and its melt, the baker's peel and dough, the butcher's cleaver, a bow stave
+ *  and a practice arrow. Blanks lie flat along x; tongs, cleaver and stave rise along +y from the grip;
+ *  the crucible and the peel sit at the origin with their handles running back along -z. */
+export type WorkGeo =
+  | 'tongs' | 'crucible' | 'melt' | 'stream' | 'peel' | 'dough' | 'cleaver' | 'stave' | 'arrow' | 'blank'
+  | 'h_axe' | 'h_pickaxe' | 'h_saw' | 'h_hammer' | 'h_shovel' | 'h_scythe' | 'h_rod' | 'h_sword';
+
+export function buildWorkGeos(): Record<WorkGeo, THREE.BufferGeometry> {
+  const c = (g: THREE.BufferGeometry, hex: number, v = 0.06) => colorize(prep(g), (x, y, z) => {
+    const b = lin(hex);
+    const k = 1 - v + hash2(Math.round(x * 90), Math.round(y * 90) + Math.round(z * 90) * 3, 2) * v * 2;
+    return [b[0] * k, b[1] * k, b[2] * k];
+  });
+  const bx = (w: number, h: number, d: number, x: number, y: number, z: number, hex: number, rz = 0, rx = 0) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    if (rx) g.rotateX(rx);
+    if (rz) g.rotateZ(rz);
+    g.translate(x, y, z);
+    return c(g, hex);
+  };
+  const IRON = 0x3c3d42, STEEL = 0x8e949a, WOOD = 0x7a5a38;
+  // tongs: two long arms pivoting on a rivet, the jaws closing at the top
+  const tongs = merge([
+    bx(0.009, 0.24, 0.009, -0.009, 0.12, 0, IRON, 0.035), bx(0.009, 0.24, 0.009, 0.009, 0.12, 0, IRON, -0.035),
+    bx(0.008, 0.07, 0.009, 0.004, 0.27, 0, IRON, 0.12), bx(0.008, 0.07, 0.009, -0.004, 0.27, 0, IRON, -0.12),
+    (() => { const g = new THREE.CylinderGeometry(0.009, 0.009, 0.024, 6); g.rotateZ(Math.PI / 2); g.translate(0, 0.235, 0); return c(g, 0x55565c); })(),
+  ]);
+  // a clay crucible with a long iron shank to hold it by
+  const crucible = merge([
+    (() => { const g = new THREE.CylinderGeometry(0.048, 0.034, 0.07, 10, 1, true); g.translate(0, 0.035, 0); return c(g, 0x5a4a44, 0.12); })(),
+    (() => { const g = new THREE.CircleGeometry(0.034, 10); g.rotateX(Math.PI / 2); return c(g, 0x4a3c36); })(),
+    (() => { const g = new THREE.TorusGeometry(0.05, 0.007, 4, 12); g.rotateX(Math.PI / 2); g.translate(0, 0.045, 0); return c(g, IRON); })(),
+    bx(0.012, 0.012, 0.2, 0, 0.045, -0.15, IRON),
+    bx(0.028, 0.028, 0.07, 0, 0.045, -0.28, WOOD),
+  ]);
+  const melt = (() => { const g = new THREE.CircleGeometry(0.043, 12); g.rotateX(-Math.PI / 2); g.translate(0, 0.058, 0); return c(g, 0x6a3a1a, 0); })();
+  // a molten stream one unit long rising from where it lands; scaled to the drop in the scene
+  const stream = (() => { const g = new THREE.CylinderGeometry(0.012, 0.018, 1, 6, 1, true); g.translate(0, 0.5, 0); return c(g, 0x6a3a1a, 0); })();
+  // the baker's peel: a flat blade on a long pole
+  const peel = merge([
+    (() => { const g = new THREE.CylinderGeometry(0.075, 0.075, 0.01, 12, 1, false, -Math.PI * 0.7, Math.PI * 1.4); g.scale(1, 1, 1.15); return c(g, 0xb89060, 0.1); })(),
+    bx(0.07, 0.01, 0.05, 0, 0, -0.085, 0xb89060),
+    (() => { const g = new THREE.CylinderGeometry(0.009, 0.01, 0.6, 6); g.rotateX(Math.PI / 2); g.translate(0, 0.005, -0.4); return c(g, WOOD); })(),
+  ]);
+  const dough = (() => { const g = blob(0.07, 0, 0.03, 0, 11, 1, 0.5); return c(g, 0xf0dcb0, 0.05); })();
+  const cleaver = merge([
+    bx(0.022, 0.1, 0.022, 0, 0.05, 0, 0x5a3a24),
+    bx(0.075, 0.07, 0.006, 0.03, 0.125, 0, STEEL),
+  ]);
+  const stave = (() => {
+    const pts: THREE.Vector3[] = [];
+    for (let k = 0; k <= 8; k++) { const t = k / 8; pts.push(new THREE.Vector3(Math.sin(t * Math.PI) * 0.012, t * 0.42, 0)); }
+    return c(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 10, 0.009, 5, false), 0xa87a48, 0.1);
+  })();
+  const arrow = merge([
+    bx(0.006, 0.006, 0.26, 0, 0, 0, 0xc8a878),
+    (() => { const g = new THREE.ConeGeometry(0.01, 0.03, 4); g.rotateX(Math.PI / 2); g.translate(0, 0, 0.14); return c(g, STEEL); })(),
+    bx(0.002, 0.018, 0.04, 0, 0.006, -0.11, 0xe8e0d0), bx(0.018, 0.002, 0.04, 0, 0, -0.11, 0xe8e0d0),
+  ]);
+  const blank = bx(0.15, 0.03, 0.045, 0, 0.015, 0, 0x5a5e64);
+  // the metal of each tool as it comes off the anvil, before it gets its handle
+  const head = (parts: THREE.BufferGeometry[]) => merge(parts);
+  return {
+    tongs, crucible, melt, stream, peel, dough, cleaver, stave, arrow, blank,
+    h_axe: head([bx(0.07, 0.014, 0.085, 0, 0.007, 0, STEEL), bx(0.03, 0.03, 0.03, -0.045, 0.015, 0, STEEL)]),
+    h_pickaxe: head([bx(0.2, 0.02, 0.024, 0, 0.012, 0, STEEL, 0), bx(0.03, 0.032, 0.03, 0, 0.016, 0, STEEL)]),
+    h_saw: head([bx(0.26, 0.006, 0.06, 0, 0.003, 0, STEEL)]),
+    h_hammer: head([bx(0.08, 0.045, 0.045, 0, 0.022, 0, 0x6a6e72)]),
+    h_shovel: head([bx(0.08, 0.012, 0.1, 0, 0.006, 0, STEEL), bx(0.02, 0.02, 0.05, 0, 0.01, -0.07, STEEL)]),
+    h_scythe: head([bx(0.2, 0.01, 0.02, 0, 0.005, 0, STEEL, 0), bx(0.05, 0.01, 0.018, 0.11, 0.005, 0.012, STEEL)]),
+    h_rod: head([bx(0.06, 0.012, 0.012, 0, 0.006, 0, STEEL), bx(0.012, 0.012, 0.03, 0.03, 0.006, 0.015, STEEL)]),
+    h_sword: head([bx(0.34, 0.008, 0.028, 0.02, 0.004, 0, 0xc8ccd0), bx(0.05, 0.012, 0.012, -0.16, 0.006, 0, STEEL)]),
+  };
+}

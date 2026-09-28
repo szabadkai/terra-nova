@@ -1,6 +1,7 @@
 // Instanced settler renderer: chibi-proportioned people assembled from posed parts,
 // with per-settler looks (hair, skin, clothes), job hats and aprons, blinking and idle fidgets;
-// settlers with nothing to do take up a pastime (idle.ts).
+// settlers with nothing to do take up a pastime (idle.ts), and workshop workers come out to work
+// in the yard while their workshop is in view (work.ts).
 import * as THREE from 'three';
 import { GOODS, Good, Job } from '../game/defs';
 import type { Game } from '../game/game';
@@ -13,6 +14,7 @@ import { HAIR_STYLES, HATS, HairStyle, Hat, RIG, buildSettlerGeos } from './sett
 import { LOD_PIXELS, LodPair, lodView, simplify } from './lod';
 import { commitInstances } from './instancing';
 import { IdleDirector, Pose, resetPose } from './idle';
+import { WorkDirector } from './work';
 
 /** Settlers are drawn a little larger than life (as in the original) so they read well. */
 const SCALE = 1.3;
@@ -369,6 +371,8 @@ export class SettlersRenderer {
   private P: Pose = resetPose({} as Pose);
   /** pastimes for settlers with nothing to do */
   idle: IdleDirector;
+  /** workshop workers at work in their yards */
+  work: WorkDirector;
   // scratch
   private mBase = new THREE.Matrix4();
   private mBody = new THREE.Matrix4();
@@ -413,6 +417,8 @@ export class SettlersRenderer {
     // the pastimes' props (fiddles, balls) are few and small: one level of detail
     this.idle = new IdleDirector(game, SCALE, (geo, cap, tinted) => new PropBatch(geo, mat, cap, tinted));
     this.group.add(this.idle.group);
+    this.work = new WorkDirector(game, SCALE, goodGeos);
+    this.group.add(this.work.group);
   }
 
   private all(): Batch[] {
@@ -445,32 +451,41 @@ export class SettlersRenderer {
     if (this.playerCols.length !== g.players.length) this.playerCols = g.players.map((p) => new THREE.Color(BANNER_COLORS[p.id] ?? p.color));
     const P = this.P;
     this.idle.begin(camera);
+    this.work.begin();
     let count = 0;
     for (const s of g.settlers.values()) {
-      if ((s.hidden && !s.aboard) || s.job === 'donkey' || s.job === 'catapult') continue;
+      if (s.job === 'donkey' || s.job === 'catapult') continue;
+      // indoors: only a workshop worker out at work in his yard is drawn (the director poses him)
+      const shot = s.hidden && !s.aboard ? (s.inside ? this.work.shot(s, P) : null) : null;
+      if (s.hidden && !s.aboard && !shot) continue;
       if (count >= this.cap) break;
+      const sx = shot ? shot.x : s.x, sz = shot ? shot.z : s.z;
       // passengers stand on the deck of their ship
-      const y0 = s.aboard ? shipDeckY(time, s.aboard) - 0.02 + DECK_H : w.heightAt(s.x, s.z);
-      this.sphere.center.set(s.x, y0 + 0.35, s.z);
+      const y0 = shot ? shot.y : s.aboard ? shipDeckY(time, s.aboard) - 0.02 + DECK_H : w.heightAt(s.x, s.z);
+      this.sphere.center.set(sx, y0 + 0.35, sz);
       if (!V.frustum.intersectsSphere(this.sphere)) continue;
-      if (!w.explored[w.idx(Math.round(s.x), Math.round(s.z))] && s.owner !== g.local) continue;
+      if (!w.explored[w.idx(Math.round(sx), Math.round(sz))] && s.owner !== g.local) continue;
       count++;
-      this.visibleList.push({ s, x: s.x, y: y0, z: s.z });
+      if (!shot) this.visibleList.push({ s, x: s.x, y: y0, z: s.z });
       // the whole settler takes one level, so his parts always match
-      const lv = V.px(s.x, y0 + 0.5, s.z) * FAR_ERR * SCALE < LOD_PIXELS ? 1 : 0;
+      const lv = V.px(sx, y0 + 0.5, sz) * FAR_ERR * SCALE < LOD_PIXELS ? 1 : 0;
       const L = this.look(s);
       const moving = s.next >= 0;
-      let ph = this.phase.get(s.id) ?? s.seed * 10;
-      // short legs take quick little steps
-      if (moving) ph += dt * Math.PI * 2 * 1.6 / Math.max(0.3, s.stepDur * 1.1);
-      this.phase.set(s.id, ph);
-      pose(s, ph, moving, time, P);
-      const heading = this.idle.apply(s, P, moving, y0);
+      let heading: number;
+      if (shot) heading = shot.heading;
+      else {
+        let ph = this.phase.get(s.id) ?? s.seed * 10;
+        // short legs take quick little steps
+        if (moving) ph += dt * Math.PI * 2 * 1.6 / Math.max(0.3, s.stepDur * 1.1);
+        this.phase.set(s.id, ph);
+        pose(s, ph, moving, time, P);
+        heading = this.idle.apply(s, P, moving, y0);
+      }
 
       // --- skeleton
       const sink = s.dead ? Math.max(0, s.deadT - 3) * 0.15 : 0;
       this.q.setFromEuler(this.e.set(0, heading + P.spin, 0));
-      this.mBase.compose(this.v.set(s.x, y0 + P.bob - sink, s.z), this.q, this.sc.set(SCALE * (1 + P.squash * 0.5), SCALE * (1 - P.squash), SCALE * (1 + P.squash * 0.5)));
+      this.mBase.compose(this.v.set(sx, y0 + P.bob - sink, sz), this.q, this.sc.set(SCALE * (1 + P.squash * 0.5), SCALE * (1 - P.squash), SCALE * (1 + P.squash * 0.5)));
       if (P.shiftX) this.mBase.multiply(this.mA.makeTranslation(P.shiftX, 0, 0));
       if (P.flip || P.wheel) this.rotAbout(this.mBase, 0, P.pivot, 0, P.flip, 0, P.wheel);
       if (P.lie > 0) this.mBase.multiply(this.mA.makeRotationX(-P.lie * Math.PI / 2 * 0.95));
@@ -520,9 +535,12 @@ export class SettlersRenderer {
       }
       // --- tool
       let tool = TOOL[s.job];
-      if (s.job === 'waterman' && s.carrying !== 'water') tool = undefined;
-      if (s.carrying && s.job !== 'waterman') tool = undefined;
-      if (this.idle.hidesTool) tool = undefined;
+      if (shot) tool = shot.tool === undefined ? tool : shot.tool ?? undefined;
+      else {
+        if (s.job === 'waterman' && s.carrying !== 'water') tool = undefined;
+        if (s.carrying && s.job !== 'waterman') tool = undefined;
+        if (this.idle.hidesTool) tool = undefined;
+      }
       if (tool) {
         const hand = tool === 'bow' ? this.mArmL : this.mArmR;
         const m = this.mB.copy(hand).multiply(this.mA.makeTranslation(0, RIG.handY, 0.01));
@@ -535,22 +553,25 @@ export class SettlersRenderer {
         }
         this.tools.get(tool)!.add(lv, m);
       }
-      if (s.job === 'swordsman' && !this.idle.hidesShield) {
+      if (s.job === 'swordsman' && !shot && !this.idle.hidesShield) {
         const m = this.mB.copy(this.mArmL).multiply(this.mA.makeTranslation(-0.05, -0.11, 0.02));
         m.multiply(this.mA.makeRotationY(-1.05));
         this.shields.add(lv, m, pc);
       }
       // --- carried good on the right shoulder, long goods slung diagonally
-      if (s.carrying) {
+      const carrying = shot ? shot.carry : s.carrying;
+      if (carrying) {
         const m = this.mB.copy(body).multiply(this.mA.makeTranslation(0.17, 0.425, -0.01));
-        if (s.carrying === 'log' || s.carrying === 'board') m.multiply(this.mA.makeRotationFromEuler(this.e.set(0, 1.25, 0.45)));
+        if (carrying === 'log' || carrying === 'board') m.multiply(this.mA.makeRotationFromEuler(this.e.set(0, 1.25, 0.45)));
         else m.multiply(this.mA.makeTranslation(0, 0.02, 0));
-        this.carried.get(s.carrying)!.add(lv, m);
+        this.carried.get(carrying)!.add(lv, m);
       }
-      this.idle.props(s, body, this.mArmL);
+      if (shot) this.work.props(body, this.mArmL, this.mArmR);
+      else this.idle.props(s, body, this.mArmL);
     }
     for (const b of this.all()) b.finish();
     this.idle.end();
+    this.work.end();
     if (this.phase.size > g.settlers.size + 500) {
       for (const id of this.phase.keys()) if (!g.settlers.has(id)) { this.phase.delete(id); this.looks.delete(id); }
     }

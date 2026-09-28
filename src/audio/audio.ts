@@ -431,6 +431,25 @@ export class Audio {
       case 'splash':
         this.noise(t, 0.3, 'bandpass', 1500, 1, 0.3, out, 500);
         break;
+      case 'hiss':
+        // hot iron in the water: a sharp sizzle that dies away
+        this.noise(t, 0.9, 'highpass', 5000, 0.7, 0.22, out, 2500);
+        this.noise(t, 0.35, 'bandpass', 3200, 1.5, 0.12, out);
+        break;
+      case 'bellows':
+        // a breath of air through the nozzle
+        this.noise(t, 0.3, 'bandpass', 380, 1.2, 0.3, out, 180);
+        break;
+      case 'grind':
+        // steel on a turning whetstone
+        this.noise(t, 0.4, 'bandpass', 4200, 4, 0.14, out, 3600);
+        this.tone(t, 2600, 0.35, 'sawtooth', 0.012, out, 2300);
+        break;
+      case 'rumble':
+        // an ore tub rolling on its rails
+        this.noise(t, 0.9, 'lowpass', 260, 1, 0.3, out);
+        this.tone(t, 70, 0.9, 'triangle', 0.08, out, 60, 0.2);
+        break;
       case 'harvest':
         this.noise(t, 0.25, 'bandpass', 3000, 2, 0.15, out, 1500);
         break;

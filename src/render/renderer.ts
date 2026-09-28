@@ -207,6 +207,9 @@ export class GameRenderer {
     this.particles = new Particles();
     this.scene.add(this.particles.group);
     this.settlers.idle.fx = this.particles;
+    this.settlers.work.fx = this.particles;
+    this.settlers.work.host = this.buildings;
+    this.settlers.work.sound = (n, x, z, v) => this.sound?.(n, x, z, v);
     this.ships = new ShipsRenderer(game, this.piles, this.particles);
     this.scene.add(this.ships.group);
     this.signs = new SignsRenderer(game);
@@ -772,14 +775,16 @@ export class GameRenderer {
         }
       }
       if (b.working) {
+        // a worker out in the yard makes his own sparks and noise, in time with his hammer (work.ts)
+        const atWork = this.settlers.work.shown.has(b.id);
         for (const f of v.anchors.fires) {
           if (Math.random() < 0.35) P.fire(b.cx + f.x, by + f.y, b.cz + f.z, 0.25);
-          if ((b.type === 'toolsmith' || b.type === 'weaponsmith') && Math.random() < 0.25) {
+          if ((b.type === 'toolsmith' || b.type === 'weaponsmith') && !atWork && Math.random() < 0.25) {
             P.sparks(b.cx + 0.6, by + 0.35, b.cz + 0.2, 5);
             this.sound?.('anvil', b.cx, b.cz, 0.5);
           }
         }
-        if (b.type === 'sawmill' && Math.random() < 0.4) P.emit({ x: b.cx + 0.97, y: by + 0.4, z: b.cz + 0.15, vy: 0.5, spread: 0.8, life: 0.8, size: 0.04, color: [0.9, 0.78, 0.55], gravity: 2, count: 3, kind: 1 });
+        if (b.type === 'sawmill' && !atWork && Math.random() < 0.4) P.emit({ x: b.cx + 0.97, y: by + 0.4, z: b.cz + 0.15, vy: 0.5, spread: 0.8, life: 0.8, size: 0.04, color: [0.9, 0.78, 0.55], gravity: 2, count: 3, kind: 1 });
         if (b.type === 'sawmill' && Math.random() < 0.07) this.sound?.('saw', b.cx, b.cz, 0.5);
       }
     }

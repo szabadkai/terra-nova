@@ -14,6 +14,7 @@ import { hash2 } from '../core/rng';
 import { burnPose, collapseAt } from './demolition';
 import { getBurnMaterial } from './materials';
 import { ScreenLod } from './lod';
+import type { WorkView } from './work';
 
 /** charred wood and soot, and the ember glow that shows through a burning wall */
 const CHAR = new THREE.Color(0.09, 0.075, 0.065);
@@ -282,6 +283,11 @@ export class BuildingsRenderer {
         if (m.name === 'blades') m.rotation.z += dt * (b.working ? 1.6 : 0.25);
         else if (m.name === 'saw') { if (b.working) m.rotation.x += dt * 18; }
         else if (m.name === 'winch') { if (b.worker && time % 6 < 2) m.rotation.x += dt * 4; }
+        else if (m.name.startsWith('cat') || m.name === 'arm0') {
+          // the catapult taking shape in the siege workshop: one part per cycle
+          const parts = Math.round(b.shipProgress * 4);
+          m.visible = m.name === 'arm0' ? parts < 3 : parts >= Number(m.name[3]);
+        }
         else if (m.name === 'donkeys') { m.rotation.y = Math.sin(time * 0.6 + b.id) * 0.04; m.visible = b.working || b.prodCount > 0; }
         else if (m.name === 'crane') {
           // swings to and fro while a ship is loaded or unloaded here
@@ -325,6 +331,18 @@ export class BuildingsRenderer {
       }
     }
   }
+
+  /** What the work director needs of a finished building: its height, anchors and moving parts. */
+  workView(id: number): WorkView | null {
+    const v = this.views.get(id);
+    if (!v) return null;
+    this.wv.y = v.group.position.y;
+    this.wv.anchors = v.anchors;
+    this.wv.movers = v.movers;
+    this.wv.visible = v.group.visible && !v.clipMats;
+    return this.wv;
+  }
+  private wv: WorkView = { y: 0, anchors: null!, movers: [], visible: false };
 
   /** World-space anchor positions of lit windows / fires for night lights. */
   lightSources(out: THREE.Vector4[], camX: number, camZ: number, maxDist: number, night: number): number {
