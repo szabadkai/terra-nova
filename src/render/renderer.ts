@@ -32,6 +32,7 @@ import { SignsRenderer } from './signs';
 import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
 import { OrdersFX } from './orders';
+import { Birds } from './birds';
 import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
@@ -61,66 +62,6 @@ const LEAF_FALL: Record<number, [number, number, number][]> = {
   2: [[0.85, 0.66, 0.1], [0.74, 0.52, 0.08], [0.6, 0.44, 0.12]],
   4: [[0.72, 0.16, 0.05], [0.8, 0.4, 0.08], [0.5, 0.2, 0.08]],
 };
-
-class Birds {
-  mesh: THREE.InstancedMesh;
-  birds: { x: number; y: number; z: number; vx: number; vz: number; ph: number; flock: number }[] = [];
-  flocks: { x: number; z: number; tx: number; tz: number }[] = [];
-  constructor(private W: number, private H: number) {
-    const geo = new THREE.BufferGeometry();
-    // simple V bird: body + two wings (wing verts tagged by x for vertex flap)
-    const v = [
-      0, 0, 0.12, -0.26, 0.0, -0.04, 0, 0, -0.06,
-      0, 0, 0.12, 0, 0, -0.06, 0.26, 0.0, -0.04,
-    ];
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 0.9, side: THREE.DoubleSide });
-    patchMaterial(mat, {
-      key: 'bird', fog: true,
-      vertexBegin: `
-        #ifdef USE_INSTANCING
-        float ph = instanceMatrix[3][0] * 1.7 + instanceMatrix[3][2] * 1.3;
-        #else
-        float ph = 0.0;
-        #endif
-        transformed.y += abs(transformed.x) * sin(uTime * 11.0 + ph) * 0.9;
-      `,
-    });
-    this.mesh = new THREE.InstancedMesh(geo, mat, 120);
-    this.mesh.frustumCulled = false;
-    this.mesh.castShadow = true;
-    for (let f = 0; f < 4; f++) {
-      const x = Math.random() * W, z = Math.random() * H;
-      this.flocks.push({ x, z, tx: Math.random() * W, tz: Math.random() * H });
-      const n = 8 + Math.floor(Math.random() * 10);
-      for (let i = 0; i < n; i++) this.birds.push({ x: x + Math.random() * 4, y: 9 + Math.random() * 3, z: z + Math.random() * 4, vx: 0, vz: 0, ph: Math.random() * 6, flock: f });
-    }
-  }
-  update(dt: number, night: number) {
-    for (const f of this.flocks) {
-      const dx = f.tx - f.x, dz = f.tz - f.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 5) { f.tx = Math.random() * this.W; f.tz = Math.random() * this.H; }
-      f.x += (dx / d) * dt * 3.2;
-      f.z += (dz / d) * dt * 3.2;
-    }
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
-    let n = 0;
-    for (const b of this.birds) {
-      const f = this.flocks[b.flock];
-      const ox = Math.sin(b.ph + performance.now() * 0.0003) * 2.5, oz = Math.cos(b.ph * 1.3 + performance.now() * 0.00025) * 2.5;
-      const ax = (f.x + ox - b.x) * 1.5 - b.vx, az = (f.z + oz - b.z) * 1.5 - b.vz;
-      b.vx += ax * dt; b.vz += az * dt;
-      b.x += b.vx * dt; b.z += b.vz * dt;
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(b.vx, b.vz));
-      m.compose(p.set(b.x, b.y + Math.sin(b.ph + b.x * 0.3) * 0.3, b.z), q, s);
-      this.mesh.setMatrixAt(n++, m);
-    }
-    this.mesh.count = night > 0.6 ? 0 : n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-  }
-}
 
 export class GameRenderer {
   renderer: THREE.WebGLRenderer;
@@ -258,8 +199,8 @@ export class GameRenderer {
     this.scene.add(this.signs.group);
     this.rain = new Rain(game.world.W, game.world.H);
     this.scene.add(this.rain.mesh);
-    this.birds = new Birds(game.world.W, game.world.H);
-    this.scene.add(this.birds.mesh);
+    this.birds = new Birds(game.world);
+    this.scene.add(this.birds.group);
     this.borders = new BordersRenderer(game);
     this.scene.add(this.borders.posts, this.borders.caps);
 
