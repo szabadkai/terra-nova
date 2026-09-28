@@ -49,7 +49,6 @@ const game: any = {
 };
 const sr = new SettlersRenderer(game, buildGoodGeos());
 scene.add(sr.group);
-(window as any).sr = sr;
 
 const cam = new THREE.PerspectiveCamera(30, 1, 0.05, 100);
 const view = { yaw: 0, pitch: 0.25, dist: 3.5, tx: 0, ty: 0.38, tz: 0 };

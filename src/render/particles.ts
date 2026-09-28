@@ -242,10 +242,4 @@ export class Particles {
   firefly(x: number, y: number, z: number) {
     this.emit({ x, y, z, vy: 0.05, spread: 0.3, vspread: 0.15, life: 3.5, size: 0.07, color: [1.2, 1.8, 0.5], color2: [0.6, 1.0, 0.2], alpha: 1, drag: 0.2, additive: true, kind: 1 });
   }
-  rainDrop(x: number, y: number, z: number) {
-    this.emit({ x, y, z, vx: -1.0, vy: -14, life: 0.9, size: 0.35, color: [0.7, 0.75, 0.85], alpha: 0.35, drag: 0, kind: 2 });
-  }
-  ripple(x: number, y: number, z: number) {
-    this.emit({ x, y, z, life: 0.5, size: 0.18, grow: 2, color: [0.8, 0.85, 0.95], alpha: 0.25, drag: 5 });
-  }
 }

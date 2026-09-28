@@ -13,6 +13,7 @@ import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, Projecti
 import { SettlersRenderer } from './settlers';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
+import { Rain } from './rain';
 import { PostFX } from './postfx';
 import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
@@ -115,6 +116,7 @@ export class GameRenderer {
   piles: PilesRenderer;
   buildings: BuildingsRenderer;
   particles: Particles;
+  rain: Rain;
   fx: PostFX;
   birds: Birds;
   time = 0;
@@ -190,6 +192,8 @@ export class GameRenderer {
     this.scene.add(this.buildings.group);
     this.particles = new Particles();
     this.scene.add(this.particles.group);
+    this.rain = new Rain(game.world.W, game.world.H);
+    this.scene.add(this.rain.mesh);
     this.birds = new Birds(game.world.W, game.world.H);
     this.scene.add(this.birds.mesh);
     this.borders = new BordersRenderer(game);
@@ -274,7 +278,9 @@ export class GameRenderer {
     this.fx.setSize(w, h);
     const pr = this.renderer.getPixelRatio();
     this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
-    this.particles.setScale((h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360)));
+    const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
+    this.particles.setScale(pxScale);
+    this.rain.setScale(w * pr, h * pr, pxScale, pr);
   }
 
   // ------------------------------------------------------------ picking
@@ -557,18 +563,6 @@ export class GameRenderer {
         P.emit({ x, y: t.y + 6 + Math.random() * 8, z, vx: -0.4 + Math.random() * 0.3, vy: -1.3, vz: (Math.random() - 0.5) * 0.4, spread: 0.5, life: 7, size: 0.06, color: [0.95, 0.97, 1.0], alpha: 0.9, drag: 0.2, kind: 1 });
       }
     }
-    // rain
-    if (this.rainAmount > 0.02 && this.precip === 'rain') {
-      const n = Math.floor(this.rainAmount * 60 * dt * 60);
-      for (let k = 0; k < n; k++) {
-        const x = t.x + (Math.random() - 0.5) * R * 1.6, z = t.z + (Math.random() - 0.5) * R * 1.6;
-        P.rainDrop(x, t.y + 8 + Math.random() * 6, z);
-        if (Math.random() < 0.15) {
-          const gx = t.x + (Math.random() - 0.5) * R, gz = t.z + (Math.random() - 0.5) * R;
-          P.ripple(gx, w.surfaceAt(gx, gz) + 0.02, gz);
-        }
-      }
-    }
   }
 
   private updateWeather(dt: number) {
@@ -626,7 +620,9 @@ export class GameRenderer {
     (this.scene.background as THREE.Color).copy(new THREE.Color(0x0e3558).lerp(fogC, 0.3));
     const night = G.uNight.value;
     setWindowGlow(night * 2.2);
-    this.particles.setAmbient(new THREE.Color(1, 1, 1).lerp(new THREE.Color(0.35, 0.4, 0.6), night));
+    const ambient = new THREE.Color(1, 1, 1).lerp(new THREE.Color(0.35, 0.4, 0.6), night);
+    this.particles.setAmbient(ambient);
+    this.rain.setAmbient(ambient);
 
     this.terrain.update(dt);
     this.borders.update();
@@ -645,6 +641,7 @@ export class GameRenderer {
     this.spells.update(dt);
     this.continuousEffects(dt);
     this.particles.update(dt, G.uWind.value);
+    this.rain.update(dt, this.precip === 'rain' ? this.rainAmount : 0, this.cam.camera, this.cam.target, this.cam.viewSize, this.cam.dist, G.uWind.value);
 
     // night lights
     const lights = G.uLights.value;
@@ -667,7 +664,7 @@ export class GameRenderer {
     // planar water reflections (only when water is on screen)
     const U2 = this.water.uniforms;
     if (this.settings.reflections && this.waterInView()) {
-      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.markers, this.arrows.mesh]);
+      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh]);
       (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
       U2.uReflOn.value = 1;
     } else U2.uReflOn.value = 0;
