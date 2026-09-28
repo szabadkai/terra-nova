@@ -1,5 +1,5 @@
 // Computer opponent: builds an economy by priority rules and attacks when strong.
-import { BUILDINGS, BuildingType, MINE_ORE } from './defs';
+import { BUILDINGS, BuildingType, GOODS, Good, MINE_ORE, emptyStock } from './defs';
 import type { Game } from './game';
 import { attackableSoldiers, launchAttack } from './military';
 import { SPELLS, castSpell, faithStatus } from './faith';
@@ -8,8 +8,27 @@ import { PROBE_RADIUS, geologistsAtWork, prospectError, sendGeologist } from './
 import { pioneerError, pioneersAtWork, sendPioneer } from './pioneers';
 import { orderAttack } from './orders';
 import { afloat, bombardSpot, orderShipBombard, orderShipHome, tradeShipsOf, warshipsOf } from './naval';
+import { ORDER_STEP, placeOrder } from './trade';
+import { availableAt } from './economy';
 import { DX8, DY8 } from './world';
 import type { Building } from './types';
+
+/** Overland trade starts once the realm is this old… */
+const TRADE_FROM = 1300;
+/** …and has workshops this far from any storehouse… */
+const FAR = 24;
+/** …at least this many of them close together. */
+const OUTPOST_MIN = 4;
+/** The outpost's storehouse and market stand this close to the far workshops… */
+const OUTPOST_R = 16;
+/** …and the market at home this close to the headquarters (the ground right round it is often built up),
+ *  nearer to it than the far market is and at least ROUTE_MIN from that. */
+const HOME_R = 30;
+const ROUTE_MIN = 16;
+/** The most of a good a route keeps on order at once. */
+const ROUTE_MAX = 12;
+/** What the home side keeps back of a good before it sends any away. */
+const KEEP: Partial<Record<Good, number>> = { board: 14, stone: 12, bread: 4, fish: 4, meat: 4, grain: 4, water: 4, iron: 4, coal: 4 };
 
 interface Want { type: BuildingType; n: number; cond?: () => boolean; }
 
@@ -33,6 +52,10 @@ export class AIController {
   private navalT = 45;
   private geoT = 30;
   private pioneerT = 240;
+  private tradeT = 90;
+  /** where the far workshops cluster: the storehouse and market out there are built by it */
+  private outpost: { x: number; z: number } | null = null;
+  private outpostFails = 0;
   private unmannedSince = new Map<number, number>();
 
   update(dt: number) {
@@ -70,6 +93,11 @@ export class AIController {
     if (this.pioneerT <= 0) {
       this.pioneerT = [120, 75, 50][this.level] ?? 75;
       this.pioneerStep();
+    }
+    this.tradeT -= dt;
+    if (this.tradeT <= 0) {
+      this.tradeT = 30;
+      this.tradeStep();
     }
     if (this.t > 0) return;
     this.t = this.interval;
@@ -239,6 +267,110 @@ export class AIController {
       }
     }
     if (best && stock.board >= 10 && stock.stone >= 8) startExpedition(g, this.p, harbour, best);
+  }
+
+  /**
+   * A spread-out realm trades overland: a storehouse out by the far workshops, a market beside it
+   * and one by the headquarters, a donkey ranch, and a route between the markets that carries each
+   * side what its workshops and building sites lack and the other side has to spare.
+   */
+  private tradeStep() {
+    const g = this.g, w = g.world;
+    if (this.level === 0 || g.time < TRADE_FROM) return;
+    const hq = g.buildings.get(g.players[this.p].hq);
+    if (!hq) return;
+    const home = w.region[hq.door];
+    const mine = [...g.buildings.values()].filter((b) => b.owner === this.p && b.state !== 'burning' && w.region[b.door] === home);
+    const stores = mine.filter((b) => b.def.storage && b.state === 'done');
+    if (!this.outpost) {
+      // workshops far from every storehouse, and the thickest knot of them
+      const far = mine.filter((b) => b.state === 'done' && !b.def.military && !b.def.storage && b.def.category !== 'trade'
+        && stores.every((st) => Math.hypot(st.cx - b.cx, st.cz - b.cz) > FAR));
+      let best: Building[] = [];
+      for (const a of far) {
+        const knot = far.filter((b) => Math.hypot(a.cx - b.cx, a.cz - b.cz) < 12);
+        if (knot.length > best.length) best = knot;
+      }
+      if (best.length < OUTPOST_MIN) return;
+      this.outpost = { x: best.reduce((q, b) => q + b.cx, 0) / best.length, z: best.reduce((q, b) => q + b.cz, 0) / best.length };
+    }
+    const near = (b: Building, x: number, z: number, r: number) => Math.hypot(b.cx - x, b.cz - z) < r;
+    const op = this.outpost;
+    let sites = 0;
+    for (const b of mine) if (b.state === 'leveling' || b.state === 'building') sites++;
+    const stock = g.totalStock(this.p);
+    const room = sites < ([2, 3, 5][this.level] ?? 3) && stock.board >= 10 && stock.stone >= 8;
+    // no room out there after all: give it up for a while
+    const place = (type: BuildingType, at: { x: number; z: number }) => {
+      if (this.tryPlace(type, undefined, at)) { this.outpostFails = 0; return; }
+      if (++this.outpostFails > 10) { this.outpost = null; this.outpostFails = 0; this.tradeT = 600; }
+    };
+    // the buildings, one at a time: the storehouse, the market beside it, the ranch, the market at home
+    const store = mine.find((b) => b.def.storage && b.type !== 'hq' && near(b, op.x, op.z, OUTPOST_R));
+    if (!store) { if (room) place('storehouse', op); return; }
+    const farM = mine.find((b) => b.type === 'market' && near(b, store.cx, store.cz, OUTPOST_R));
+    if (!farM) { if (room) place('market', { x: store.cx, z: store.cz }); return; }
+    if (!mine.some((b) => b.type === 'donkeyfarm')) {
+      if (room && this.count('farm') >= 2 && this.count('waterworks') >= 1) this.tryPlace('donkeyfarm');
+      return;
+    }
+    const farOut = Math.hypot(farM.cx - hq.cx, farM.cz - hq.cz);
+    const homeSide = (x: number, z: number) => Math.hypot(x - hq.cx, z - hq.cz) < farOut && Math.hypot(x - farM.cx, z - farM.cz) >= ROUTE_MIN;
+    const homeM = mine.find((b) => b.type === 'market' && b.id !== farM.id && near(b, hq.cx, hq.cz, HOME_R) && homeSide(b.cx, b.cz));
+    if (!homeM) { if (room) this.tryPlace('market', undefined, { x: hq.cx, z: hq.cz, r: HOME_R, ok: homeSide }); return; }
+    if (homeM.state !== 'done' || farM.state !== 'done') return;
+    this.planRoutes(mine, homeM, farM);
+  }
+
+  /**
+   * Keep each route stocked: goods only one side makes go to the other as far as its workshops and
+   * building sites are short of them, and stock one side can spare goes where the other lacks it.
+   */
+  private planRoutes(mine: Building[], homeM: Building, farM: Building) {
+    const g = this.g;
+    const d = (b: Building, m: Building) => Math.hypot(b.cx - m.cx, b.cz - m.cz);
+    const want = [emptyStock(), emptyStock()], have = [emptyStock(), emptyStock()], makes = [emptyStock(), emptyStock()];
+    for (const b of mine) {
+      const side = d(b, farM) < d(b, homeM) ? 1 : 0;
+      if (b.state === 'done' && !b.paused && !b.def.storage) for (const gd of b.def.outputs ?? []) makes[side][gd]++;
+      // what the carriers could fetch from here: a store's goods, a workshop's wares, what came in by donkey
+      if (b.state === 'done') for (const gd of b.def.storage || b.type === 'market' ? GOODS : b.def.outputs ?? []) have[side][gd] += Math.max(0, availableAt(b, gd));
+      if (b.def.storage) continue;
+      if (b.state === 'leveling' || b.state === 'building') {
+        want[side].board += Math.max(0, b.def.cost.board - b.delivered.board - b.incoming.board);
+        want[side].stone += Math.max(0, b.def.cost.stone - b.delivered.stone - b.incoming.stone);
+        continue;
+      }
+      if (b.state !== 'done' || b.paused || !b.def.inputs) continue;
+      // what a workshop is short of, shared out between the goods it can use
+      for (const inp of b.def.inputs) {
+        let got = 0;
+        for (const gd of inp.goods) got += b.stock[gd] + b.incoming[gd];
+        const short = Math.max(0, inp.cap - got);
+        for (const gd of inp.goods) want[side][gd] += short / inp.goods.length;
+      }
+    }
+    const routes: [Building, Building, number][] = [[homeM, farM, 1], [farM, homeM, 0]];
+    for (const [from, to, side] of routes) {
+      const other = 1 - side;
+      for (const gd of GOODS) {
+        const open = g.tradeOrders.find((o) => o.owner === this.p && o.from === from.id && o.to === to.id && o.good === gd && o.n - o.delivered > 0);
+        const onWay = open ? open.n - open.delivered : 0;
+        const lack = Math.ceil(want[side][gd] - have[side][gd]);
+        let n: number;
+        // made only over there: whatever this side is short of comes by donkey, not on a carrier's back all the way
+        if (makes[other][gd] && !makes[side][gd]) n = Math.min(Math.ceil(want[side][gd]), ROUTE_MAX);
+        else {
+          // a side never sends what its own workshops want, and home keeps a little back besides
+          const spare = have[other][gd] - Math.max(want[other][gd], other === 0 ? KEEP[gd] ?? 2 : 0);
+          n = Math.min(lack, spare, ROUTE_MAX);
+        }
+        const more = n - onWay;
+        if (more >= ORDER_STEP / 2) placeOrder(g, from, to.id, gd, Math.floor(more / 2) * 2);
+        // nothing wanted any more: stop gathering it (what donkeys carry is delivered all the same)
+        else if (open && n <= 0 && open.n - open.loaded - open.delivered > 0) placeOrder(g, from, to.id, gd, -(open.n - open.loaded - open.delivered));
+      }
+    }
   }
 
   /** A navy once a rival takes to the sea: warships from the yard stand guard off the harbour, go for
@@ -431,12 +563,14 @@ export class AIController {
     return unmanned === 0 && reserve > 0;
   }
 
-  private tryPlace(type: BuildingType, bias?: 'mountain' | 'water' | 'enemy' | 'stone'): boolean {
+  /** `near`: build it as close as it will go to that spot, within `r` of it (and where `ok` allows). */
+  private tryPlace(type: BuildingType, bias?: 'mountain' | 'water' | 'enemy' | 'stone', near?: { x: number; z: number; r?: number; ok?: (x: number, z: number) => boolean }): boolean {
     const g = this.g;
     if (BUILDINGS[type].military && !this.canExpand()) return false;
     const w = g.world;
     const def = BUILDINGS[type];
-    const nodes = this.territoryNodes();
+    // for a building wanted by a spot, only the ground around that spot
+    const nodes = near ? this.territoryNodes().filter((i) => Math.hypot(w.nx(i) - near.x, w.ny(i) - near.z) <= (near.r ?? OUTPOST_R)) : this.territoryNodes();
     if (!nodes.length) return false;
     const hq = g.buildings.get(g.players[this.p].hq);
     const hx = hq ? hq.cx : w.nx(nodes[0]), hz = hq ? hq.cz : w.ny(nodes[0]);
@@ -457,6 +591,12 @@ export class AIController {
       const cx = a.x + (def.size - 1) / 2, cz = a.y + (def.size - 1) / 2;
       const dHQ = Math.hypot(cx - hx, cz - hz);
       let score = -dHQ * 0.6;
+      if (near) {
+        // as close to the spot as it will go
+        const dn = Math.hypot(cx - near.x, cz - near.z);
+        if (dn > (near.r ?? OUTPOST_R) || (near.ok && !near.ok(cx, cz))) continue;
+        score = -dn;
+      }
       switch (type) {
         case 'woodcutter': score = this.countTrees(cx, cz, 9) * 2 - dHQ * 0.3; break;
         case 'forester': score = this.countBuildingsNear(cx, cz, 8, 'woodcutter') * 10 - dHQ * 0.2 - this.countTrees(cx, cz, 5); break;

@@ -37,6 +37,8 @@ function persistent(d: SaveData) {
     for (const k of ['next', 't', 'pathI', 'anim', 'animT', 'task', 'idle', 'x', 'z', 'node', 'target', 'carrying', 'home', 'sstate', 'stepDur', 'hidden', 'inside', 'voyage', 'voyageFrom']) delete s[k];
   }
   for (const b of c.buildings as unknown as Record<string, unknown>[]) for (const k of ['incoming', 'outgoing', 'workerIncoming', 'soldiersIncoming', 'used', 'status', 'stock']) delete b[k];
+  // goods donkeys had set out to fetch are a plan's reservation too
+  for (const o of (c.scalars.tradeOrders ?? []) as Record<string, unknown>[]) delete o.loaded;
   for (const t of c.trees as unknown as Record<string, unknown>[]) delete t.reserved;
   for (const t of c.stones as unknown as Record<string, unknown>[]) delete t.reserved;
   for (const t of c.fields as unknown as Record<string, unknown>[]) delete t.reserved;

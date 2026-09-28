@@ -326,13 +326,12 @@ export function reconcileLoads(g: Game) {
   }
 }
 
-/** After loading a game: a donkey with goods on its back sets out again; the rest wait for work. */
+/** After loading a game: a donkey with goods on its back sets out again; the rest wait for work.
+ *  (No random draws here: a loaded game carries on from exactly the saved random state.) */
 export function resumeDonkey(g: Game, s: Settler) {
-  s.fails = 0;
   if (s.carrying || s.pack) { deliverOrDump(g, s); return; }
   s.target = 0;
   s.idle = true;
-  s.wanderT = g.rng.range(0.5, 2);
 }
 
 // ------------------------------------------------------------------ tick

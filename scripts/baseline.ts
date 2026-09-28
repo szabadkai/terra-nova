@@ -32,6 +32,7 @@ const out = {
   winner: g.winner, attacks, captures, staked, sunk, warships,
   soldiers: g.players.map((p) => g.population(p.id).soldiers),
   buildings: g.players.map((p) => g.countBuildings(p.id)),
+  traded: g.players.map((p) => p.traded),
   ms: Date.now() - t0,
 };
 console.log(JSON.stringify(out));
