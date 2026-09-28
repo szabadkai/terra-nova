@@ -10,6 +10,13 @@ import type { PilesRenderer } from './entities';
 import { patchedDepthMaterial } from './shaderPatch';
 import { Seaworks, buildSeaworks, showHullProgress } from './seaworks';
 import { lanternLit, lanternSpot } from './lanterns';
+import { hash2 } from '../core/rng';
+import { burnPose, collapseAt } from './demolition';
+import { getBurnMaterial } from './materials';
+
+/** charred wood and soot, and the ember glow that shows through a burning wall */
+const CHAR = new THREE.Color(0.09, 0.075, 0.065);
+const EMBER = new THREE.Color(1.0, 0.3, 0.05);
 
 interface BView {
   id: number;
@@ -26,7 +33,8 @@ interface BView {
   baseY: number;
   movers: THREE.Object3D[];
   shownProgress: number;
-  burnT: number;
+  /** per-building material copies while it burns: animated char and glow */
+  burnMats: Map<string, { m: THREE.MeshStandardMaterial; base: THREE.Color }> | null;
   sea: Seaworks | null;
 }
 
@@ -60,7 +68,7 @@ export class BuildingsRenderer {
     }
     const v: BView = {
       id: b.id, type: b.type, owner: b.owner, group, anchors, height: Math.max(0.8, box.max.y - y),
-      state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnT: 0, sea,
+      state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnMats: null, sea,
     };
     this.views.set(b.id, v);
     return v;
@@ -71,6 +79,7 @@ export class BuildingsRenderer {
     v.sea?.group.traverse((o) => { if (o.parent?.userData.own) (o as THREE.Mesh).geometry?.dispose(); });
     if (v.clipMats) for (const m of v.clipMats.values()) m.dispose();
     v.clipDepth?.dispose();
+    if (v.burnMats) for (const bm of v.burnMats.values()) bm.m.dispose();
     this.views.delete(v.id);
   }
 
@@ -99,6 +108,25 @@ export class BuildingsRenderer {
       v.clipMats = null;
       v.clipDepth = null;
     }
+  }
+
+  /** Swap in material copies that can char and glow without touching the shared library. */
+  private setBurn(v: BView) {
+    const mats = (v.burnMats = new Map<string, { m: THREE.MeshStandardMaterial; base: THREE.Color }>());
+    v.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const key = m.userData.matKey as string | undefined;
+      if (!key) return;
+      let bm = mats.get(key);
+      if (!bm) {
+        const mat = getBurnMaterial(key);
+        bm = { m: mat, base: mat.color.clone() };
+        mats.set(key, bm);
+      }
+      m.material = bm.m;
+    });
+    return mats;
   }
 
   private setClipY(v: BView, y: number) {
@@ -211,12 +239,24 @@ export class BuildingsRenderer {
         if (v.scaffold) { v.group.remove(v.scaffold); v.scaffold = null; }
         if (v.stakes) { v.group.remove(v.stakes); v.stakes = null; }
       }
-      // burning: sink and char
+      // burning: the walls char and glow from within, the frame trembles, then the roof comes down,
+      // the walls crumple outwards and the wreck settles into the ground (timeline in demolition.ts)
       if (b.state === 'burning') {
-        v.burnT += dt;
-        const k = Math.min(1, b.burnT / 12);
-        v.group.position.y = y - k * k * v.height * 0.8;
-        v.group.rotation.z = Math.sin(time * 3) * 0.01 * k;
+        const mats = v.burnMats ?? this.setBurn(v);
+        const p = burnPose(b.burnT, collapseAt(b.id));
+        const dir = hash2(b.id, 5) * Math.PI * 2;
+        const tremor = p.shudder * 0.02;
+        const tilt = p.drop * (0.12 + hash2(b.id, 6) * 0.1) + Math.sin(time * 41 + b.id) * tremor * 0.5;
+        v.group.rotation.set(Math.cos(dir) * tilt, 0, Math.sin(dir) * tilt);
+        v.group.scale.set(1 + 0.1 * p.drop, 1 - 0.55 * p.drop, 1 + 0.1 * p.drop);
+        v.group.position.set(b.cx + Math.sin(time * 53 + b.id) * tremor, y - (p.drop * 0.2 + p.sink * 0.6) * v.height, b.cz + Math.cos(time * 47 + b.id * 1.7) * tremor);
+        const flick = 0.55 + 0.45 * Math.sin(time * 17 + b.id) * Math.sin(time * 6.3 + b.id * 0.7);
+        for (const [key, bm] of mats) {
+          bm.m.color.copy(bm.base).lerp(CHAR, p.char * 0.92);
+          if (key.startsWith('glow')) continue;
+          bm.m.emissive.copy(EMBER);
+          bm.m.emissiveIntensity = p.glow * (key === 'window' ? 4.5 : 0.2) * flick;
+        }
         continue;
       }
       // animated parts
@@ -302,7 +342,11 @@ export class BuildingsRenderer {
     }
     for (const b of g.buildings.values()) {
       if (b.state !== 'burning') continue;
-      cands.push({ d: 0, x: b.cx, y: b.targetH + 1, z: b.cz, w: 4 });
+      // firelight: brightest at the height of the blaze, lower and dimmer once the roof is down
+      const p = burnPose(b.burnT, collapseAt(b.id));
+      const h = this.views.get(b.id)?.height ?? 1.5;
+      const flick = 0.85 + 0.15 * Math.sin(b.burnT * 23 + b.id);
+      cands.push({ d: 0, x: b.cx, y: b.targetH + 0.6 + h * 0.4 * (1 - p.drop), z: b.cz, w: (1 + 4.5 * p.fire) * flick });
     }
     cands.sort((a, b) => a.d - b.d);
     const n = Math.min(out.length, cands.length);

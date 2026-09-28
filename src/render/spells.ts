@@ -165,10 +165,11 @@ export class SpellFX {
     mesh.renderOrder = 7;
     this.group.add(mesh);
     this.fx.push({ mesh, mat, t: 0, life: 0.45, kind: 'bolt', r: 0, peak: 1, hold: 0 });
-    this.setFlash(x, gy + 3, z, 9, col);
+    this.flashAt(x, gy + 3, z, 9, col);
   }
 
-  private setFlash(x: number, y: number, z: number, i: number, col: THREE.Color) {
+  /** The one bright transient world light: the stronger request wins. */
+  flashAt(x: number, y: number, z: number, i: number, col: THREE.Color) {
     if (i < this.flash.i) return;
     this.flash.x = x; this.flash.y = y; this.flash.z = z; this.flash.i = i;
     this.flash.col.copy(col);
@@ -180,7 +181,7 @@ export class SpellFX {
       this.makeBolt(x, z, new THREE.Color(0.65, 0.75, 1.0));
       this.onFlash(0.14, 0.3);
     } else {
-      this.setFlash(x, this.ground(x, z) + 35, z, 40, new THREE.Color(0.6, 0.7, 1.0));
+      this.flashAt(x, this.ground(x, z) + 35, z, 40, new THREE.Color(0.6, 0.7, 1.0));
       this.onFlash(0.04 + Math.random() * 0.06, 0);
     }
     // lightning flickers
@@ -231,7 +232,7 @@ export class SpellFX {
           this.ringBurst(x, y + 0.2, z, def.radius, [c[0] * 1.5, c[1] * 2, c[2] * 2]);
           sound('chime');
         }
-        this.setFlash(x, y + 2.5, z, 3, new THREE.Color(...c));
+        this.flashAt(x, y + 2.5, z, 3, new THREE.Color(...c));
         break;
       }
       case 'lightning': {
@@ -297,7 +298,7 @@ export class SpellFX {
         const r = f.r * (grow + (t > f.hold ? (t - f.hold) * 0.3 : 0));
         f.mesh.scale.x = f.mesh.scale.z = Math.max(0.01, r);
         f.mat.uniforms.uI.value = f.peak * (Math.min(1, t / 0.3) * out + flare);
-        if (f.r > 1) this.setFlash(f.mesh.position.x, f.mesh.position.y + 2.5, f.mesh.position.z, 1.6 * out, f.mat.uniforms.uCol.value);
+        if (f.r > 1) this.flashAt(f.mesh.position.x, f.mesh.position.y + 2.5, f.mesh.position.z, 1.6 * out, f.mat.uniforms.uCol.value);
       }
     }
     // storm clouds gather over the target of a Wrath
@@ -311,7 +312,7 @@ export class SpellFX {
           const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * 6;
           P.emit({ x: s.x + Math.cos(a) * d, y: gy + 9 + Math.random() * 2, z: s.z + Math.sin(a) * d, vx: -Math.sin(a) * 0.8, vz: Math.cos(a) * 0.8, spread: 0.2, life: 3.5, size: 3.2, grow: 0.5, color: [0.13, 0.14, 0.18], alpha: 0.5, drag: 0.3 });
         }
-        if (Math.random() < dt * 3) this.setFlash(s.x + (Math.random() - 0.5) * 6, gy + 10, s.z + (Math.random() - 0.5) * 6, 1.2, new THREE.Color(0.55, 0.65, 1.0));
+        if (Math.random() < dt * 3) this.flashAt(s.x + (Math.random() - 0.5) * 6, gy + 10, s.z + (Math.random() - 0.5) * 6, 1.2, new THREE.Color(0.55, 0.65, 1.0));
       }
     }
     // rune circle on the ground: the newest active spell, else the targeting preview

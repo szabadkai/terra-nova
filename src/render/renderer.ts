@@ -31,6 +31,7 @@ import { SignsRenderer } from './signs';
 import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
 import { OrdersFX } from './orders';
+import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
 
@@ -150,6 +151,7 @@ export class GameRenderer {
   reflection: PlanarReflection;
   borders: BordersRenderer;
   spells: SpellFX;
+  demolition: Demolition;
   /** soldiers the player has picked, and where his orders land */
   orders: OrdersFX;
   /** door lanterns that light up after dusk */
@@ -269,6 +271,14 @@ export class GameRenderer {
       this.cam.shake = Math.max(this.cam.shake, shake);
     });
     this.scene.add(this.spells.group);
+    this.demolition = new Demolition(game, this.particles, this.buildings, (x, y, z, flash, shake) => {
+      if (flash > 0) {
+        this.fx.flash(flash);
+        this.spells.flashAt(x, y, z, 4, new THREE.Color(1.0, 0.45, 0.12));
+      }
+      this.cam.shake = Math.max(this.cam.shake, shake);
+    }, (n, x, z, v) => this.sound?.(n, x, z, v));
+    this.scene.add(this.demolition.group);
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
     const hq = game.buildings.get(game.players[game.local].hq);
@@ -651,7 +661,7 @@ export class GameRenderer {
         case 'buildstep': P.dust(x, y + 0.3, z, 6, [0.62, 0.55, 0.45]); break;
         case 'built': P.sparkle(x, y + 1.2, z, 40); P.dust(x, y, z, 12); snd('built'); break;
         case 'placed': P.dust(x, y, z, 8); snd('place'); break;
-        case 'burn': snd('fire'); this.cam.shake = 0.3; break;
+        case 'burn': snd('fire'); snd('creak', 0.6); P.smoke(x, y + 1, z, 0.9, 1.6); this.cam.shake = 0.2; break;
         case 'splash': P.splash(x, WATER_LEVEL, z); snd('splash', 0.6); break;
         case 'cast': P.splash(x, WATER_LEVEL, z); break;
         case 'harvest': P.emit({ x, y: y + 0.3, z, vy: 0.6, spread: 1, life: 1.2, size: 0.05, color: [0.95, 0.8, 0.4], gravity: 1.5, count: 10, kind: 1 }); snd('harvest', 0.6); break;
@@ -708,13 +718,6 @@ export class GameRenderer {
       if (!b || !v.group.visible) continue;
       if (Math.abs(b.cx - t.x) > R || Math.abs(b.cz - t.z) > R) continue;
       const by = v.group.position.y;
-      if (b.state === 'burning') {
-        const k = 1 - Math.min(1, b.burnT / 12);
-        for (let i = 0; i < 3; i++) P.fire(b.cx + (Math.random() - 0.5) * b.size * 0.8, by + Math.random() * v.height * 0.8 * k + 0.2, b.cz + (Math.random() - 0.5) * b.size * 0.8, 1.2);
-        if (tick) P.smoke(b.cx, by + v.height * k + 0.5, b.cz, 0.85, 2.2);
-        if (Math.random() < 0.2) P.sparks(b.cx, by + 1, b.cz, 3);
-        continue;
-      }
       if (b.state !== 'done' || !tick) continue;
       if (b.def.mana) {
         // holy fire burns in the braziers while a priest serves
@@ -927,6 +930,7 @@ export class GameRenderer {
     this.updateCasting(dt);
     this.spells.update(dt);
     this.continuousEffects(dt);
+    this.demolition.update(dt, this.cam.target.x, this.cam.target.z, this.cam.viewSize);
     this.particles.update(dt, G.uWind.value);
     this.rain.update(dt, this.precip === 'rain' ? this.rainAmount : 0, this.cam.camera, this.cam.target, this.cam.viewSize, this.cam.dist, G.uWind.value);
 

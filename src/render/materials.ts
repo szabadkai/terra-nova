@@ -102,6 +102,14 @@ export function getClipMaterial(key: string): THREE.Material {
   return m;
 }
 
+/** A fresh copy for a burning building, so its charring and ember glow can be animated on their own. */
+export function getBurnMaterial(key: string): THREE.MeshStandardMaterial {
+  const f = factories[key] ?? factories.plaster;
+  const m = f() as THREE.MeshStandardMaterial;
+  patchMaterial(m, patchOpts(key, false));
+  return m;
+}
+
 export const flagDepth = patchedDepthMaterial({ wind: 'none' });
 
 /** Night window glow intensity for all window materials. */

@@ -527,6 +527,16 @@ export class Audio {
         life = 4;
         break;
       }
+      case 'collapse': {
+        // the roof gives: a crack, a rush of splintering timber, the boom of the walls hitting the ground, and stone rattling down
+        this.noise(t, 0.08, 'highpass', 1500, 0.8, 0.6, out);
+        for (let k = 0; k < 5; k++) this.noise(t + 0.05 + k * 0.07 + Math.random() * 0.05, 0.12, 'bandpass', 500 + Math.random() * 900, 4, 0.35, out);
+        this.noise(t + 0.18, 1.9, 'lowpass', 320, 0.9, 1.0, out, 60);
+        this.tone(t + 0.18, 52, 1.3, 'sine', 0.6, out, 28, 0.03);
+        this.noise(t + 0.5, 1.1, 'bandpass', 1100, 1.2, 0.3, out, 350);
+        life = 3.5;
+        break;
+      }
       case 'thunder':
         this.noise(t, 0.09, 'highpass', 1800, 0.8, 0.7, out);
         this.noise(t + 0.02, 0.35, 'bandpass', 700, 0.6, 0.5, out, 200);
