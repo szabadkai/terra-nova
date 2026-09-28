@@ -4,14 +4,36 @@
     {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 5173
     },
     {
       "name": "s3-assets",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8733", "--bind", "127.0.0.1", "--directory", "reference/s3-demo-1998-05-12/extracted"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8733",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "reference/s3-demo-1998-05-12/extracted"
+      ],
       "port": 8733
+    },
+    {
+      "name": "menu-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "5177",
+        "--strictPort"
+      ],
+      "port": 5177
     }
   ]
 }
