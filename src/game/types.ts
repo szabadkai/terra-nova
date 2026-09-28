@@ -161,6 +161,8 @@ export interface Building {
   damage: number;
   /** shipyard: what goes on the slipway next */
   shipKind: ShipKind;
+  /** harbour: ships keep this landmass supplied from, and bring what it lacks from, the other harbours by themselves */
+  seaAuto: boolean;
 }
 
 export interface Animal {
@@ -247,6 +249,8 @@ export interface SeaOrder {
   loaded: number; // in transit
   delivered: number;
   t: number; // last progress
+  /** placed by the player in the harbour panel: the sea planner never trims or forgets it */
+  manual?: boolean;
 }
 export type TradeOrder = SeaOrder;
 

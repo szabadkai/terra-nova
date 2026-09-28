@@ -9,7 +9,11 @@ import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import { attackableSoldiers, launchAttack } from '../game/military';
 import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
-import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition, warshipWantsIron } from '../game/sea';
+import {
+  SHIP_ORDER_STEP, bookPassengers, bookedPassengers, cancelExpedition, cancelShipOrder, cargoCount, colonySite, expectedBySea,
+  harbourDestinations, harbourLabel, harbourTraffic, openShipOrder, placeShipOrder, scoutSeas, shipOrders, startExpedition, warshipWantsIron,
+  type PassengerRole,
+} from '../game/sea';
 import type { Ship } from '../game/types';
 import { MAX_SHIPS, MAX_WARSHIPS, WARSHIP_IRON } from '../game/defs';
 import {
@@ -309,6 +313,19 @@ export class HUD {
       }
       if (!fleet.length) list.appendChild(h('p', 'note', 'Build a Shipyard on the coast: its shipwright turns boards into ships.'));
       c.appendChild(list);
+      const sos = shipOrders(g, g.local);
+      if (sos.length) {
+        const ol = h('div', 'list');
+        for (const o of sos) {
+          const from = g.buildings.get(o.from), to = g.buildings.get(o.to);
+          if (!from || !to) continue;
+          const row = h('button', 'lrow', `${this.icon(o.good)}<span>${GOOD_NAMES[o.good]} → ${harbourLabel(to, from.cx, from.cz).replace('Harbour ', '')}</span><b>${o.delivered}/${o.n}${o.loaded ? ` <small>· ${o.loaded} aboard</small>` : ''}</b>`);
+          row.onclick = () => { this.gr.cam.jumpTo(from.cx, from.cz + 2); this.select({ kind: 'building', id: from.id }); };
+          ol.appendChild(row);
+        }
+        c.appendChild(h('h3', '', 'Shipping orders'));
+        c.appendChild(ol);
+      }
     }
     const markets = [...g.buildings.values()].filter((b) => b.owner === g.local && b.type === 'market' && b.state === 'done');
     if (markets.length || g.countBuildings(g.local, 'donkeyfarm')) {
@@ -956,6 +973,7 @@ export class HUD {
           const need = ex.people.builder + ex.people.digger + ex.people.soldier + ex.people.carrier;
           body += `<div class="status">${ex.state === 'gathering' ? `⚓ Expedition gathering: party ${party}/${need} · ${this.icon('board', 'ci')}${Math.min(b.stock.board, ex.goods.board)}/${ex.goods.board} ${this.icon('stone', 'ci')}${Math.min(b.stock.stone, ex.goods.stone)}/${ex.goods.stone}${party >= need && b.stock.board >= ex.goods.board && b.stock.stone >= ex.goods.stone ? ' · waiting for a ship' : ''}` : '⛵ The expedition is at sea'}</div>`;
         }
+        body += this.shippingSection(b);
       }
       if (b.type === 'shipyard' && mine) {
         const war = b.shipKind === 'war';
@@ -1026,7 +1044,14 @@ export class HUD {
         (el as HTMLSelectElement).onchange = () => { b.tradeTo = Number((el as HTMLSelectElement).value) || 0; this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo(); };
         return;
       }
-
+      if (act === 'auto') {
+        (el as HTMLInputElement).onchange = () => {
+          b.seaAuto = (el as HTMLInputElement).checked;
+          this.message(b.seaAuto ? 'Ships keep this land supplied by themselves again' : 'Ships now carry only what you order from and to this land', b.cx, b.cz, 'good');
+          this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo();
+        };
+        return;
+      }
       el.onclick = () => {
         this.audio.play('ui');
         if (act === 'close') this.select(null);
@@ -1049,6 +1074,24 @@ export class HUD {
           const err = scoutSeas(g, g.local, b);
           this.message(err ?? 'A ship sets out to explore the seas', b.cx, b.cz, err ? 'bad' : 'good');
         }
+        else if (act.startsWith('sord')) {
+          const gd = act.slice(6) as Good;
+          const err = placeShipOrder(g, b, b.tradeTo, gd, act[4] === '+' ? SHIP_ORDER_STEP : -SHIP_ORDER_STEP);
+          if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); }
+        }
+        else if (act.startsWith('pax')) {
+          const role = act.slice(5) as PassengerRole;
+          const r = bookPassengers(g, b, b.tradeTo, role, act[3] === '+' ? 1 : -1);
+          if (typeof r === 'string') { this.message(r, undefined, undefined, 'bad'); this.audio.play('click'); }
+          else if (!r && act[3] === '+') {
+            this.message(role === 'soldier' ? 'No soldier to spare on this land — lower a stronghold\'s desired soldiers to free some' : `No idle ${role} on this land to send`, b.cx, b.cz, 'bad');
+            this.audio.play('click');
+          }
+        }
+        else if (act.startsWith('scancel|')) {
+          const o = g.seaOrders.find((x) => x.id === Number(act.slice(8)));
+          if (o) cancelShipOrder(o);
+        }
         else if (act.startsWith('kind|')) {
           b.shipKind = act.slice(5) === 'war' ? 'war' : 'trade';
           this.message(b.shipKind === 'war' ? 'The shipwright lays down a warship: boards, and iron for the fittings' : 'The shipwright builds trade ships', b.cx, b.cz, 'good');
@@ -1067,6 +1110,41 @@ export class HUD {
         this.refreshInfo();
       };
     });
+  }
+
+  /** The harbour panel's shipping orders: a harbour overseas, goods and passengers for it, automatic supply. */
+  private shippingSection(b: Building): string {
+    const g = this.game;
+    const dests = harbourDestinations(g, b);
+    if (b.tradeTo && !dests.some((d) => d.id === b.tradeTo)) b.tradeTo = 0;
+    let out = '<div class="subh">Shipping</div>';
+    const inc = expectedBySea(g, b);
+    if (inc) out += `<div class="kv"><span>Expected by sea</span><b>${inc}</b></div>`;
+    const opts = dests.map((d) => `<option value="${d.id}"${b.tradeTo === d.id ? ' selected' : ''}>${harbourLabel(d, b.cx, b.cz)}</option>`).join('');
+    out += `<div class="kv"><span>Ship to</span><b><select data-act="dest"><option value="0">${dests.length ? '— choose a harbour —' : 'no harbour of yours overseas'}</option>${opts}</select></b></div>`;
+    if (b.tradeTo) {
+      out += `<div class="tgrid">${GOODS.map((gd) => {
+        const o = openShipOrder(g, b, b.tradeTo, gd);
+        const here = b.stock[gd];
+        return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${here} here${o ? `, ${o.delivered} of ${o.n} delivered${o.loaded ? `, ${o.loaded} aboard` : ''}` : ''}">${this.icon(gd, 'ci')}<span>${o ? `${o.delivered}/${o.n}` : here || ''}</span><div class="tbtn"><button class="mini" data-act="sord-|${gd}" title="Ship ${SHIP_ORDER_STEP} fewer">−</button><button class="mini" data-act="sord+|${gd}" title="Ship ${SHIP_ORDER_STEP} more">+</button></div></div>`;
+      }).join('')}</div>`;
+      const roles: [PassengerRole, string, string][] = [['carrier', '👤', 'Carriers'], ['soldier', '⚔', 'Soldiers'], ['builder', '🔨', 'Builders']];
+      out += `<div class="prow">${roles.map(([role, emo, name]) => {
+        const n = bookedPassengers(g, b, b.tradeTo, role).length;
+        return `<div class="pcell${n ? ' on' : ''}" title="${name} booked to sail: they wait in this harbour for a ship"><span>${emo} ${name}</span><b>${n}</b><div class="tbtn"><button class="mini" data-act="pax-|${role}" title="Call one back">−</button><button class="mini" data-act="pax+|${role}" title="Send one more">+</button></div></div>`;
+      }).join('')}</div>`;
+      out += `<p class="note">Each <b>+</b> ships ${SHIP_ORDER_STEP} more of a good, or books one more passenger. Carriers bring the goods here; the next free ship takes them over.</p>`;
+    } else if (dests.length) out += `<div class="status">Choose a harbour overseas to send goods and settlers to</div>`;
+    else out += `<div class="status">Found a colony overseas (or build a harbour on another island) to ship to</div>`;
+    out += `<label class="check"><input type="checkbox" data-act="auto"${b.seaAuto ? ' checked' : ''}> Ships keep this land supplied by themselves</label>`;
+    const orders = shipOrders(g, g.local, b.id);
+    if (orders.length) {
+      out += `<div class="list">${orders.map((o) => {
+        const to = g.buildings.get(o.to);
+        return `<div class="lrow orow">${this.icon(o.good, 'ci')}<span>${GOOD_NAMES[o.good]} → ${to ? harbourLabel(to, b.cx, b.cz).replace('Harbour ', '') : '?'}</span><b>${o.delivered}/${o.n}${o.loaded ? ` <small>· ${o.loaded} aboard</small>` : ''} <button class="mini" data-act="scancel|${o.id}" title="Call off what is not yet aboard">✕</button></b></div>`;
+      }).join('')}</div>`;
+    }
+    return out;
   }
 
   /** Make the building the one that gets everything first, or take that off it again (the P key does the same). */

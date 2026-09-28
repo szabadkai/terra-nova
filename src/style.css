@@ -100,7 +100,15 @@ button { font-family: var(--font); cursor: pointer; }
 .tbtn .mini { padding: 0 7px; line-height: 16px; }
 .mini.on { background: var(--gold); color: #2a1c0c; border-color: var(--gold); }
 .kindseg { display: inline-flex; gap: 3px; }
-
+.subh { margin: 12px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); }
+.prow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 4px; }
+.pcell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0 3px; border-radius: 8px; background: rgba(0, 0, 0, 0.25); border: 1px solid transparent; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pcell span { color: var(--muted); }
+.pcell.on { border-color: var(--gold); background: rgba(226, 184, 87, 0.12); }
+.check { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--text); cursor: pointer; }
+.check input { accent-color: var(--gold); margin: 0; }
+.orow { grid-template-columns: 24px 1fr auto; margin-top: 4px; }
+.orow .mini { padding: 0 6px; line-height: 16px; margin-left: 4px; }
 .gcell { display: flex; flex-direction: column; align-items: center; padding: 3px 0; border-radius: 8px; background: rgba(0, 0, 0, 0.25); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 12px; }
 .gcell.zero { opacity: .35; }
 .kv { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed rgba(214, 176, 104, 0.15); }

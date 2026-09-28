@@ -430,7 +430,7 @@ export class Game {
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,
       dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null, tradeTo: 0,
-      priority: false, damage: 0, shipKind: 'trade',
+      priority: false, damage: 0, shipKind: 'trade', seaAuto: true,
     };
   }
 
