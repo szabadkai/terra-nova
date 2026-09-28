@@ -4,6 +4,8 @@ import { GameRenderer } from './render/renderer';
 import { HUD } from './ui/hud';
 import { generateIcons } from './ui/icons';
 import { showLoading, showMenu, MenuOptions } from './ui/menu';
+import { GameMenu } from './ui/gameMenu';
+import { applyAudioPrefs, applyRenderPrefs } from './ui/prefs';
 import { Audio } from './audio/audio';
 import { G } from './render/shaderPatch';
 
@@ -23,10 +25,13 @@ const opts: MenuOptions = {
 };
 
 const audio = new Audio();
+applyAudioPrefs(audio);
 let game: Game;
 let gr: GameRenderer;
 let hud: HUD | null = null;
 let menuEl: HTMLElement | null = null;
+/** the Esc menu in a game, or the options modal on the title screen; the game is paused while it is open */
+let gameMenu: GameMenu | null = null;
 let state: 'menu' | 'play' = 'menu';
 let speed = 1;
 let pausedSpeed = 1;
@@ -36,6 +41,7 @@ let iconsReady = false;
 async function buildWorld() {
   const loading = showLoading(uiRoot, 'Shaping the land…');
   await new Promise((r) => setTimeout(r, 30));
+  gameMenu?.close();
   if (gr) {
     gr.dispose();
     const fresh = document.createElement('canvas');
@@ -48,6 +54,7 @@ async function buildWorld() {
   speed = pausedSpeed = 1;
   game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands: params.get('islands') !== '0' });
   gr = new GameRenderer(canvas, game);
+  applyRenderPrefs(gr);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
   bindCanvas(canvas);
   if (!iconsReady) { generateIcons(game.local); iconsReady = true; }
@@ -68,7 +75,33 @@ function showMainMenu() {
     menuEl = null;
     await buildWorld();
     showMainMenu();
-  }).el;
+  }, openOptions).el;
+}
+
+/** Settings modal over the title screen. */
+function openOptions() {
+  if (gameMenu) return;
+  gameMenu = new GameMenu(uiRoot, { game, gr, audio, inGame: false, onClose: () => { gameMenu = null; } });
+}
+
+/** The Esc menu: pauses the game until it is closed. */
+function openGameMenu() {
+  if (gameMenu || state !== 'play') return;
+  hud?.hideTip();
+  gr.cam.inputEnabled = false;
+  audio.setPaused(true);
+  gameMenu = new GameMenu(uiRoot, {
+    game, gr, audio, inGame: true, objectives: hud?.objectives,
+    onClose: () => { gameMenu = null; gr.cam.inputEnabled = true; audio.setPaused(false); },
+    onRestart: () => { void restartMap(); },
+    onQuit: () => { void restart(); },
+  });
+}
+
+/** Play the same map again from the start. */
+async function restartMap() {
+  await buildWorld();
+  startGame();
 }
 
 async function restart() {
@@ -102,6 +135,7 @@ function startGame() {
     getSpeed: () => speed,
     setSpeed: (s) => { speed = s; if (s > 0) pausedSpeed = s; },
     restart: () => { void restart(); },
+    openMenu: openGameMenu,
   }, uiRoot);
   gr.onEvent = (e) => hud?.onEvent(e);
   (window as any).hud = hud;
@@ -120,11 +154,26 @@ function setupGlobalInput() {
   window.addEventListener('pointerdown', startAudio);
   window.addEventListener('keydown', startAudio);
   window.addEventListener('keydown', (e) => {
-    if (state !== 'play' || !hud) return;
-    if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
     const k = e.key;
-    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else if (gr.casting) hud.startCasting(null); else if (gr.expedition) hud.startExpedition(0); else if (gr.prospecting) hud.startProspecting(false); else hud.select(null); }
-    else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
+    if (gameMenu) {
+      // the open menu takes every key; Esc steps back, F10 closes
+      if (k === 'Escape') { e.preventDefault(); gameMenu.back(); }
+      else if (k === 'F10') { e.preventDefault(); gameMenu.close(); }
+      return;
+    }
+    if (state !== 'play' || !hud) return;
+    if (k === 'F10') { e.preventDefault(); openGameMenu(); return; }
+    if (k === 'Escape') {
+      if (gr.placing) hud.startPlacing(null);
+      else if (gr.casting) hud.startCasting(null);
+      else if (gr.expedition) hud.startExpedition(0);
+      else if (gr.prospecting) hud.startProspecting(false);
+      else if (gr.selected) hud.select(null);
+      else openGameMenu();
+      return;
+    }
+    if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
+    if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
     else if (k === '1') speed = pausedSpeed = 1;
     else if (k === '2') speed = pausedSpeed = 2;
     else if (k === '3') speed = pausedSpeed = 3;
@@ -252,10 +301,11 @@ function loop() {
   last = now;
   if (game && gr) {
     if (state === 'play') {
-      game.update(dt * speed);
+      const gdt = gameMenu ? 0 : dt * speed;
+      game.update(gdt);
       gr.handleEvents(game.events.splice(0));
-      gr.frame(dt, dt * speed);
-      hud?.update(dt);
+      gr.frame(dt, gdt);
+      if (!gameMenu) hud?.update(dt);
     } else {
       game.events.length = 0;
       gr.frame(dt, dt * 0.3);

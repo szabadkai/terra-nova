@@ -6,7 +6,7 @@ export interface MenuOptions {
   ai: number;
 }
 
-export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void) {
+export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void) {
   const el = document.createElement('div');
   el.className = 'menu';
   el.innerHTML = `
@@ -32,7 +32,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <div class="field"><label>World seed</label>
           <div class="seedrow"><input type="number" value="${opts.seed}" id="seed"><button id="dice" title="Random world">🎲</button></div></div>
         <button class="wide primary big" id="start">Found your settlement</button>
-        <button class="wide" id="help">How to play</button>
+        <div class="row"><button class="wide" id="help">How to play</button><button class="wide" id="options">Options</button></div>
       </div>
       <div class="menu-foot">All graphics, sounds and music are generated procedurally in your browser.</div>
     </div>
@@ -77,6 +77,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   const help = el.querySelector<HTMLElement>('#helpbox')!;
   el.querySelector<HTMLButtonElement>('#help')!.onclick = () => help.classList.remove('hidden');
   el.querySelector<HTMLButtonElement>('#helpclose')!.onclick = () => help.classList.add('hidden');
+  el.querySelector<HTMLButtonElement>('#options')!.onclick = () => onOptions?.();
   return { el, cur };
 }
 

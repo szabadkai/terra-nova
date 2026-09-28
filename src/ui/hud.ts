@@ -1,13 +1,12 @@
-// In-game HUD: resource bar, build menu, economy/military/stats/settings tabs,
-// selection panel, messages and overlays.
+// In-game HUD: resource bar, build menu, economy/military/faith/stats tabs,
+// selection panel, messages and overlays. Settings live in the Esc menu (gameMenu.ts).
 import {
   BUILDINGS, BUILD_ORDER, BuildingType, CATEGORY_NAMES, Category, GOODS, GOOD_NAMES, Good, JOB_NAMES, PLAYER_COLORS, TOOLS,
 } from '../game/defs';
 import type { Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
-import type { GameRenderer, Quality } from '../render/renderer';
+import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
-import type { SeasonMode } from '../render/seasons';
 import { attackableSoldiers, launchAttack } from '../game/military';
 import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
 import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition } from '../game/sea';
@@ -17,6 +16,7 @@ import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
+import { prefs } from './prefs';
 
 const SEASON_ICON = ['🌸', '🌿', '🍂', '❄'];
 
@@ -29,12 +29,13 @@ const h = (tag: string, cls = '', html = '') => {
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
-type Tab = 'build' | 'goods' | 'military' | 'faith' | 'stats' | 'settings';
+type Tab = 'build' | 'goods' | 'military' | 'faith' | 'stats';
 
 export interface HudHooks {
   getSpeed(): number;
   setSpeed(s: number): void;
   restart(): void;
+  openMenu(): void;
 }
 
 export class HUD {
@@ -82,6 +83,11 @@ export class HUD {
   private buildTop() {
     this.top = h('div', 'panel topbar');
     this.root.appendChild(this.top);
+    const menu = h('button', 'panel menu-btn', '☰');
+    menu.title = 'Menu: settings, restart, quit (Esc)';
+    menu.setAttribute('aria-label', 'Open the menu');
+    menu.onclick = () => { this.audio.play('ui'); this.hooks.openMenu(); };
+    this.root.appendChild(menu);
   }
 
   private icon(g: Good, cls = 'gi') {
@@ -122,7 +128,7 @@ export class HUD {
       <div class="speed">
         ${[0, 1, 2, 4].map((s) => `<button data-speed="${s}" class="${speed === s ? 'on' : ''}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}
       </div>
-      <div class="fps" id="fps"></div>`;
+      <div class="fps${prefs.showFps ? '' : ' hidden'}" id="fps"></div>`;
     this.top.querySelectorAll<HTMLButtonElement>('button[data-speed]').forEach((b) => {
       b.onclick = () => { this.hooks.setSpeed(Number(b.dataset.speed)); this.audio.play('ui'); this.refreshTop(); };
     });
@@ -134,7 +140,7 @@ export class HUD {
     this.left = h('div', 'panel left');
     this.root.appendChild(this.left);
     // on narrow screens the panel slides in from a toggle
-    const toggle = h('button', 'panel-toggle', '☰');
+    const toggle = h('button', 'panel-toggle', '⚒');
     toggle.title = 'Show or hide the build panel';
     toggle.onclick = () => { this.left.classList.toggle('open'); this.audio.play('ui'); };
     this.root.appendChild(toggle);
@@ -142,7 +148,7 @@ export class HUD {
     this.left.appendChild(mmWrap);
     this.minimap = new Minimap(this.game, this.gr.cam, mmWrap);
     const tabs = h('div', 'tabs');
-    const defs: [Tab, string, string][] = [['build', '⚒', 'Build'], ['goods', '⚖', 'Economy'], ['military', '⚔', 'Military'], ['faith', '✦', 'Faith'], ['stats', '📈', 'Statistics'], ['settings', '⚙', 'Settings']];
+    const defs: [Tab, string, string][] = [['build', '⚒', 'Build'], ['goods', '⚖', 'Economy'], ['military', '⚔', 'Military'], ['faith', '✦', 'Faith'], ['stats', '📈', 'Statistics']];
     for (const [id, ic, label] of defs) {
       const b = h('button', 'tab' + (id === this.tab ? ' on' : ''), `<span>${ic}</span>`);
       b.title = label;
@@ -169,7 +175,6 @@ export class HUD {
       case 'military': return this.renderMilitary(c);
       case 'faith': return this.renderFaith(c);
       case 'stats': return this.renderStats(c);
-      case 'settings': return this.renderSettings(c);
     }
   }
 
@@ -413,72 +418,6 @@ export class HUD {
       });
       ctx.stroke();
     }
-  }
-
-  private renderSettings(c: HTMLElement) {
-    const s = this.gr.settings;
-    c.appendChild(h('h3', '', 'Graphics'));
-    const sel = h('div', 'kv');
-    sel.innerHTML = `<span>Quality</span><select>${(['low', 'medium', 'high', 'ultra'] as Quality[]).map((q) => `<option value="${q}" ${q === s.quality ? 'selected' : ''}>${q[0].toUpperCase() + q.slice(1)}</option>`).join('')}</select>`;
-    sel.querySelector('select')!.onchange = (e) => { s.quality = (e.target as HTMLSelectElement).value as Quality; this.gr.applyQuality(); };
-    c.appendChild(sel);
-    const toggle = (label: string, key: keyof typeof s, desc = '') => {
-      const row = h('label', 'toggle', `<input type="checkbox" ${s[key] ? 'checked' : ''}><span>${label}</span>${desc ? `<small>${desc}</small>` : ''}`);
-      row.querySelector('input')!.onchange = (e) => { (s as any)[key] = (e.target as HTMLInputElement).checked; this.gr.applyQuality(); };
-      c.appendChild(row);
-    };
-    toggle('Bloom & glow', 'bloom', 'glowing windows, forges, water glints');
-    toggle('Tilt-shift depth of field', 'dof', 'miniature diorama look');
-    toggle('Ambient occlusion (GTAO)', 'ao', 'soft contact shadows, heavier');
-    toggle('Colour grading', 'grade', 'filmic tone, vignette');
-    toggle('Grass tufts', 'grass', 'wind-swept grass blades');
-    toggle('Water reflections', 'reflections', 'real-time mirrored scene in lakes and sea');
-    toggle('Day & night cycle', 'dayCycle');
-    toggle('Territory borders', 'borders');
-    const w = h('div', 'kv');
-    w.innerHTML = `<span>Weather</span><select><option value="auto">Changing</option><option value="clear">Always clear</option><option value="rain">Rain</option><option value="snow">Snow</option></select>`;
-    const ws = w.querySelector('select')!;
-    ws.value = s.weather;
-    ws.onchange = () => { s.weather = ws.value as any; };
-    c.appendChild(w);
-    const se = h('div', 'kv');
-    se.innerHTML = `<span>Season</span><select><option value="auto">Changing</option><option value="spring">Spring</option><option value="summer">Summer</option><option value="autumn">Autumn</option><option value="winter">Winter</option></select>`;
-    const sesel = se.querySelector('select')!;
-    sesel.value = this.gr.seasons.mode;
-    sesel.onchange = () => { this.gr.seasons.mode = sesel.value as SeasonMode; };
-    c.appendChild(se);
-    const tod = h('div', 'slider-row');
-    tod.innerHTML = `<label>Time of day</label><input type="range" min="0" max="100" value="${Math.round(this.gr.sky.timeOfDay * 100)}">`;
-    const ti = tod.querySelector('input')!;
-    ti.oninput = () => { this.gr.sky.timeOfDay = Number(ti.value) / 100; };
-    c.appendChild(tod);
-    const dl = h('div', 'kv');
-    dl.innerHTML = `<span>Day length</span><select><option value="300">5 min</option><option value="600">10 min</option><option value="1200">20 min</option><option value="2400">40 min</option></select>`;
-    const dls = dl.querySelector('select')!;
-    dls.value = String(this.gr.sky.dayLength);
-    dls.onchange = () => { this.gr.sky.dayLength = Number(dls.value); };
-    c.appendChild(dl);
-    c.appendChild(h('h3', '', 'Audio & controls'));
-    const vol = h('div', 'slider-row');
-    vol.innerHTML = `<label>Volume</label><input type="range" min="0" max="100" value="${Math.round(this.audio.volume * 100)}">`;
-    const vi = vol.querySelector('input')!;
-    vi.oninput = () => this.audio.setVolume(Number(vi.value) / 100);
-    c.appendChild(vol);
-    const mus = h('label', 'toggle', `<input type="checkbox" ${this.audio.musicOn ? 'checked' : ''}><span>Music</span><small>generative lute</small>`);
-    mus.querySelector('input')!.onchange = (e) => this.audio.setMusic((e.target as HTMLInputElement).checked);
-    c.appendChild(mus);
-    const edge = h('label', 'toggle', `<input type="checkbox" ${this.gr.cam.edgeScroll ? 'checked' : ''}><span>Edge scrolling</span>`);
-    edge.querySelector('input')!.onchange = (e) => { this.gr.cam.edgeScroll = (e.target as HTMLInputElement).checked; };
-    c.appendChild(edge);
-    c.appendChild(h('div', 'keys', `
-      <div><kbd>W A S D</kbd> / arrows — scroll</div>
-      <div><kbd>Right drag</kbd> — pan · <kbd>Wheel</kbd> — zoom</div>
-      <div><kbd>Q</kbd>/<kbd>E</kbd> — rotate view · <kbd>H</kbd> — home</div>
-      <div><kbd>Space</kbd> — pause · <kbd>1</kbd>-<kbd>4</kbd> — speed</div>
-      <div><kbd>Esc</kbd> — cancel · <kbd>Del</kbd> — demolish</div>`));
-    const btn = h('button', 'wide danger', 'Abandon game & return to menu');
-    btn.onclick = () => this.hooks.restart();
-    c.appendChild(btn);
   }
 
   /** Geologist targeting: click a mountain inside the borders. */

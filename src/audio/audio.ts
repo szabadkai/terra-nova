@@ -49,6 +49,12 @@ export class Audio {
   private listener = { x: 0, z: 0, zoom: 30 };
   volume = 0.7;
   musicOn = true;
+  /** channel levels 0..1, on top of each channel's base mix */
+  musicVol = 1;
+  sfxVol = 1;
+  ambVol = 1;
+  /** a menu is open: ambience is ducked and the birds fall silent */
+  private paused = false;
   private musicT = 0;
   private birdT = 2;
   private recent = new Map<string, number>();
@@ -67,13 +73,13 @@ export class Audio {
     comp.ratio.value = 4;
     this.master.connect(comp).connect(ctx.destination);
     this.sfx = ctx.createGain();
-    this.sfx.gain.value = 0.8;
+    this.sfx.gain.value = 0.8 * this.sfxVol;
     this.sfx.connect(this.master);
     this.amb = ctx.createGain();
-    this.amb.gain.value = 0.5;
+    this.amb.gain.value = this.ambLevel();
     this.amb.connect(this.master);
     this.musicGain = ctx.createGain();
-    this.musicGain.gain.value = 0.22;
+    this.musicGain.gain.value = this.musicLevel();
     // simple reverb for music
     const conv = ctx.createConvolver();
     conv.buffer = this.impulse(2.4);
@@ -160,13 +166,35 @@ export class Audio {
     return b;
   }
 
+  private musicLevel() {
+    return this.musicOn ? 0.22 * this.musicVol : 0;
+  }
+  private ambLevel() {
+    return 0.5 * this.ambVol * (this.paused ? 0.3 : 1);
+  }
+  private ramp(g: GainNode | undefined, v: number) {
+    if (this.ctx && g) g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
+  }
+
   setVolume(v: number) {
     this.volume = v;
-    if (this.master) this.master.gain.value = v;
+    this.ramp(this.master, v);
   }
   setMusic(on: boolean) {
     this.musicOn = on;
-    if (this.musicGain) this.musicGain.gain.value = on ? 0.22 : 0;
+    this.ramp(this.musicGain, this.musicLevel());
+  }
+  setMix(music: number, sfx: number, ambience: number) {
+    this.musicVol = music;
+    this.sfxVol = sfx;
+    this.ambVol = ambience;
+    this.ramp(this.musicGain, this.musicLevel());
+    this.ramp(this.sfx, 0.8 * sfx);
+    this.ramp(this.amb, this.ambLevel());
+  }
+  setPaused(p: boolean) {
+    this.paused = p;
+    this.ramp(this.amb, this.ambLevel());
   }
 
   setListener(x: number, z: number, zoom: number) {
@@ -447,7 +475,7 @@ export class Audio {
     const t = this.ctx.currentTime;
     // birds by day
     this.birdT -= dt;
-    if (this.birdT <= 0 && night < 0.5 && rain < 0.5) {
+    if (this.birdT <= 0 && night < 0.5 && rain < 0.5 && !this.paused) {
       const bird = this.sample('bird');
       this.birdT = bird ? 3 + Math.random() * 6 : 1.5 + Math.random() * 4;
       const out = this.ctx.createGain();
