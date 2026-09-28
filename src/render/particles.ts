@@ -233,8 +233,8 @@ export class Particles {
   sparkle(x: number, y: number, z: number, n = 30, col: [number, number, number] = [2.0, 1.6, 0.6]) {
     this.emit({ x, y, z, vy: 1.2, spread: 2.4, vspread: 1.8, life: 1.6, size: 0.1, color: col, color2: [col[0] * 0.6, col[1] * 0.4, col[2] * 0.3], alpha: 1, gravity: -0.3, drag: 1.5, count: n, additive: true, kind: 1, jitter: 1.2 });
   }
-  leaves(x: number, y: number, z: number, n = 12) {
-    this.emit({ x, y: y + 1.2, z, vy: 0.4, spread: 1.6, vspread: 0.6, life: 2.4, size: 0.08, color: [0.35, 0.55, 0.18], color2: [0.45, 0.5, 0.15], alpha: 1, gravity: 0.8, drag: 1.4, count: n, kind: 1, jitter: 0.8 });
+  leaves(x: number, y: number, z: number, n = 12, color: [number, number, number] = [0.35, 0.55, 0.18], color2: [number, number, number] = [0.45, 0.5, 0.15]) {
+    this.emit({ x, y: y + 1.2, z, vy: 0.4, spread: 1.6, vspread: 0.6, life: 2.4, size: 0.08, color, color2, alpha: 1, gravity: 0.8, drag: 1.4, count: n, kind: 1, jitter: 0.8 });
   }
   hit(x: number, y: number, z: number) {
     this.emit({ x, y, z, vy: 0.8, spread: 1.6, life: 0.35, size: 0.08, color: [2, 1.8, 1.2], alpha: 1, gravity: 3, drag: 2, count: 6, additive: true, kind: 1 });

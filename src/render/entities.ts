@@ -6,7 +6,7 @@ import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
-import { leafTexture } from './textures';
+import { leafTexture, twigTexture } from './textures';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
@@ -34,11 +34,80 @@ function inst(geo: THREE.BufferGeometry, mat: THREE.Material, n: number, shadow 
 }
 
 // ------------------------------------------------------------------ trees
+// Deciduous foliage through the year (uSeasonA = leaf, turn, fresh, blossom from seasons.ts).
+// Crowns thin out by noise, leaf cards drop one by one and then show bare twigs instead.
+const DECIDUOUS: Record<number, { autumnA: number; autumnB: number; twig: number; blossom: number }> = {
+  0: { autumnA: 0xe0901c, autumnB: 0xb4441a, twig: 0x7e6c5c, blossom: 0 }, // oak: gold to russet
+  2: { autumnA: 0xf0c828, autumnB: 0xdca020, twig: 0x74625a, blossom: 0 }, // birch: bright yellow
+  4: { autumnA: 0xd84020, autumnB: 0xe88a24, twig: 0x786452, blossom: 1 }, // fruit tree: red/orange, spring blossom
+};
+const leafVertHead = (cards: boolean) => `
+varying vec3 vLeafP;
+varying float vTreeR;
+${cards ? 'attribute float aRnd;\nvarying float vCardR;\nvarying vec2 vCardUv;' : ''}`;
+const leafVert = (cards: boolean) => `
+  vLeafP = transformed;
+  #ifdef USE_INSTANCING
+    vTreeR = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
+  #else
+    vTreeR = 0.5;
+  #endif
+  ${cards ? 'vCardR = aRnd;\n  vCardUv = uv;' : ''}`;
+const leafFragHead = (cards: boolean, depth: boolean) => `
+varying vec3 vLeafP;
+varying float vTreeR;
+${depth ? 'uniform vec4 uSeasonA;\nuniform sampler2D tNoise;' : ''}
+uniform vec3 uAutumnA;
+uniform vec3 uAutumnB;
+uniform vec3 uTwigCol;
+uniform float uBlossomOn;
+// staggered per tree: some trees turn and drop early, others late
+float treeLeaf() { return clamp((uSeasonA.x - 0.5) * 1.6 + 0.5 + (vTreeR - 0.5) * 0.5, 0.0, 1.0); }
+float treeTurn() { return clamp((uSeasonA.y - 0.5) * 1.6 + 0.5 - (vTreeR - 0.5) * 0.6, 0.0, 1.0); }
+float crownNoise() {
+  return texture2D(tNoise, vLeafP.xy * 1.4 + vTreeR * 5.0).r * 0.5 + texture2D(tNoise, vLeafP.zy * 1.4 + 0.37).g * 0.5;
+}
+bool crownGone(float nz) { float tl = treeLeaf(); return nz > tl * tl * 1.1 - 0.05; }
+vec3 seasonLeaf(vec3 base, float vary) {
+  const vec3 W = vec3(0.3, 0.59, 0.11);
+  float lum = dot(base, W);
+  float tt = clamp(treeTurn() * 1.25 - vary * 0.3, 0.0, 1.0);
+  vec3 hue = mix(uAutumnA, uAutumnB, fract(vTreeR * 7.31));
+  // turned leaves are brighter than summer green; the last ones wither to brown
+  float wither = smoothstep(0.82, 1.0, tt);
+  hue = mix(hue, vec3(0.3, 0.17, 0.07), wither * 0.85);
+  vec3 turned = hue * (lum / max(dot(hue, W), 1e-3)) * (1.9 - wither * 0.8);
+  vec3 c = mix(base, turned, smoothstep(0.05, 0.5, tt));
+  return mix(c, c * vec3(1.2, 1.25, 0.7), uSeasonA.z * 0.6);
+}
+${cards ? `
+varying float vCardR;
+varying vec2 vCardUv;
+uniform sampler2D tLeaf;
+uniform sampler2D tTwig;
+// 0 bare twigs, 1 leaves, 2 blossom
+float cardState() {
+  float nz = texture2D(tNoise, vCardUv * 0.4 + vCardR * 3.1).r;
+  float score = vCardR * 0.8 + nz * 0.2;
+  if (score < treeLeaf() * 1.05 - 0.02) return 1.0;
+  if (score < uSeasonA.w * uBlossomOn * 0.9) return 2.0;
+  return 0.0;
+}
+float cardAlpha(float st) {
+  // thin twigs keep their coverage in the distance instead of dissolving in the lower mips
+  vec2 tuv = vCardUv * 256.0;
+  float lod = max(0.0, 0.5 * log2(max(dot(dFdx(tuv), dFdx(tuv)), dot(dFdy(tuv), dFdy(tuv)))));
+  float la = texture2D(tLeaf, vCardUv).a;
+  float ta = texture2D(tTwig, vCardUv).a * (1.0 + lod * 0.35);
+  return st > 0.5 ? la : ta;
+}` : ''}`;
+
 export class TreesRenderer {
   group = new THREE.Group();
   private trunks: THREE.InstancedMesh[] = [];
   private crowns: THREE.InstancedMesh[] = [];
   private cards: (THREE.InstancedMesh | null)[] = [];
+  private limbs: (THREE.InstancedMesh | null)[] = [];
   private version = -1;
   private fallStart = new Map<number, number>();
   private leafMat: THREE.Material;
@@ -46,52 +115,100 @@ export class TreesRenderer {
   constructor(private game: Game) {
     const geos = buildTreeGeos();
     const barkMat = vcMat({ roughness: 0.95 }, 'tree', 0.6, { snow: 0.35, key: 'bark' });
-    this.leafMat = vcMat({ roughness: 0.8, side: THREE.DoubleSide }, 'tree', 1, {
-      key: 'leaf',
-      snow: 0.8,
-      fragEmissive: `{
+    const limbMat = vcMat({ roughness: 0.95 }, 'tree', 1, { snow: 0.5, key: 'limb' });
+    const leafEmissive = (k: number, back: number, twig = '1.0') => `{
         vec3 V = normalize(vViewPosition);
         vec3 L = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
         float back = pow(clamp(dot(-V, L), 0.0, 1.0), 3.0);
-        totalEmissiveRadiance += diffuseColor.rgb * (0.10 + back * 0.35) * (1.0 - uNight * 0.8);
-      }`,
+        totalEmissiveRadiance += diffuseColor.rgb * (${k} + back * ${back}) * (1.0 - uNight * 0.8) * ${twig};
+      }`;
+    this.leafMat = vcMat({ roughness: 0.8, side: THREE.DoubleSide }, 'tree', 1, {
+      key: 'leaf',
+      snow: 0.8,
+      fragEmissive: leafEmissive(0.1, 0.35),
     });
     const depth = patchedDepthMaterial({ wind: 'tree' });
     const leafTex = leafTexture(0);
     const needleTex = leafTexture(1);
+    const twigTex = twigTexture();
     const mkCard = (map: THREE.Texture, key: string) => {
       const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, map, alphaTest: 0.45, side: THREE.DoubleSide });
-      return patchMaterial(m, {
-      wind: 'tree', key, snow: 0.75,
-      fragEmissive: `{
-        vec3 V = normalize(vViewPosition);
-        vec3 L = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
-        float back = pow(clamp(dot(-V, L), 0.0, 1.0), 3.0);
-        totalEmissiveRadiance += diffuseColor.rgb * (0.08 + back * 0.45) * (1.0 - uNight * 0.8);
-      }`,
-      });
+      return patchMaterial(m, { wind: 'tree', key, snow: 0.75, fragEmissive: leafEmissive(0.08, 0.45) });
     };
-    const cardMat = mkCard(leafTex, 'leafcard');
     const needleMat = mkCard(needleTex, 'needlecard');
-    const cardDepth = patchedDepthMaterial({ wind: 'tree', map: leafTex, alphaTest: 0.45 });
     const needleDepth = patchedDepthMaterial({ wind: 'tree', map: needleTex, alphaTest: 0.45, key: 'nd' });
+    // per-species seasonal materials (same programs, own colours)
+    const seasonal = (sp: number) => {
+      const d = DECIDUOUS[sp];
+      const uniforms = {
+        uAutumnA: { value: new THREE.Color(d.autumnA) }, uAutumnB: { value: new THREE.Color(d.autumnB) },
+        uTwigCol: { value: new THREE.Color(d.twig) }, uBlossomOn: { value: d.blossom },
+        tLeaf: { value: leafTex }, tTwig: { value: twigTex },
+      };
+      const depthU = { ...uniforms, uSeasonA: G.uSeasonA, tNoise: G.tNoise };
+      const crown = vcMat({ roughness: 0.8, side: THREE.DoubleSide }, 'tree', 1, {
+        key: 'leafS', snow: 0.8, uniforms,
+        vertexHead: leafVertHead(false), vertexBegin: leafVert(false), fragHead: leafFragHead(false, false),
+        fragRough: `{
+          float nzC = crownNoise();
+          if (crownGone(nzC)) discard;
+          diffuseColor.rgb = seasonLeaf(diffuseColor.rgb, nzC);
+        }`,
+        fragEmissive: leafEmissive(0.1, 0.35),
+      });
+      const crownDepth = patchedDepthMaterial({
+        wind: 'tree', key: 'leafSd', uniforms: depthU,
+        vertexHead: leafVertHead(false), vertexBegin: leafVert(false), fragHead: leafFragHead(false, true),
+        fragPost: 'if (crownGone(crownNoise())) discard;',
+      });
+      const card = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, alphaTest: 0.45, side: THREE.DoubleSide }), {
+        wind: 'tree', key: 'cardS', snow: 0.75, uniforms,
+        vertexHead: leafVertHead(true), vertexBegin: leafVert(true), fragHead: leafFragHead(true, false),
+        fragMap: `
+  float lfSt = cardState();
+  diffuseColor.a *= cardAlpha(lfSt);
+  if (lfSt > 0.5) diffuseColor.rgb *= texture2D(tLeaf, vCardUv).rgb;`,
+        fragRough: `{
+          if (lfSt < 0.5) diffuseColor.rgb = uTwigCol * clamp(dot(vColor.rgb, vec3(0.3, 0.59, 0.11)) * 2.4, 0.45, 1.25);
+          else if (lfSt > 1.5) diffuseColor.rgb = vec3(1.0, 0.76, 0.84) * clamp(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)) * 4.0, 0.55, 1.15);
+          else diffuseColor.rgb = seasonLeaf(diffuseColor.rgb, 1.0 - vCardR);
+        }`,
+        fragEmissive: leafEmissive(0.08, 0.45, '(lfSt < 0.5 ? 0.15 : 1.0)'),
+      });
+      const cardDepth = patchedDepthMaterial({
+        wind: 'tree', key: 'cardSd', uniforms: depthU,
+        vertexHead: leafVertHead(true), vertexBegin: leafVert(true), fragHead: leafFragHead(true, true),
+        fragPost: 'if (cardAlpha(cardState()) < 0.45) discard;',
+      });
+      return { crown, crownDepth, card, cardDepth };
+    };
     const cap = Math.max(4000, game.trees.size * 2);
-    for (const g of geos) {
+    geos.forEach((g, sp) => {
+      const sm = DECIDUOUS[sp] ? seasonal(sp) : null;
       const t = inst(g.trunk, barkMat, cap, true, depth);
-      const c = inst(g.crown, this.leafMat, cap, true, depth);
+      const c = inst(g.crown, sm ? sm.crown : this.leafMat, cap, true, sm ? sm.crownDepth : depth);
       this.trunks.push(t);
       this.crowns.push(c);
       this.group.add(t, c);
       if (g.cards) {
-        const cm = inst(g.cards, g.needles ? needleMat : cardMat, cap, true, g.needles ? needleDepth : cardDepth);
+        const cm = g.needles ? inst(g.cards, needleMat, cap, true, needleDepth) : inst(g.cards, sm!.card, cap, true, sm!.cardDepth);
         this.cards.push(cm);
         this.group.add(cm);
       } else this.cards.push(null);
-    }
+      if (g.branches) {
+        const lm = inst(g.branches, limbMat, cap, true, depth);
+        lm.visible = false;
+        this.limbs.push(lm);
+        this.group.add(lm);
+      } else this.limbs.push(null);
+    });
   }
 
   update(time: number) {
     const g = this.game;
+    // bare limbs only matter once the crowns start to thin
+    const bare = G.uSeasonA.value.x < 0.97;
+    for (const lm of this.limbs) if (lm) lm.visible = bare;
     let falling = false;
     for (const t of g.trees.values()) if (t.state === 'falling') { falling = true; break; }
     if (g.treesVersion === this.version && !falling) return;
@@ -119,9 +236,10 @@ export class TreesRenderer {
       tmpM.compose(tmpS.set(x, y, z), tmpQ, new THREE.Vector3(s, s * (0.95 + hash2(t.node, 3, 7) * 0.15), s));
       this.trunks[sp].setMatrixAt(i, tmpM);
       this.crowns[sp].setMatrixAt(i, tmpM);
+      this.limbs[sp]?.setMatrixAt(i, tmpM);
       const tint = 0.85 + hash2(t.node, 4, 7) * 0.3;
-      // autumn-ish variety on some trees
-      const warm = hash2(t.node, 6, 7) > 0.88 ? 0.25 : 0;
+      // a few copper-leaved trees for variety (real autumn colour comes from the season)
+      const warm = hash2(t.node, 6, 7) > 0.9 ? 0.12 : 0;
       tmpC.setRGB(tint * (1 + warm * 0.9), tint * (0.95 + hash2(t.node, 5, 7) * 0.1), tint * (0.9 - warm));
       this.crowns[sp].setColorAt(i, tmpC);
       const cm = this.cards[sp];
@@ -130,6 +248,8 @@ export class TreesRenderer {
     for (let sp = 0; sp < this.trunks.length; sp++) {
       this.trunks[sp].count = counts[sp];
       this.crowns[sp].count = counts[sp];
+      const lm = this.limbs[sp];
+      if (lm) { lm.count = counts[sp]; lm.instanceMatrix.needsUpdate = true; }
       const cm = this.cards[sp];
       if (cm) { cm.count = counts[sp]; cm.instanceMatrix.needsUpdate = true; if (cm.instanceColor) cm.instanceColor.needsUpdate = true; }
       this.trunks[sp].instanceMatrix.needsUpdate = true;
@@ -259,7 +379,17 @@ export class GrassRenderer {
   private t = 0;
   enabled = true;
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, { key: 'tuft', snow: 1 });
+    const mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, {
+      key: 'tuft', snow: 1,
+      // same seasonal grass tint as the terrain underneath
+      fragRough: `{
+        float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+        float d = clamp(uSeasonB.x * (0.8 + fract(vWPos.x * 3.1 + vWPos.z * 1.7) * 0.4), 0.0, 1.0);
+        vec3 dry = mix(vec3(1.35, 1.0, 0.32) * 1.15, vec3(1.12, 1.0, 0.58) * 0.9, uSeasonB.w);
+        diffuseColor.rgb = mix(diffuseColor.rgb, lum * dry, d * 0.85);
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 1.12, 0.8), uSeasonA.z * 0.7);
+      }`,
+    });
     this.mesh = inst(buildGrassTuft(), mat, 60000, false);
     this.rebuild();
   }

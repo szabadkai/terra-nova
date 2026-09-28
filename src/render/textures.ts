@@ -515,3 +515,45 @@ export function leafTexture(kind = 0): THREE.CanvasTexture {
   leafCache.set(kind, t);
   return t;
 }
+
+/** Bare twig card (alpha only) for deciduous crowns in winter: forking twigs spreading from the card centre. */
+let twigTex: THREE.CanvasTexture | null = null;
+export function twigTexture(): THREE.CanvasTexture {
+  if (twigTex) return twigTex;
+  const S = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d')!;
+  ctx.clearRect(0, 0, S, S);
+  ctx.strokeStyle = '#fff';
+  ctx.lineCap = 'round';
+  let seed = 4711;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const twig = (x: number, y: number, a: number, len: number, w: number, depth: number) => {
+    // slightly zig-zagging segment, then fork
+    const steps = 3;
+    for (let s = 0; s < steps; s++) {
+      a += (rnd() - 0.5) * 0.5;
+      const nx = x + Math.cos(a) * (len / steps), ny = y + Math.sin(a) * (len / steps);
+      ctx.lineWidth = w * (1 - s * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+      x = nx; y = ny;
+    }
+    if (depth <= 0 || w < 1.3) return;
+    const n = rnd() < 0.35 ? 3 : 2;
+    for (let k = 0; k < n; k++) twig(x, y, a + (k - (n - 1) / 2) * (0.55 + rnd() * 0.35), len * (0.62 + rnd() * 0.15), w * 0.7, depth - 1);
+  };
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + rnd() * 0.6;
+    twig(S / 2 + Math.cos(a) * 8, S / 2 + Math.sin(a) * 8, a, S * (0.13 + rnd() * 0.05), 4.5, 3);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.anisotropy = 4;
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  twigTex = t;
+  return t;
+}

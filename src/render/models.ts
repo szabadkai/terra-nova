@@ -56,7 +56,11 @@ function softNormals(g: THREE.BufferGeometry, center: THREE.Vector3, amount = 0.
 }
 
 // ------------------------------------------------------------------ trees
-export interface TreeGeo { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry; cards?: THREE.BufferGeometry; needles?: boolean; }
+export interface TreeGeo {
+  trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry; cards?: THREE.BufferGeometry; needles?: boolean;
+  /** deciduous only: bare limbs, drawn while the leaves are thin */
+  branches?: THREE.BufferGeometry;
+}
 
 function trunkGeo(h: number, r: number, bark: number, bend = 0, marks = false): THREE.BufferGeometry {
   const g = new THREE.CylinderGeometry(r * 0.65, r, h, 7, 4, true);
@@ -90,7 +94,7 @@ function crownColor(g: THREE.BufferGeometry, cols: number[], center: THREE.Vecto
 
 /** Leaf cards scattered over an ellipsoidal crown, with outward normals and AO colours. */
 function leafCards(center: THREE.Vector3, rx: number, ry: number, rz: number, n: number, size: number, seed: number, tint: number[]): THREE.BufferGeometry {
-  const pos: number[] = [], nrm: number[] = [], uv: number[] = [], col: number[] = [];
+  const pos: number[] = [], nrm: number[] = [], uv: number[] = [], col: number[] = [], rnd: number[] = [];
   const tc = tint.map(lin);
   const up = new THREE.Vector3(0, 1, 0);
   for (let k = 0; k < n; k++) {
@@ -116,6 +120,8 @@ function leafCards(center: THREE.Vector3, rx: number, ry: number, rz: number, n:
     const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
     const shade = THREE.MathUtils.clamp(0.55 + dir.y * 0.35 + (rr - 0.7) * 0.6, 0.35, 1.1);
     const base = tc[k % tc.length];
+    // order in which this card drops its leaves in autumn (low bottom cards go first)
+    const fall = THREE.MathUtils.clamp(hash2(k, seed, 9) * 0.8 + (0.5 - dir.y * 0.5) * 0.2, 0, 1);
     for (const idx of [0, 1, 2, 0, 2, 3]) {
       const q = quad[idx];
       pos.push(q.x, q.y, q.z);
@@ -124,6 +130,7 @@ function leafCards(center: THREE.Vector3, rx: number, ry: number, rz: number, n:
       nrm.push(on.x, on.y, on.z);
       uv.push(uvs[idx][0], uvs[idx][1]);
       col.push(base[0] * shade, base[1] * shade, base[2] * shade);
+      rnd.push(fall);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -131,7 +138,72 @@ function leafCards(center: THREE.Vector3, rx: number, ry: number, rz: number, n:
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('aRnd', new THREE.Float32BufferAttribute(rnd, 1));
   return g;
+}
+
+const UPV = new THREE.Vector3(0, 1, 0);
+
+/** Tapered open cylinder from a to b. */
+function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, bark: [number, number, number], radial = 5, seed = 0): THREE.BufferGeometry {
+  const d = b.clone().sub(a);
+  const len = d.length();
+  const g = new THREE.CylinderGeometry(r1, r0, len, radial, 1, true);
+  g.translate(0, len / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UPV, d.normalize()));
+  g.translate(a.x, a.y, a.z);
+  return colorize(g, (x, y, z) => {
+    const k = 0.75 + 0.35 * hash2(Math.round(x * 40), Math.round(y * 40) + Math.round(z * 40) * 5, seed);
+    return [bark[0] * k, bark[1] * k, bark[2] * k];
+  });
+}
+
+/** Distance from p along unit dir d to the far side of an ellipsoid (centre c, radii r); 0 if it misses. */
+function rayEllipsoid(p: THREE.Vector3, d: THREE.Vector3, c: THREE.Vector3, r: THREE.Vector3): number {
+  const P = p.clone().sub(c).divide(r), D = d.clone().divide(r);
+  const a = D.dot(D), b = 2 * P.dot(D), cc = P.dot(P) - 1;
+  const disc = b * b - 4 * a * cc;
+  return disc < 0 ? 0 : Math.max(0, (-b + Math.sqrt(disc)) / (2 * a));
+}
+
+/**
+ * Bare limbs of a deciduous crown: a leader continuing the trunk plus spiralling limbs with side
+ * branches, all ending inside the leaf-card shell (whose cards show twigs once the leaves are gone).
+ */
+function branchSkeleton(seed: number, trunkTop: number, trunkR: number, c: THREE.Vector3, shell: THREE.Vector3, limbs: number, bark: number, lean: number): THREE.BufferGeometry {
+  const col = lin(bark);
+  const parts: THREE.BufferGeometry[] = [];
+  const top = new THREE.Vector3(0, c.y + shell.y * 0.7, 0);
+  const lead0 = new THREE.Vector3(0, trunkTop - 0.06, 0);
+  const leadMid = new THREE.Vector3((hash2(seed, 1, 5) - 0.5) * 0.08, (lead0.y + top.y) / 2, (hash2(seed, 2, 5) - 0.5) * 0.08);
+  parts.push(limb(lead0, leadMid, trunkR * 0.66, trunkR * 0.42, col, 6, seed), limb(leadMid, top, trunkR * 0.42, trunkR * 0.12, col, 5, seed));
+  for (let k = 0; k < limbs; k++) {
+    const t = (k + 0.5) / limbs;
+    const y0 = trunkTop * 0.7 + (c.y + shell.y * 0.25 - trunkTop * 0.7) * t;
+    const a = k * 2.39996 + seed + (hash2(k, seed, 1) - 0.5) * 0.7;
+    const dir = new THREE.Vector3(Math.cos(a), lean + hash2(k, seed, 2) * 0.45 + t * 0.35, Math.sin(a)).normalize();
+    // start on the leader, so limbs higher up branch off a thinner stem
+    const start = y0 <= leadMid.y
+      ? lead0.clone().lerp(leadMid, Math.max(0, (y0 - lead0.y) / (leadMid.y - lead0.y)))
+      : leadMid.clone().lerp(top, (y0 - leadMid.y) / (top.y - leadMid.y));
+    const L = Math.max(0.25, rayEllipsoid(start, dir, c, shell) * (0.8 + hash2(k, seed, 3) * 0.12));
+    const bend = new THREE.Vector3(hash2(k, seed, 4) - 0.5, 0.35 + hash2(k, seed, 6) * 0.2, hash2(k, seed, 7) - 0.5).multiplyScalar(L * 0.18);
+    const mid = start.clone().addScaledVector(dir, L * 0.5).add(bend);
+    const end = start.clone().addScaledVector(dir, L);
+    const r0 = trunkR * (0.55 - t * 0.2), rm = r0 * 0.62, r1 = r0 * 0.28;
+    parts.push(limb(start, mid, r0, rm, col, 5, seed + k), limb(mid, end, rm, r1, col, 4, seed + k));
+    // side branches fork off towards the shell
+    for (let sI = 0; sI < 3; sI++) {
+      const f = 0.3 + sI * 0.24 + (hash2(k, sI, seed + 11) - 0.5) * 0.1;
+      const p = f < 0.5 ? start.clone().lerp(mid, f / 0.5) : mid.clone().lerp(end, (f - 0.5) / 0.5);
+      const sa = a + (sI % 2 ? 1 : -1) * (0.7 + hash2(k, sI, seed + 12) * 0.6);
+      const d2 = new THREE.Vector3(Math.cos(sa), lean * 0.8 + hash2(k, sI, seed + 13) * 0.6, Math.sin(sa)).normalize();
+      const L2 = Math.min(L * 0.55, Math.max(0.12, rayEllipsoid(p, d2, c, shell) * 0.85));
+      const rr = THREE.MathUtils.lerp(r0, r1, f) * 0.6;
+      parts.push(limb(p, p.clone().addScaledVector(d2, L2), rr, rr * 0.3, col, 3, seed + k * 7 + sI));
+    }
+  }
+  return merge(parts);
 }
 
 /** Drooping skirt of needle cards around a conifer trunk. */
@@ -192,7 +264,8 @@ export function buildTreeGeos(): TreeGeo[] {
     crownColor(crown, [0x223c12, 0x284416, 0x1e3610], c, 1);
     const cards = leafCards(c, 0.84, 0.74, 0.84, 64, 0.72, 1, [0x9ac860, 0x8aba54, 0xa8d06a, 0x86b04e]);
     const trunk = merge([trunkGeo(1.3, 0.1, 0x5a4230, 0.03), (() => { const b = trunkGeo(0.55, 0.05, 0x5a4230); b.rotateZ(0.8); b.translate(0.05, 0.85, 0); return b; })(), (() => { const b = trunkGeo(0.5, 0.045, 0x5a4230); b.rotateZ(-0.9); b.rotateY(1.2); b.translate(-0.02, 1.0, 0.02); return b; })()]);
-    out.push({ trunk, crown, cards });
+    const branches = branchSkeleton(1, 1.3, 0.1, c, new THREE.Vector3(0.74, 0.66, 0.74), 6, 0x5a4230, 0.35);
+    out.push({ trunk, crown, cards, branches });
   }
   // 1 pine
   {
@@ -233,7 +306,8 @@ export function buildTreeGeos(): TreeGeo[] {
     softNormals(crown, c, 0.75);
     crownColor(crown, [0x345a1c, 0x3a6220], c, 3);
     const cards = leafCards(c, 0.58, 0.8, 0.58, 46, 0.52, 7, [0xc0e070, 0xb0d466, 0xd0e880]);
-    out.push({ trunk: trunkGeo(1.5, 0.065, 0xe8e2d6, 0.02, true), crown, cards });
+    const branches = branchSkeleton(7, 1.5, 0.065, c, new THREE.Vector3(0.5, 0.72, 0.5), 6, 0x4a3a34, 0.9);
+    out.push({ trunk: trunkGeo(1.5, 0.065, 0xe8e2d6, 0.02, true), crown, cards, branches });
   }
   // 3 palm
   {
@@ -285,7 +359,8 @@ export function buildTreeGeos(): TreeGeo[] {
       fruits.push(f);
     }
     const cards = leafCards(c, 0.64, 0.54, 0.64, 44, 0.56, 13, [0xa0cc60, 0x94c058]);
-    out.push({ trunk: trunkGeo(0.95, 0.08, 0x5a4230, 0.04), crown: merge([crown, ...fruits]), cards });
+    const branches = branchSkeleton(13, 0.95, 0.08, c, new THREE.Vector3(0.58, 0.48, 0.58), 5, 0x5a4230, 0.25);
+    out.push({ trunk: trunkGeo(0.95, 0.08, 0x5a4230, 0.04), crown: merge([crown, ...fruits]), cards, branches });
   }
   return out;
 }
