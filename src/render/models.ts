@@ -569,7 +569,7 @@ export const DEER_HIPS: [number, number, number][] = [[-0.052, 0.4, 0.15], [0.05
 export const DEER_KNEE = 0.2;
 
 /** A small tapered rod from a to b (radius r0 at a, r1 at b). */
-function rod(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, seg = 6) {
+function taperRod(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, seg = 6) {
   const d = new THREE.Vector3().subVectors(b, a);
   const g = new THREE.CylinderGeometry(r1, r0, d.length(), seg);
   g.translate(0, d.length() / 2, 0);
@@ -641,7 +641,7 @@ export function buildDeerGeos() {
   const fawn = merge([colorize(barrel(), (x, y, z) => coatAt(x, y, z, true)), tail()]);
 
   // the neck, in its own space from the pivot: rising forward, thick at the chest
-  const neckG = rod(new THREE.Vector3(0, -0.02, -0.02), new THREE.Vector3(DEER_HEAD[0], DEER_HEAD[1], DEER_HEAD[2]), 0.068, 0.042, 12);
+  const neckG = taperRod(new THREE.Vector3(0, -0.02, -0.02), new THREE.Vector3(DEER_HEAD[0], DEER_HEAD[1], DEER_HEAD[2]), 0.068, 0.042, 12);
   // coat all round but a pale throat on its underside
   const ax = new THREE.Vector3(...DEER_HEAD).normalize(), front = new THREE.Vector3(0, -ax.z, ax.y);
   const neck = merge([colorize(neckG, (x, y, z) => {
@@ -656,7 +656,7 @@ export function buildDeerGeos() {
     const skull = new THREE.SphereGeometry(0.058, 14, 10);
     skull.scale(0.82, 0.86, 1.25);
     skull.translate(0, 0.02, 0.035);
-    const muzzle = rod(new THREE.Vector3(0, 0.012, 0.06), new THREE.Vector3(0, -0.035, 0.155), 0.04, 0.026, 12);
+    const muzzle = taperRod(new THREE.Vector3(0, 0.012, 0.06), new THREE.Vector3(0, -0.035, 0.155), 0.04, 0.026, 12);
     const tip = new THREE.SphereGeometry(0.027, 10, 8);
     tip.translate(0, -0.036, 0.155);
     const parts = [flat(skull, coat), colorize(muzzle, (x, y, z) => shade(mix(coat, pale, 0.35), x, y, z)), flat(tip, nose)];
@@ -680,11 +680,11 @@ export function buildDeerGeos() {
   for (const s of [-1, 1]) {
     const V = (x: number, y: number, z: number) => new THREE.Vector3(s * x, y, z);
     const P = [V(0.028, 0.07, 0.02), V(0.07, 0.15, -0.005), V(0.1, 0.24, -0.03), V(0.105, 0.32, -0.06)];
-    for (let k = 0; k < 3; k++) antlers.push(rod(P[k], P[k + 1], 0.013 - k * 0.002, 0.011 - k * 0.002));
-    antlers.push(rod(V(0.045, 0.1, 0.01), V(0.06, 0.12, 0.1), 0.009, 0.004));
-    antlers.push(rod(P[2], V(0.12, 0.28, 0.05), 0.008, 0.004));
-    antlers.push(rod(P[3], V(0.08, 0.39, -0.05), 0.008, 0.003));
-    antlers.push(rod(P[3], V(0.15, 0.37, -0.08), 0.008, 0.003));
+    for (let k = 0; k < 3; k++) antlers.push(taperRod(P[k], P[k + 1], 0.013 - k * 0.002, 0.011 - k * 0.002));
+    antlers.push(taperRod(V(0.045, 0.1, 0.01), V(0.06, 0.12, 0.1), 0.009, 0.004));
+    antlers.push(taperRod(P[2], V(0.12, 0.28, 0.05), 0.008, 0.004));
+    antlers.push(taperRod(P[3], V(0.08, 0.39, -0.05), 0.008, 0.003));
+    antlers.push(taperRod(P[3], V(0.15, 0.37, -0.08), 0.008, 0.003));
   }
   const stag = merge([...headParts(), ...antlers.map((g) => colorize(g, (x, y, z) => shade(mix(back, antler, ramp(0.08, 0.2, y)), x, y, z)))]);
 
@@ -814,63 +814,121 @@ export function buildPigGeos() {
 }
 
 // ------------------------------------------------------------------ donkeys
-/** A pack donkey facing +z: barrel body with head, ears, mane and tail; legs pivot at the hip
- *  (y = 0.34); the pack saddle is drawn on top only while it carries something. */
+/** Joints of the donkey: the neck (with the head) pivots at DONKEY_NECK, the upper legs hang
+ * from DONKEY_HIPS and the lower legs from DONKEY_KNEE below them. */
+export const DONKEY_NECK: [number, number, number] = [0, 0.52, 0.19];
+export const DONKEY_HIPS: [number, number, number][] = [[-0.072, 0.37, 0.17], [0.072, 0.37, 0.17], [-0.078, 0.365, -0.18], [0.078, 0.365, -0.18]];
+export const DONKEY_KNEE = 0.18;
+
+/**
+ * A pack donkey facing +z, the ground at y 0: `body` is the grey-brown barrel with the dark
+ * stripe down the back and across the shoulders, a pale belly and the tufted tail; `neck` rises
+ * from DONKEY_NECK with a short upright mane and carries the big head, pale muzzle, ringed eyes
+ * and long dark-tipped ears; `upper` and `lower` are the halves of a sturdy leg with a pale sock
+ * and a dark hoof; `pack` is the saddle blanket and girth, drawn only while it carries something.
+ */
 export function buildDonkeyGeos() {
-  const coat: [number, number, number] = [0.34, 0.3, 0.27], pale: [number, number, number] = [0.6, 0.55, 0.49], dark: [number, number, number] = [0.13, 0.11, 0.09];
-  const tint = (g: THREE.BufferGeometry, c: [number, number, number], v = 0.08) => colorize(g, (x, y, z) => {
-    const k = 1 - v + hash2(Math.round(x * 60), Math.round(y * 60) + Math.round(z * 60) * 3, 5) * v * 2;
+  const coat = lin(0x7c7066), dark = lin(0x3a312b), pale = lin(0xd6cdbf), black = lin(0x171311), hoofC = lin(0x2a241f), nose = lin(0x5a4c44);
+  const mix = (a: number[], b: number[], k: number): [number, number, number] => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const ramp = (e0: number, e1: number, v: number) => { const t = Math.max(0, Math.min(1, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+  const shade = (c: [number, number, number], x: number, y: number, z: number): [number, number, number] => {
+    const k = 0.93 + hash2(Math.round(x * 70), Math.round(y * 70) + Math.round(z * 70) * 3, 5) * 0.14;
     return [c[0] * k, c[1] * k, c[2] * k];
+  };
+  const flat = (g: THREE.BufferGeometry, c: [number, number, number]) => colorize(g, (x, y, z) => shade(c, x, y, z));
+  const CY = 0.47;
+
+  // a stocky barrel, turned along z, with a little sag to the belly
+  const key = [[0, -0.285], [0.07, -0.275], [0.11, -0.25], [0.136, -0.2], [0.148, -0.13], [0.15, -0.05], [0.149, 0.03],
+    [0.146, 0.1], [0.136, 0.17], [0.112, 0.23], [0.075, 0.27], [0, 0.285]];
+  const prof = new THREE.SplineCurve(key.map(([r, a]) => new THREE.Vector2(r, a))).getPoints(22);
+  for (const v of prof) v.x = Math.max(0, v.x);
+  let barrel: THREE.BufferGeometry = new THREE.LatheGeometry(prof, 20);
+  barrel.rotateX(Math.PI / 2);
+  barrel.deleteAttribute('normal');
+  barrel.deleteAttribute('uv');
+  barrel = mergeVertices(barrel, 1e-5);
+  {
+    const p = barrel.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), z = p.getZ(i);
+      p.setXYZ(i, p.getX(i) * 0.8, y > 0 ? y * 0.92 : y * (1 + 0.1 * Math.max(0, Math.cos(z * 5))), z);
+    }
+  }
+  barrel.computeVertexNormals();
+  barrel.translate(0, CY, 0);
+  colorize(barrel, (x, y, z) => {
+    let c = mix(coat, pale, ramp(CY - 0.05, CY - 0.11, y));
+    // the dark stripe along the spine and the cross over the shoulders
+    const spine = ramp(0.035, 0.012, Math.abs(x)) * ramp(CY + 0.08, CY + 0.12, y);
+    const cross = ramp(0.03, 0.008, Math.abs(z - 0.13)) * ramp(CY - 0.02, CY + 0.06, y);
+    c = mix(c, dark, Math.max(spine, cross) * 0.85);
+    return shade(c, x, y, z);
   });
-  const body = new THREE.SphereGeometry(0.19, 12, 9);
-  body.scale(0.85, 0.8, 1.5);
-  body.translate(0, 0.47, 0);
-  colorize(body, (_x, y) => (y < 0.4 ? [pale[0] * 0.85, pale[1] * 0.85, pale[2] * 0.85] : coat));
-  const neck = new THREE.CylinderGeometry(0.065, 0.09, 0.32, 8);
-  neck.rotateX(-0.8);
-  neck.translate(0, 0.62, 0.25);
-  const head = new THREE.SphereGeometry(0.085, 10, 8);
-  head.scale(0.8, 0.85, 1.55);
-  head.translate(0, 0.745, 0.41);
-  const muzzle = new THREE.SphereGeometry(0.058, 8, 6);
-  muzzle.scale(0.85, 0.72, 1);
-  muzzle.translate(0, 0.725, 0.53);
-  const mane = new THREE.BoxGeometry(0.035, 0.07, 0.3);
-  mane.rotateX(-0.8);
-  mane.translate(0, 0.72, 0.23);
-  const tail = new THREE.CylinderGeometry(0.012, 0.018, 0.22, 5);
-  tail.rotateX(0.25);
-  tail.translate(0, 0.4, -0.3);
-  const tuft = new THREE.SphereGeometry(0.032, 6, 5);
-  tuft.translate(0, 0.29, -0.325);
-  const ears: THREE.BufferGeometry[] = [];
-  for (const s of [-1, 1]) {
-    const ear = new THREE.ConeGeometry(0.03, 0.17, 6);
+  const tail = merge([
+    colorize(taperRod(new THREE.Vector3(0, CY + 0.06, -0.272), new THREE.Vector3(0, CY - 0.13, -0.31), 0.016, 0.01), (x, y, z) => shade(coat, x, y, z)),
+    flat(new THREE.SphereGeometry(0.028, 8, 6).scale(0.7, 1.5, 0.7).translate(0, CY - 0.16, -0.312), black),
+  ]);
+  const body = merge([barrel, tail]);
+
+  // the neck and head, in neck space from the pivot: a thick neck, the head angled nose-down
+  const parts: THREE.BufferGeometry[] = [];
+  const neckG = taperRod(new THREE.Vector3(0, -0.04, -0.04), new THREE.Vector3(0, 0.19, 0.13), 0.09, 0.062, 14);
+  parts.push(colorize(neckG, (x, y, z) => shade(mix(coat, pale, ramp(0.0, 0.05, z - y * 0.7) * 0.5), x, y, z)));
+  const mane = new THREE.BoxGeometry(0.022, 0.05, 0.26);
+  mane.rotateX(-0.95);
+  mane.translate(0, 0.1, 0.02);
+  parts.push(flat(mane, dark));
+  const skull = new THREE.SphereGeometry(0.078, 14, 10);
+  skull.scale(0.8, 0.88, 1.2);
+  skull.translate(0, 0.215, 0.16);
+  parts.push(flat(skull, coat));
+  const muzzle = taperRod(new THREE.Vector3(0, 0.2, 0.2), new THREE.Vector3(0, 0.125, 0.315), 0.06, 0.05, 14);
+  parts.push(colorize(muzzle, (x, y, z) => shade(mix(coat, pale, ramp(0.24, 0.29, z)), x, y, z)));
+  const tip = new THREE.SphereGeometry(0.052, 12, 9);
+  tip.scale(1, 0.9, 0.9);
+  tip.translate(0, 0.12, 0.32);
+  parts.push(colorize(tip, (x, y, z) => shade(mix(pale, nose, ramp(0.33, 0.36, z) * 0.8), x, y, z)));
+  for (const sd of [-1, 1]) {
+    const nostril = new THREE.SphereGeometry(0.011, 6, 5);
+    nostril.translate(sd * 0.022, 0.13, 0.36);
+    const ring = new THREE.SphereGeometry(0.021, 8, 6);
+    ring.translate(sd * 0.05, 0.235, 0.185);
+    const eye = new THREE.SphereGeometry(0.013, 8, 6);
+    eye.translate(sd * 0.057, 0.237, 0.192);
+    // long ears standing up in a V, pale inside with dark tips
+    const ear = new THREE.SphereGeometry(0.04, 10, 7);
+    ear.scale(0.45, 1.9, 0.26);
+    ear.translate(0, 0.07, 0);
     ear.rotateX(-0.3);
-    ear.rotateZ(s * 0.4);
-    ear.translate(s * 0.055, 0.87, 0.35);
-    ears.push(tint(ear, coat));
+    ear.rotateZ(-sd * 0.32);
+    ear.translate(sd * 0.035, 0.27, 0.125);
+    parts.push(flat(nostril, black), flat(ring, pale), flat(eye, black),
+      colorize(ear, (x, y, z) => shade(mix(mix(coat, pale, ramp(0.015, 0.0, Math.abs(z - 0.13)) * 0.4), black, ramp(0.36, 0.41, y)), x, y, z)));
   }
-  const eyes: THREE.BufferGeometry[] = [];
-  for (const s of [-1, 1]) {
-    const eye = new THREE.SphereGeometry(0.014, 6, 5);
-    eye.translate(s * 0.058, 0.775, 0.47);
-    eyes.push(tint(eye, [0.05, 0.04, 0.03], 0));
-  }
-  const bodyG = merge([body, tint(neck, coat), tint(head, coat), tint(muzzle, pale), tint(mane, dark), tint(tail, coat), tint(tuft, dark), ...ears, ...eyes]);
-  const leg = new THREE.BoxGeometry(0.048, 0.34, 0.048);
-  leg.translate(0, -0.17, 0);
-  colorize(leg, (_x, y) => (y < -0.3 ? dark : y < -0.2 ? pale : coat));
+  const neck = merge(parts);
+
+  // a sturdy leg in two halves
+  const upperG = new THREE.CylinderGeometry(0.05, 0.026, DONKEY_KNEE, 9);
+  upperG.translate(0, -DONKEY_KNEE / 2, 0);
+  const upper = merge([colorize(upperG, (x, y, z) => shade(coat, x, y, z))]);
+  const lowerLen = 0.37 - DONKEY_KNEE;
+  const lowerG = new THREE.CylinderGeometry(0.025, 0.021, lowerLen, 8);
+  lowerG.translate(0, -lowerLen / 2, 0);
+  const hoofG = new THREE.CylinderGeometry(0.024, 0.028, 0.036, 8);
+  hoofG.translate(0, -lowerLen + 0.018, 0);
+  const lower = merge([colorize(lowerG, (x, y, z) => shade(mix(coat, pale, ramp(-0.08, -0.13, y)), x, y, z)), flat(hoofG, hoofC)]);
+
   // pack saddle: a striped blanket over the back with a girth strap
   const blanket = new THREE.BoxGeometry(0.4, 0.035, 0.3);
   blanket.translate(0, 0.615, 0.0);
   colorize(blanket, (x) => (Math.sin(x * 40) > 0 ? [0.5, 0.14, 0.11] : [0.7, 0.62, 0.45]));
-  const strap = new THREE.TorusGeometry(0.175, 0.012, 5, 16);
-  strap.rotateY(Math.PI / 2);
-  strap.scale(1, 0.85, 1);
-  strap.translate(0, 0.47, 0.02);
-  const pack = merge([blanket, tint(strap, [0.35, 0.25, 0.16], 0)]);
-  return { body: prep(bodyG), leg: prep(leg), pack: prep(pack) };
+  // the girth goes round the barrel just behind the elbows
+  const strap = new THREE.TorusGeometry(0.175, 0.012, 5, 20);
+  strap.scale(0.76, 0.84, 1);
+  strap.translate(0, 0.462, 0.08);
+  const pack = merge([blanket, flat(strap, lin(0x5a3f28))]);
+  return { body, neck, upper, lower, pack };
 }
 
 // ------------------------------------------------------------------ catapult
@@ -967,10 +1025,48 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
   const handle = (len: number) => { const g = new THREE.BoxGeometry(0.022, len, 0.022); g.translate(0, len / 2, 0); return c(g, 0x7a5a38); };
   const metal = (w: number, h: number, d: number, x: number, y: number, z: number, hex = 0x9aa0a6) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); return c(g, hex, 0.05); };
 
-  const log = new THREE.CylinderGeometry(0.055, 0.06, 0.42, 8);
-  log.rotateZ(Math.PI / 2);
-  log.translate(0, 0.06, 0);
-  const logG = colorize(prep(log), (x) => (Math.abs(x) > 0.2 ? [0.78, 0.62, 0.4] : [0.36, 0.25, 0.16]));
+  // a log: rough bark along its length (its own vertices, so the pale ends cannot bleed over it),
+  // sawn ends showing the rings, and the stub of a lopped branch
+  const logG = (() => {
+    const L = 0.42;
+    const bark = new THREE.CylinderGeometry(0.056, 0.061, L, 11, 5, true);
+    const bp = bark.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < bp.count; i++) {
+      const x = bp.getX(i), y = bp.getY(i), z = bp.getZ(i);
+      const k = 0.93 + 0.1 * hash2(Math.round(Math.atan2(z, x) * 4), Math.round(y * 30), 7);
+      bp.setXYZ(i, x * k, y, z * k);
+    }
+    bark.computeVertexNormals();
+    const barkC = lin(0x5a4130), barkD = lin(0x3a2a1f);
+    colorize(bark, (x, y, z) => {
+      const n = hash2(Math.round(Math.atan2(z, x) * 5), Math.round(y * 24), 3);
+      const k = 0.85 + n * 0.3;
+      const c = n > 0.7 ? barkD : barkC;
+      return [c[0] * k, c[1] * k, c[2] * k];
+    });
+    const wood = lin(0xd9b77e), ring = lin(0xb08650), edge = lin(0x6a4a30);
+    const cap = (y: number, r: number, flip: boolean) => {
+      const g = new THREE.CircleGeometry(r, 11, 0, Math.PI * 2);
+      g.rotateX(flip ? Math.PI / 2 : -Math.PI / 2);
+      g.translate(0, y, 0);
+      // CircleGeometry has only a centre and a rim: add rings in between for the growth rings
+      const out = new THREE.RingGeometry(0, r, 11, 4);
+      out.rotateX(flip ? Math.PI / 2 : -Math.PI / 2);
+      out.translate(0, y, 0);
+      g.dispose();
+      return colorize(out, (x, _y, z) => {
+        const d = Math.hypot(x, z) / r;
+        return d > 0.88 ? edge : Math.sin(d * 16) > 0.3 ? ring : wood;
+      });
+    };
+    const stub = new THREE.CylinderGeometry(0.014, 0.02, 0.05, 6);
+    stub.rotateZ(-0.9);
+    stub.translate(0.05, 0.06, 0);
+    const g = merge([bark, cap(L / 2, 0.061, false), cap(-L / 2, 0.056, true), c(stub, 0x4a3526)]);
+    g.rotateZ(Math.PI / 2);
+    g.translate(0, 0.06, 0);
+    return g;
+  })();
   const board = new THREE.BoxGeometry(0.44, 0.03, 0.1);
   board.translate(0, 0.015, 0);
   const stone = new THREE.BoxGeometry(0.16, 0.12, 0.13, 2, 2, 2);
@@ -1005,17 +1101,19 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
   waterTop.translate(0, 0.11, 0);
   const bar = (hex: number) => { const g = new THREE.BoxGeometry(0.16, 0.05, 0.07); g.translate(0, 0.025, 0); return c(g, hex, 0.04); };
   const sword = merge([metal(0.025, 0.36, 0.008, 0, 0.26, 0, 0xc8ccd0), metal(0.1, 0.02, 0.02, 0, 0.08, 0, 0x8a6a30), handle(0.08)]);
-  const bowArc: THREE.BufferGeometry[] = [];
-  for (let k = 0; k < 6; k++) {
-    const a0 = -0.9 + (k / 6) * 1.8;
-    const seg = new THREE.BoxGeometry(0.018, 0.08, 0.018);
-    seg.rotateZ(-a0 * 0.8);
-    seg.translate(Math.cos(a0) * 0.2 - 0.2, Math.sin(a0) * 0.2 + 0.2, 0);
-    bowArc.push(c(seg, 0x8a5a30));
-  }
-  const str = new THREE.BoxGeometry(0.004, 0.31, 0.004);
-  str.translate(-0.07, 0.2, 0);
-  const bow = merge([...bowArc, c(str, 0xeeeeee)]);
+  // a bow: one smooth limb curving round to slightly recurved tips, a leather grip and the string
+  const bow = (() => {
+    const pts: THREE.Vector3[] = [];
+    for (let k = 0; k <= 12; k++) {
+      const a = -0.92 + (k / 12) * 1.84, tipK = Math.max(0, Math.abs(a) - 0.7) / 0.22;
+      pts.push(new THREE.Vector3(Math.cos(a) * 0.2 - 0.2 - tipK * tipK * 0.012, Math.sin(a) * 0.2 + 0.2, 0));
+    }
+    const limb = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.008, 5, false);
+    const grip = new THREE.CylinderGeometry(0.012, 0.012, 0.055, 7);
+    grip.translate(0, 0.2, 0);
+    const string = taperRod(pts[0], pts[pts.length - 1], 0.0022, 0.0022, 3);
+    return merge([c(limb, 0x8a5a30), c(grip, 0x4a2e1c), c(string, 0xe8e2d0, 0.02)]);
+  })();
 
   const axe = merge([handle(0.34), metal(0.09, 0.07, 0.015, 0.04, 0.3, 0)]);
   const pickaxe = merge([handle(0.34), metal(0.2, 0.025, 0.02, 0, 0.32, 0)]);
