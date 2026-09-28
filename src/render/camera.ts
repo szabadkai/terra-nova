@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import type { World } from '../game/world';
 
+const NO_KEYS = new Set<string>();
+
 export class RTSCamera {
   camera: THREE.PerspectiveCamera;
   target = new THREE.Vector3();
@@ -14,6 +16,10 @@ export class RTSCamera {
   maxDist = 95;
   keys = new Set<string>();
   edgeScroll = true;
+  /** multiplier on keyboard and edge scrolling */
+  scrollSpeed = 1;
+  /** false while a menu is open: held keys and the screen edge stop moving the view */
+  inputEnabled = true;
   mouse = { x: 0.5, y: 0.5, inside: false };
   private dragging = false;
   private dragButton = -1;
@@ -144,14 +150,14 @@ export class RTSCamera {
   }
 
   update(dt: number) {
-    const k = this.keys;
+    const k = this.inputEnabled ? this.keys : NO_KEYS;
     let mx = 0, mz = 0;
     if (k.has('w') || k.has('arrowup')) mz -= 1;
     if (k.has('s') || k.has('arrowdown')) mz += 1;
     if (k.has('a') || k.has('arrowleft')) mx -= 1;
     if (k.has('d') || k.has('arrowright')) mx += 1;
     const mIn = this.mouse.x >= 0 && this.mouse.x <= 1 && this.mouse.y >= 0 && this.mouse.y <= 1;
-    if (this.edgeScroll && this.mouse.inside && mIn && !this.dragging && document.hasFocus()) {
+    if (this.inputEnabled && this.edgeScroll && this.mouse.inside && mIn && !this.dragging && document.hasFocus()) {
       const m = 0.012;
       if (this.mouse.x < m) mx -= 1;
       if (this.mouse.x > 1 - m) mx += 1;
@@ -163,7 +169,7 @@ export class RTSCamera {
     if (k.has('+') || k.has('=')) this.goalDist = Math.max(this.minDist, this.goalDist * (1 - dt * 1.5));
     if (k.has('-') || k.has('_')) this.goalDist = Math.min(this.maxDist, this.goalDist * (1 + dt * 1.5));
     if (mx || mz) {
-      const speed = this.dist * 1.25 * dt * (k.has('shift') ? 2.2 : 1);
+      const speed = this.dist * 1.25 * dt * this.scrollSpeed * (k.has('shift') ? 2.2 : 1);
       const c = Math.cos(this.yaw), s = Math.sin(this.yaw);
       this.goal.x += (mx * c + mz * s) * speed;
       this.goal.z += (-mx * s + mz * c) * speed;

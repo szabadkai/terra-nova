@@ -39,6 +39,10 @@ export interface RenderSettings {
   reflections: boolean;
 }
 
+export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
+  quality: 'high', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
+};
+
 /** Falling-leaf colours of the deciduous species (oak, birch, fruit tree). */
 const LEAF_FALL: Record<number, [number, number, number][]> = {
   0: [[0.72, 0.38, 0.07], [0.58, 0.2, 0.05], [0.42, 0.25, 0.1]],
@@ -128,9 +132,7 @@ export class GameRenderer {
   fx: PostFX;
   birds: Birds;
   time = 0;
-  settings: RenderSettings = {
-    quality: 'high', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
-  };
+  settings: RenderSettings = { ...DEFAULT_RENDER_SETTINGS };
   reflection: PlanarReflection;
   borders: BordersRenderer;
   spells: SpellFX;
