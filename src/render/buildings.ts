@@ -9,6 +9,7 @@ import { getClipMaterial, getMaterial } from './materials';
 import type { PilesRenderer } from './entities';
 import { patchedDepthMaterial } from './shaderPatch';
 import { Seaworks, buildSeaworks, showHullProgress } from './seaworks';
+import { lanternLit, lanternSpot } from './lanterns';
 
 interface BView {
   id: number;
@@ -274,6 +275,7 @@ export class BuildingsRenderer {
   lightSources(out: THREE.Vector4[], camX: number, camZ: number, maxDist: number, night: number): number {
     const cands: { d: number; x: number; y: number; z: number; w: number }[] = [];
     const g = this.game;
+    const spot = new THREE.Vector3();
     for (const v of this.views.values()) {
       const b = g.buildings.get(v.id);
       if (!b || b.state !== 'done' || !v.group.visible) continue;
@@ -284,7 +286,10 @@ export class BuildingsRenderer {
       if (!inhabited && !b.working) continue;
       for (const a of v.anchors.fires) cands.push({ d, x: b.cx + a.x, y: v.group.position.y + a.y, z: b.cz + a.z, w: b.working ? 1.6 : 0.8 });
       const wins = v.anchors.windows;
-      if (wins.length && night > 0.05) {
+      if (night > 0.05 && lanternLit(b) && lanternSpot(g, b, spot)) {
+        // the door lantern lights the path, the facade and its windows
+        cands.push({ d, x: spot.x, y: spot.y, z: spot.z, w: 1.25 });
+      } else if (wins.length && night > 0.05) {
         // one light per building for windows (at the front)
         let sx = 0, sy = 0, sz = 0;
         for (const a of wins) { sx += a.x; sy += a.y; sz += a.z; }

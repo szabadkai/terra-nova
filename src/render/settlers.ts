@@ -38,7 +38,9 @@ function settlerMaterial() {
     roughnessFactor = mix(roughnessFactor, 0.18, isGloss);
     vec3 V = normalize(vViewPosition);
     float rim = pow(1.0 - clamp(dot(normal, V), 0.0, 1.0), 3.0);
-    totalEmissiveRadiance += diffuseColor.rgb * rim * 0.3 * (1.0 - uNight * 0.7) * (1.0 - isMetal);
+    // at night the rim turns into a cool moonlit edge so people stand out from the dark ground
+    vec3 rimCol = mix(diffuseColor.rgb * 0.3, (diffuseColor.rgb * 0.6 + vec3(0.12, 0.16, 0.26)) * 0.55, uNight);
+    totalEmissiveRadiance += rimCol * rim * (1.0 - isMetal);
   }`,
   });
   return m;

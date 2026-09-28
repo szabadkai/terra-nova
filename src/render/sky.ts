@@ -16,9 +16,12 @@ interface Key {
 }
 
 const KEYS: Key[] = [
-  { e: -0.35, sun: [0.55, 0.66, 1.0], sunI: 0.75, sky: [0.2, 0.26, 0.48], ground: [0.06, 0.07, 0.09], hemiI: 0.95, fog: [0.05, 0.07, 0.12], zenith: [0.02, 0.03, 0.08], horizon: [0.07, 0.1, 0.18], exposure: 1.25 },
-  { e: -0.08, sun: [0.6, 0.62, 0.95], sunI: 0.35, sky: [0.3, 0.3, 0.5], ground: [0.1, 0.08, 0.08], hemiI: 0.8, fog: [0.22, 0.2, 0.3], zenith: [0.08, 0.1, 0.22], horizon: [0.55, 0.35, 0.35], exposure: 1.15 },
-  { e: 0.04, sun: [1.0, 0.5, 0.25], sunI: 1.3, sky: [0.55, 0.5, 0.6], ground: [0.28, 0.2, 0.14], hemiI: 0.85, fog: [0.75, 0.5, 0.38], zenith: [0.25, 0.35, 0.6], horizon: [1.0, 0.6, 0.35], exposure: 1.0 },
+  // night is moonlit rather than black: a silver-blue key light that still casts shadows, a brighter
+  // blue sky fill and a little bounce, so fields, woods, water and people stay easy to tell apart
+  { e: -0.35, sun: [0.58, 0.7, 1.0], sunI: 1.0, sky: [0.26, 0.33, 0.58], ground: [0.08, 0.085, 0.1], hemiI: 1.0, fog: [0.06, 0.085, 0.14], zenith: [0.025, 0.04, 0.1], horizon: [0.085, 0.12, 0.22], exposure: 1.2 },
+  // twilight and sunset are lifted too, so the land never gets brighter as the night deepens
+  { e: -0.08, sun: [0.62, 0.64, 0.96], sunI: 0.6, sky: [0.32, 0.32, 0.52], ground: [0.11, 0.09, 0.09], hemiI: 0.95, fog: [0.22, 0.2, 0.3], zenith: [0.08, 0.1, 0.22], horizon: [0.55, 0.35, 0.35], exposure: 1.26 },
+  { e: 0.04, sun: [1.0, 0.5, 0.25], sunI: 1.3, sky: [0.55, 0.5, 0.6], ground: [0.28, 0.2, 0.14], hemiI: 0.85, fog: [0.75, 0.5, 0.38], zenith: [0.25, 0.35, 0.6], horizon: [1.0, 0.6, 0.35], exposure: 1.08 },
   { e: 0.22, sun: [1.0, 0.8, 0.58], sunI: 2.6, sky: [0.58, 0.68, 0.9], ground: [0.33, 0.28, 0.18], hemiI: 0.9, fog: [0.72, 0.75, 0.8], zenith: [0.3, 0.5, 0.85], horizon: [0.85, 0.8, 0.75], exposure: 0.95 },
   { e: 0.6, sun: [1.0, 0.95, 0.88], sunI: 3.2, sky: [0.55, 0.7, 1.0], ground: [0.35, 0.3, 0.2], hemiI: 0.95, fog: [0.7, 0.8, 0.92], zenith: [0.25, 0.48, 0.9], horizon: [0.72, 0.82, 0.95], exposure: 0.92 },
   { e: 1.0, sun: [1.0, 0.97, 0.92], sunI: 3.4, sky: [0.55, 0.72, 1.0], ground: [0.36, 0.3, 0.2], hemiI: 0.95, fog: [0.7, 0.8, 0.94], zenith: [0.22, 0.46, 0.9], horizon: [0.7, 0.82, 0.96], exposure: 0.9 },
@@ -104,6 +107,8 @@ export class Sky {
         uHorizon: { value: new THREE.Color() },
         uSunDir: { value: new THREE.Vector3() },
         uSunCol: { value: new THREE.Color() },
+        uMoonDir: { value: new THREE.Vector3(0, 1, 0) },
+        uMoon: { value: 0 },
         uTime: G.uTime,
         tNoise: G.tNoise,
         uCloud: G.uCloud,
@@ -114,6 +119,7 @@ export class Sky {
       fragmentShader: `
         uniform vec3 uZenith, uHorizon, uSunDir, uSunCol; uniform float uTime; uniform sampler2D tNoise;
         uniform float uCloud; uniform vec2 uCloudSpeed; uniform float uNight;
+        uniform vec3 uMoonDir; uniform float uMoon;
         varying vec3 vDir;
         void main(){
           vec3 d = normalize(vDir);
@@ -121,6 +127,9 @@ export class Sky {
           vec3 col = mix(uHorizon, uZenith, pow(h, 0.55));
           float s = max(dot(d, uSunDir), 0.0);
           col += uSunCol * (pow(s, 900.0) * 40.0 + pow(s, 16.0) * 0.35);
+          // the moon, where the night light comes from: a pale disc in a wide silver halo
+          float md = max(dot(d, uMoonDir), 0.0);
+          col += (vec3(0.9, 0.94, 1.0) * smoothstep(0.99955, 0.9997, md) * 2.2 + vec3(0.22, 0.3, 0.5) * pow(md, 40.0) * 0.4) * uMoon;
           // clouds projected on a flat layer
           vec2 cp = d.xz / max(0.08, d.y) * 0.6 + uCloudSpeed * uTime * 0.004;
           float n = texture2D(tNoise, cp * 0.35).r * 0.65 + texture2D(tNoise, cp * 0.9 + 0.3).g * 0.35;
@@ -168,9 +177,9 @@ export class Sky {
     if (elev < KEYS[0].e) { k0 = k1 = KEYS[0]; f = 0; }
     const lerp = (a: number, b: number) => a + (b - a) * f;
     const isNight = elev < -0.02;
-    // light direction: sun by day, moon by night
+    // light direction: sun by day, moon by night (kept fairly low so shapes and shadows stay readable)
     const lightDir = isNight
-      ? new THREE.Vector3(-sunVec.x * 0.6 + 0.2, Math.max(0.35, -elev), 0.6).normalize()
+      ? new THREE.Vector3(-sunVec.x * 0.6 + 0.2, 0.3 + 0.4 * Math.min(1, -elev), 0.6).normalize()
       : new THREE.Vector3(sunVec.x, Math.max(0.12, sunVec.y), sunVec.z).normalize();
     // soften the transition around the horizon
     const horizonDip = 1 - Math.exp(-Math.abs(elev) * 18);
@@ -215,6 +224,8 @@ export class Sky {
     (du.uHorizon.value as THREE.Color).copy(this.horizon);
     (du.uSunDir.value as THREE.Vector3).copy(sunVec);
     (du.uSunCol.value as THREE.Color).setRGB(sunC[0], sunC[1], sunC[2]).multiplyScalar(isNight ? 0 : horizonDip);
+    (du.uMoonDir.value as THREE.Vector3).copy(lightDir);
+    du.uMoon.value = isNight ? horizonDip * (1 - overcast * 0.8) : 0;
     this.dome.position.set(target.x, 0, target.z);
 
     // environment map refresh

@@ -32,6 +32,7 @@ import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
 import { OrdersFX } from './orders';
 import { PriorityMarker } from './priority';
+import { LanternsRenderer } from './lanterns';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -151,6 +152,8 @@ export class GameRenderer {
   spells: SpellFX;
   /** soldiers the player has picked, and where his orders land */
   orders: OrdersFX;
+  /** door lanterns that light up after dusk */
+  lanterns: LanternsRenderer;
   /** the star over the building the player put first in line */
   priority: PriorityMarker;
   /** a Move or Attack order waiting for its target (from the soldiers' panel) */
@@ -237,6 +240,8 @@ export class GameRenderer {
     this.scene.add(this.piles.group);
     this.buildings = new BuildingsRenderer(game, this.piles);
     this.scene.add(this.buildings.group);
+    this.lanterns = new LanternsRenderer(game, this.buildings);
+    this.scene.add(this.lanterns.group);
     this.particles = new Particles();
     this.scene.add(this.particles.group);
     this.ships = new ShipsRenderer(game, this.piles, this.particles);
@@ -878,7 +883,8 @@ export class GameRenderer {
     this.updateWeather(dt);
     const zoom01 = (this.cam.dist - this.cam.minDist) / (this.cam.maxDist - this.cam.minDist);
     this.sky.update(gameDt, this.cam.target, this.cam.viewSize);
-    this.renderer.toneMappingExposure = this.sky.exposure;
+    // fresh snow throws the moonlight back; hold the exposure down so a winter night still reads as night
+    this.renderer.toneMappingExposure = this.sky.exposure * (1 - G.uSnow.value * G.uNight.value * 0.32);
     this.terrain.uniforms.uSunI.value = this.sky.sunIntensity / 3;
     (this.water.uniforms.uSkyCol.value as THREE.Color).copy(this.sky.horizon);
     (this.water.uniforms.uSunCol.value as THREE.Color).copy(this.sky.sun.color).multiplyScalar(this.sky.sunIntensity / 3);
@@ -904,6 +910,7 @@ export class GameRenderer {
     this.grass.update(dt);
     this.piles.begin();
     this.buildings.update(dt, this.time);
+    this.lanterns.update(dt);
     this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z);
     this.signs.update(this.time);
     this.piles.end();

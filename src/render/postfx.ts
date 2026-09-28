@@ -56,12 +56,13 @@ const GradeShader = {
     uFlash: { value: 0 },
     uRain: { value: 0 },
     uRainSlant: { value: 0 },
+    uNight: { value: 0 },
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse; uniform float uTime; uniform float uSat; uniform float uContrast; uniform float uVignette;
     uniform vec3 uWarm; uniform vec3 uCool; uniform float uGrain; uniform vec2 uRes; uniform float uCA; uniform float uFlash;
-    uniform float uRain; uniform float uRainSlant;
+    uniform float uRain; uniform float uRainSlant; uniform float uNight;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -74,6 +75,15 @@ const GradeShader = {
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - off).b;
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      if (uNight > 0.001) {
+        // moonlight: the land turns cool silver-blue and a little paler, while lamp- and firelit
+        // surfaces keep their warmth; blacks lift into deep blue so nothing drowns in the dark
+        float warm = smoothstep(0.0, 0.12, col.r - max(col.g * 0.85, col.b)) * smoothstep(0.1, 0.4, l);
+        vec3 moon = mix(vec3(l), col, 0.6) * vec3(0.84, 0.96, 1.2);
+        col = mix(col, mix(moon, col, warm), uNight);
+        col += vec3(0.012, 0.02, 0.042) * uNight * (1.0 - smoothstep(0.0, 0.28, l));
+        l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      }
       // split toning
       col *= mix(uCool, uWarm, smoothstep(0.1, 0.7, l));
       col = mix(vec3(l), col, uSat);
@@ -163,8 +173,9 @@ export class PostFX {
 
   render(time: number, zoom01: number, night: number, rain = 0, rainSlant = 0) {
     this.bloom.enabled = this.settings.bloom;
-    this.bloom.strength = 0.28 + night * 0.55;
-    this.bloom.threshold = 0.9 - night * 0.35;
+    // lamps and windows bloom at night, the moonlit land does not
+    this.bloom.strength = 0.28 + night * 0.32;
+    this.bloom.threshold = 0.9 - night * 0.16;
     this.tilt.enabled = this.settings.dof;
     // the miniature look belongs to the overview; close up the blur would only smear detail
     const tz = THREE.MathUtils.smoothstep(zoom01, 0.0, 0.55);
@@ -175,8 +186,9 @@ export class PostFX {
     u.uTime.value = time;
     u.uRain.value = rain;
     u.uRainSlant.value = rainSlant;
+    u.uNight.value = night;
     if (this.settings.grade) {
-      u.uSat.value = 1.1 - night * 0.25;
+      u.uSat.value = 1.1 - night * 0.08;
       u.uContrast.value = 1.05;
       u.uVignette.value = 0.32 + night * 0.2;
       u.uGrain.value = 0.008 + night * 0.012;
