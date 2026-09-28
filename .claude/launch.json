@@ -45,6 +45,27 @@
         "--strictPort"
       ],
       "port": 5181
+    },
+    {
+      "name": "birds-wt",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "/private/tmp/claude-502/-Users-levente-szabadkai-Settlers3-clone/89917a6c-b96d-4a78-a26e-4b4fa0985e1d/scratchpad/birds",
+        "--port",
+        "5195",
+        "--strictPort"
+      ],
+      "port": 5195
+    },
+    {
+      "name": "birds-snap",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "/private/tmp/claude-502/-Users-levente-szabadkai-Settlers3-clone/89917a6c-b96d-4a78-a26e-4b4fa0985e1d/scratchpad/snapsink.py",
+        "5193"
+      ],
+      "port": 5193
     }
   ]
 }
