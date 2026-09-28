@@ -4,6 +4,7 @@ import type { Game } from '../game/game';
 import { WATER_LEVEL } from '../game/world';
 import type { RTSCamera } from '../render/camera';
 import * as THREE from 'three';
+import { G } from '../render/shaderPatch';
 
 const TCOL: Record<number, [number, number, number]> = {
   [T_GRASS]: [96, 146, 52], [T_MEADOW]: [128, 160, 62], [T_FOREST]: [64, 104, 44], [T_DIRT]: [140, 110, 76],
@@ -41,6 +42,12 @@ export class Minimap {
     const g = this.game;
     const w = g.world;
     const d = this.base.data;
+    // follow the season: straw-coloured grass, autumn and bare woods, snow cover
+    const [leaf, turn] = G.uSeasonA.value.toArray();
+    const [dry, , , cold] = G.uSeasonB.value.toArray();
+    const snow = Math.min(1, G.uSnow.value * 1.4);
+    const straw = [150 - cold * 30, 136 - cold * 24, 70 + cold * 10];
+    const bare = 1 - leaf;
     for (let y = 0; y < w.H; y++)
       for (let x = 0; x < w.W; x++) {
         const i = y * w.W + x;
@@ -49,13 +56,31 @@ export class Minimap {
         if (h < WATER_LEVEL - 0.02) {
           const dep = Math.min(1, (WATER_LEVEL - h) / 4);
           c = [40 - dep * 25, 120 - dep * 60, 150 - dep * 50];
-        } else c = TCOL[w.terrain[i]] ?? [100, 140, 60];
+        } else {
+          const t = w.terrain[i];
+          c = TCOL[t] ?? [100, 140, 60];
+          if (t === T_GRASS || t === T_MEADOW || t === T_FOREST || t === T_SWAMP) {
+            const k = dry * 0.6;
+            c = [c[0] + (straw[0] - c[0]) * k, c[1] + (straw[1] - c[1]) * k, c[2] + (straw[2] - c[2]) * k];
+          }
+        }
         // hillshade
         const hl = x > 0 ? w.h[i - 1] : h, hu = y > 0 ? w.h[i - w.W] : h;
         const shade = 1 + Math.max(-0.35, Math.min(0.35, (hl - h) * 0.25 + (hu - h) * 0.25));
         let r = c[0] * shade, gg = c[1] * shade, b = c[2] * shade;
-        if (w.tree[i] && h >= WATER_LEVEL) { r *= 0.65; gg *= 0.78; b *= 0.6; }
+        if (w.tree[i] && h >= WATER_LEVEL) {
+          const sp = g.trees.get(w.tree[i])?.species;
+          if ((sp === 0 || sp === 2 || sp === 4) && (turn > 0 || bare > 0)) {
+            // deciduous: autumn gold, then bare grey-brown
+            const au = Math.min(1, turn * 1.5) * leaf;
+            r *= 0.65 + au * 0.55 + bare * 0.1; gg *= 0.78 - au * 0.1 - bare * 0.12; b *= 0.6 - au * 0.25 + bare * 0.12;
+          } else { r *= 0.65; gg *= 0.78; b *= 0.6; }
+        }
         if (w.stone[i]) { r = 150; gg = 148; b = 140; }
+        if (snow > 0 && h >= WATER_LEVEL - 0.02) {
+          const k = snow * (w.tree[i] ? 0.6 : 0.85);
+          r += (232 - r) * k; gg += (236 - gg) * k; b += (242 - b) * k;
+        }
         d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = 255;
       }
   }

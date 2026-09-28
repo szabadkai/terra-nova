@@ -7,6 +7,7 @@ import type { Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
 import type { GameRenderer, Quality } from '../render/renderer';
 import type { Audio } from '../audio/audio';
+import type { SeasonMode } from '../render/seasons';
 import { attackableSoldiers, launchAttack } from '../game/military';
 import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
 import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition } from '../game/sea';
@@ -16,6 +17,8 @@ import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
+
+const SEASON_ICON = ['🌸', '🌿', '🍂', '❄'];
 
 const h = (tag: string, cls = '', html = '') => {
   const e = document.createElement(tag);
@@ -98,6 +101,7 @@ export class HUD {
     const isNight = this.gr.sky.sunElev < 0;
     const speed = this.hooks.getSpeed();
     const mm = Math.floor(g.time / 60), ss = Math.floor(g.time % 60);
+    const season = this.gr.seasons;
     this.top.innerHTML = `
       ${item(this.icon('board'), st.board, 'Boards', st.board < 4)}
       ${item(this.icon('stone'), st.stone, 'Stone', st.stone < 4)}
@@ -112,6 +116,7 @@ export class HUD {
       ${item('<span class="emo">⚔</span>', pop.soldiers, 'Soldiers')}
       ${item('<span class="emo">👥</span>', `${pop.idle}/${pop.total}`, 'Idle carriers / total population', pop.idle < 2)}
       <div class="sep"></div>
+      <div class="clock" title="${season.name}, day ${season.day(this.gr.sky.dayLength)}">${SEASON_ICON[season.index]} ${season.name}</div>
       <div class="clock" title="Time of day">${isNight ? '☾' : '☀'} ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</div>
       <div class="clock" title="Game time">⏱ ${mm}:${String(ss).padStart(2, '0')}</div>
       <div class="speed">
@@ -436,6 +441,12 @@ export class HUD {
     ws.value = s.weather;
     ws.onchange = () => { s.weather = ws.value as any; };
     c.appendChild(w);
+    const se = h('div', 'kv');
+    se.innerHTML = `<span>Season</span><select><option value="auto">Changing</option><option value="spring">Spring</option><option value="summer">Summer</option><option value="autumn">Autumn</option><option value="winter">Winter</option></select>`;
+    const sesel = se.querySelector('select')!;
+    sesel.value = this.gr.seasons.mode;
+    sesel.onchange = () => { this.gr.seasons.mode = sesel.value as SeasonMode; };
+    c.appendChild(se);
     const tod = h('div', 'slider-row');
     tod.innerHTML = `<label>Time of day</label><input type="range" min="0" max="100" value="${Math.round(this.gr.sky.timeOfDay * 100)}">`;
     const ti = tod.querySelector('input')!;

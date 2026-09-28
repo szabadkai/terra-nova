@@ -22,6 +22,10 @@ export const G = {
   tNoise: { value: getNoiseTexture() as THREE.Texture },
   uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
   uSnow: { value: 0 },
+  // the year (seasons.ts): deciduous leaf amount, autumn turn, spring freshness, blossom
+  uSeasonA: { value: new THREE.Vector4(1, 0, 0, 0) },
+  // grass dryness, fallen-leaf litter, meadow flowers, cold
+  uSeasonB: { value: new THREE.Vector4(0, 0, 1, 0) },
   // one bright transient light (lightning, divine pillars): xyz + intensity, colour
   uFlash: { value: new THREE.Vector4(0, -100, 0, 0) },
   uFlashCol: { value: new THREE.Color(0.7, 0.8, 1.0) },
@@ -71,6 +75,8 @@ uniform float uFogOn;
 uniform float uWet;
 uniform vec3 uSunDir;
 uniform float uSnow;
+uniform vec4 uSeasonA;
+uniform vec4 uSeasonB;
 uniform vec4 uFlash;
 uniform vec3 uFlashCol;
 
@@ -130,7 +136,7 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
       uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
       uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
       tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
-      uSnow: G.uSnow, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp, tHeight: G.tHeight, uGrime: G.uGrime,
+      uSnow: G.uSnow, uSeasonA: G.uSeasonA, uSeasonB: G.uSeasonB, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp, tHeight: G.tHeight, uGrime: G.uGrime,
       ...(o.uniforms ?? {}),
     });
     // ---------------- vertex
@@ -252,7 +258,7 @@ uniform float uGrime;`);
   return mat;
 }
 
-/** Depth material for shadows that shares wind/clip behaviour. */
+/** Depth material for shadows that shares wind/clip behaviour (vertexHead/vertexBegin/fragHead/fragPost hooks apply too). */
 export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map?: THREE.Texture } = {}): THREE.MeshDepthMaterial {
   const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: opts.map ?? null, alphaTest: opts.alphaTest ?? 0 });
   const o = { wind: 'none', windAmp: 1, ...opts };
@@ -262,14 +268,15 @@ export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map
   const key = `d${o.wind}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${opts.key ?? ''}`;
   m.customProgramCacheKey = () => key;
   m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp });
+    Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp, ...(o.uniforms ?? {}) });
     let vs = shader.vertexShader;
     vs = vs.replace('#include <common>', `#include <common>
 uniform float uTime;
 uniform vec2 uWind;
 uniform float uWindStrength;
 uniform float uWindAmp;
-varying float vWY;`);
+varying float vWY;
+${o.vertexHead ?? ''}`);
     let windCode = '';
     if (o.wind === 'tree') {
       windCode = `
@@ -287,6 +294,7 @@ varying float vWY;`);
   }`;
     }
     vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>
+${o.vertexBegin ?? ''}
 ${windCode}`);
     vs = vs.replace('#include <project_vertex>', `#include <project_vertex>
   {
@@ -300,8 +308,11 @@ ${windCode}`);
     let fs = shader.fragmentShader;
     fs = fs.replace('#include <common>', `#include <common>
 uniform float uClip;
-varying float vWY;`);
+varying float vWY;
+${o.fragHead ?? ''}`);
     if (o.clip) fs = fs.replace('void main() {', 'void main() {\n  if (vWY > uClip) discard;');
+    if (o.fragPost) fs = fs.replace('#include <logdepthbuf_fragment>', `${o.fragPost}
+#include <logdepthbuf_fragment>`);
     shader.fragmentShader = fs;
   };
   return m;

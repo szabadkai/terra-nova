@@ -63,6 +63,15 @@ void detailAt(float layer, out vec4 A, out vec4 M) {
   M = vec4(mix(g1, g2, b), mix(m1.b, m2.b, b), mix(m1.a, m2.a, b));
 }
 vec3 dMod(vec4 A, float k) { return mix(vec3(1.0), A.rgb * 2.5, k); }
+// grass through the year (uSeasonA.z fresh, uSeasonB.x dry): lime in spring, straw by late summer, dormant in winter
+vec3 seasonGrass(vec3 c, float n) {
+  float lum = dot(c, vec3(0.3, 0.59, 0.11));
+  float d = clamp(uSeasonB.x * (0.75 + n * 0.5), 0.0, 1.0);
+  // summer straw is golden, dormant winter grass a duller olive-brown
+  vec3 dry = mix(vec3(1.35, 1.0, 0.32) * 1.15, vec3(1.12, 1.0, 0.58) * 0.9, uSeasonB.w);
+  c = mix(c, lum * dry, d * 0.8);
+  return mix(c, c * vec3(1.06, 1.12, 0.8), uSeasonA.z * 0.7);
+}
 vec3 hash32(vec2 q) {
   vec3 p3 = fract(vec3(q.xyx) * vec3(0.1031, 0.1030, 0.0973));
   p3 += dot(p3, p3.yxz + 33.33);
@@ -154,6 +163,7 @@ const TERRAIN_MAP = /* glsl */ `
     c *= 0.88 + 0.24 * mix(0.5, n4.r * 0.7 + n5.g * 0.3, farFade * (1.0 - detK));
     c = mix(c, C(152,158,72), smoothstep(0.74, 0.95, n2.g) * 0.3);
     c *= dMod(dA0, detK);
+    c = seasonGrass(c, n1.g);
     dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * v[0]; dCav += dM0.z * v[0]; dRough += dM0.w * v[0];
     col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5) * 0.35 * (1.0 - detK) * v[0];
   }
@@ -162,8 +172,11 @@ const TERRAIN_MAP = /* glsl */ `
     vec3 c = mix(C(106,150,48), C(142,166,62), n0.g);
     c *= 0.88 + 0.24 * mix(0.5, n4.g, farFade * (1.0 - detK));
     c *= dMod(dA0, detK);
+    c = seasonGrass(c, n0.r);
+    // flowers carpet the meadows in spring and are gone by winter
+    float bloom = uSeasonB.z;
     vec4 fl = texture2D(tNoise, pr1 * 0.62 + vec2(0.2, 0.9));
-    float f = (1.0 - smoothstep(0.14, 0.3, fl.b)) * step(0.5, fl.a) * farFade;
+    float f = (1.0 - smoothstep(0.14 * bloom, 0.3 * bloom + 1e-4, fl.b)) * step(0.5, fl.a) * farFade;
     vec3 fc = fl.a > 0.88 ? C(248,244,236) : fl.a > 0.78 ? C(252,212,58) : fl.a > 0.67 ? C(176,118,222) : C(232,96,84);
     f *= 1.0 - detK;
     c = mix(c, fc, f);
@@ -175,7 +188,7 @@ const TERRAIN_MAP = /* glsl */ `
       vec3 hh = hash32(fi);
       float h1 = hh.x, h2 = hh.y, h3 = hh.z;
       float dens = smoothstep(0.3, 0.7, fl.a * 0.55 + n2.b * 0.45);
-      if (h1 < 0.6 * dens + 0.12) {
+      if (h1 < (0.6 * dens + 0.12) * bloom) {
         vec2 d = ff - (vec2(h2, h3) - 0.5) * 0.4;
         float r = length(d);
         float R = 0.15 + h2 * 0.1;
@@ -197,6 +210,15 @@ const TERRAIN_MAP = /* glsl */ `
     vec3 c = mix(C(62,98,34), C(74,92,38), smoothstep(0.35, 0.7, n2.r));
     c = mix(c, C(96,82,44), smoothstep(0.62, 0.9, n3.a) * 0.4);
     c = mix(c, C(48,78,30), smoothstep(0.5, 0.8, n0.g) * 0.5);
+    c = seasonGrass(c, n2.r);
+    // autumn leaf litter, fading to brown mulch over the winter
+    if (uSeasonB.y > 0.01) {
+      float lit = smoothstep(0.25, 0.65, uSeasonB.y * (0.55 + n3.a * 0.7 + n4.g * 0.2)) * (1.0 - uSeasonB.w * 0.3);
+      vec3 lc = mix(C(176,96,30), C(150,58,26), smoothstep(0.4, 0.7, n2.g));
+      lc = mix(lc, C(196,150,40), smoothstep(0.62, 0.85, n3.r) * 0.6);
+      lc = mix(lc, C(104,82,62), uSeasonB.w * 0.85);
+      c = mix(c, lc, lit);
+    }
     c *= 0.86 + 0.26 * mix(0.5, n4.b, farFade * (1.0 - detK));
     c *= dMod(dA1, detK);
     dg += vec3(dM1.x, 0.0, dM1.y) * 0.8 * v[2]; dCav += dM1.z * v[2]; dRough += dM1.w * v[2];

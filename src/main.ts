@@ -81,6 +81,7 @@ async function boot() {
   await buildWorld();
   setupGlobalInput();
   if (params.has('tod')) gr.sky.timeOfDay = num('tod', 0.4);
+  if (params.has('season')) gr.seasons.phase = num('season', 0.3) % 1;
   if (params.get('play') === '1') startGame();
   else showMainMenu();
   requestAnimationFrame(loop);

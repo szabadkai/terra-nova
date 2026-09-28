@@ -13,6 +13,8 @@ import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, Projecti
 import { SettlersRenderer } from './settlers';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
+import { Rain } from './rain';
+import { Seasons } from './seasons';
 import { PostFX } from './postfx';
 import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
@@ -40,6 +42,13 @@ export interface RenderSettings {
   borders: boolean;
   reflections: boolean;
 }
+
+/** Falling-leaf colours of the deciduous species (oak, birch, fruit tree). */
+const LEAF_FALL: Record<number, [number, number, number][]> = {
+  0: [[0.72, 0.38, 0.07], [0.58, 0.2, 0.05], [0.42, 0.25, 0.1]],
+  2: [[0.85, 0.66, 0.1], [0.74, 0.52, 0.08], [0.6, 0.44, 0.12]],
+  4: [[0.72, 0.16, 0.05], [0.8, 0.4, 0.08], [0.5, 0.2, 0.08]],
+};
 
 class Birds {
   mesh: THREE.InstancedMesh;
@@ -121,6 +130,7 @@ export class GameRenderer {
   ships: ShipsRenderer;
   signs: SignsRenderer;
   particles: Particles;
+  rain: Rain;
   fx: PostFX;
   birds: Birds;
   time = 0;
@@ -153,6 +163,7 @@ export class GameRenderer {
   private rainAmount = 0;
   private targetRain = 0;
   private precip: 'rain' | 'snow' = 'rain';
+  seasons = new Seasons();
   onEvent: ((e: GameEvent) => void) | null = null;
   private sound: ((name: string, x?: number, z?: number, vol?: number) => void) | null = null;
 
@@ -205,6 +216,8 @@ export class GameRenderer {
     this.scene.add(this.ships.group);
     this.signs = new SignsRenderer(game);
     this.scene.add(this.signs.group);
+    this.rain = new Rain(game.world.W, game.world.H);
+    this.scene.add(this.rain.mesh);
     this.birds = new Birds(game.world.W, game.world.H);
     this.scene.add(this.birds.mesh);
     this.borders = new BordersRenderer(game);
@@ -289,7 +302,9 @@ export class GameRenderer {
     this.fx.setSize(w, h);
     const pr = this.renderer.getPixelRatio();
     this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
-    this.particles.setScale((h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360)));
+    const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
+    this.particles.setScale(pxScale);
+    this.rain.setScale(w * pr, h * pr, pxScale, pr);
   }
 
   // ------------------------------------------------------------ picking
@@ -543,7 +558,18 @@ export class GameRenderer {
       if (!near(e.x, e.z)) continue;
       switch (e.type) {
         case 'chop': P.chips(x, y, z); snd('chop'); break;
-        case 'treefall': P.leaves(x, y, z, 18); setTimeout(() => P.dust(x, y, z, 10, [0.5, 0.45, 0.35]), 1100); snd('treefall'); break;
+        case 'treefall': {
+          // leaves in the colour of the season (evergreens stay green, bare trees shed only twigs)
+          const tr = this.game.trees.get(this.game.world.tree[this.game.world.idx(Math.round(e.x!), Math.round(e.z!))]);
+          const SA = G.uSeasonA.value;
+          const dec = !!tr && !!LEAF_FALL[tr.species];
+          if (dec && SA.x < 0.15) P.leaves(x, y, z, 6, [0.22, 0.16, 0.1], [0.18, 0.13, 0.09]);
+          else if (dec && SA.y > 0.4) P.leaves(x, y, z, 18, LEAF_FALL[tr!.species][0], LEAF_FALL[tr!.species][1]);
+          else P.leaves(x, y, z, 18);
+          setTimeout(() => P.dust(x, y, z, 10, [0.5, 0.45, 0.35]), 1100);
+          snd('treefall');
+          break;
+        }
         case 'stonehit': P.sparks(x, y + 0.3, z, 4); P.dust(x, y + 0.2, z, 3, [0.62, 0.6, 0.58]); snd('pick'); break;
         case 'dig': P.dust(x, y, z, 5); snd('dig', 0.6); break;
         case 'dirt': P.dust(x, y, z, 4); break;
@@ -679,32 +705,46 @@ export class GameRenderer {
         P.emit({ x, y: t.y + 6 + Math.random() * 8, z, vx: -0.4 + Math.random() * 0.3, vy: -1.3, vz: (Math.random() - 0.5) * 0.4, spread: 0.5, life: 7, size: 0.06, color: [0.95, 0.97, 1.0], alpha: 0.9, drag: 0.2, kind: 1 });
       }
     }
-    // rain
-    if (this.rainAmount > 0.02 && this.precip === 'rain') {
-      const n = Math.floor(this.rainAmount * 60 * dt * 60);
-      for (let k = 0; k < n; k++) {
-        const x = t.x + (Math.random() - 0.5) * R * 1.6, z = t.z + (Math.random() - 0.5) * R * 1.6;
-        P.rainDrop(x, t.y + 8 + Math.random() * 6, z);
-        if (Math.random() < 0.15) {
-          const gx = t.x + (Math.random() - 0.5) * R, gz = t.z + (Math.random() - 0.5) * R;
-          P.ripple(gx, w.surfaceAt(gx, gz) + 0.02, gz);
-        }
+    // autumn leaves and spring blossom petals drifting down from deciduous trees
+    const SA = G.uSeasonA.value;
+    const shed = SA.y > 0.3 && SA.x > 0.02 && SA.x < 0.98 ? 4 * SA.x * (1 - SA.x) : 0;
+    if (tick && (shed > 0 || SA.w > 0.3)) {
+      const wind = G.uWind.value;
+      for (let k = 0; k < 10; k++) {
+        const x = Math.round(t.x + (Math.random() - 0.5) * R * 1.4), z = Math.round(t.z + (Math.random() - 0.5) * R * 1.2);
+        if (!w.inBounds(x, z)) continue;
+        const i = w.idx(x, z);
+        const tr = w.tree[i] ? g.trees.get(w.tree[i]) : undefined;
+        if (!tr || tr.state === 'falling' || !w.explored[i] || !LEAF_FALL[tr.species]) continue;
+        const petal = tr.species === 4 && SA.w > 0.3;
+        if (!petal && Math.random() > shed) continue;
+        const sc = tr.scale * (0.18 + 0.82 * Math.min(1, tr.growth));
+        const cols = LEAF_FALL[tr.species];
+        P.emit({
+          x: x + (Math.random() - 0.5) * sc, y: w.h[i] + (1.1 + Math.random() * 0.8) * sc, z: z + (Math.random() - 0.5) * sc,
+          vx: wind.x * 0.5, vz: wind.y * 0.5, vy: 0, spread: 0.35, vspread: 0.1, life: 4.5, size: petal ? 0.035 : 0.05,
+          color: petal ? [1.0, 0.8, 0.86] : cols[Math.floor(Math.random() * cols.length)], alpha: 1, gravity: 0.9, drag: 1.8, kind: 1,
+        });
       }
     }
   }
 
   private updateWeather(dt: number) {
     const mode = this.settings.weather;
+    const cold = this.seasons.cold;
     if (mode === 'clear') this.targetRain = 0;
     else if (mode === 'rain') { this.targetRain = 1; this.precip = 'rain'; }
     else if (mode === 'snow') { this.targetRain = 1; this.precip = 'snow'; }
     else {
       this.weatherT -= dt;
+      // the first proper snowfall comes soon after winter sets in
+      if (cold > 0.8 && G.uSnow.value < 0.15 && this.targetRain < 0.5 && this.rainAmount < 0.05) this.weatherT = Math.min(this.weatherT, 10);
       if (this.weatherT <= 0) {
         const raining = this.targetRain > 0.5;
-        this.targetRain = raining ? 0 : Math.random() < 0.4 ? 1 : 0;
-        if (this.targetRain > 0.5 && this.rainAmount < 0.05) this.precip = Math.random() < 0.3 ? 'snow' : 'rain';
-        this.weatherT = this.targetRain > 0.5 ? 60 + Math.random() * 70 : 120 + Math.random() * 180;
+        this.targetRain = raining ? 0 : Math.random() < 0.4 + cold * 0.25 ? 1 : 0;
+        // snow in winter, rain the rest of the year
+        if (this.targetRain > 0.5 && this.rainAmount < 0.05) this.precip = cold > 0.5 ? 'snow' : 'rain';
+        this.weatherT = this.targetRain > 0.5 ? 60 + Math.random() * 70 : (120 + Math.random() * 180) * (1 - cold * 0.5);
       }
     }
     // switching precipitation type waits until the current one has faded
@@ -712,11 +752,12 @@ export class GameRenderer {
     this.rainAmount += (this.targetRain - this.rainAmount) * (1 - Math.exp(-dt * 0.25));
     const snowing = this.precip === 'snow';
     this.sky.weather = this.rainAmount * (snowing ? 0.8 : 1);
-    G.uWet.value = snowing ? 0 : Math.min(1, this.rainAmount * 1.3);
-    // snow cover builds up while it snows and melts slowly afterwards
+    // snow cover builds up while it snows; winter snow lies until the thaw, which leaves the ground wet
     const sn = G.uSnow.value;
     if (snowing && this.rainAmount > 0.3) G.uSnow.value = Math.min(1, sn + dt / 70 * this.rainAmount);
-    else G.uSnow.value = Math.max(0, sn - dt / 140);
+    else G.uSnow.value = Math.max(0, sn - (dt * (this.seasons.lapsing ? 40 : 1)) / (140 + cold * 2400));
+    const thaw = snowing ? 0 : Math.min(1, sn * 2) * (1 - cold);
+    G.uWet.value = snowing ? 0 : Math.min(1, Math.max(this.rainAmount * 1.3, thaw * 0.7));
     G.uWindStrength.value = 1 + this.rainAmount * (snowing ? 0.5 : 1.2);
     const wind = G.uWind.value;
     const a = this.time * 0.01;
@@ -734,6 +775,8 @@ export class GameRenderer {
     G.uTime.value = this.time;
     const g = this.game;
     this.cam.update(dt);
+    this.seasons.length = this.sky.dayLength * 1.5;
+    this.seasons.update(dt, gameDt, G.uSnow.value);
     this.updateWeather(dt);
     const zoom01 = (this.cam.dist - this.cam.minDist) / (this.cam.maxDist - this.cam.minDist);
     this.sky.update(gameDt, this.cam.target, this.cam.viewSize);
@@ -748,7 +791,9 @@ export class GameRenderer {
     (this.scene.background as THREE.Color).copy(new THREE.Color(0x0e3558).lerp(fogC, 0.3));
     const night = G.uNight.value;
     setWindowGlow(night * 2.2);
-    this.particles.setAmbient(new THREE.Color(1, 1, 1).lerp(new THREE.Color(0.35, 0.4, 0.6), night));
+    const ambient = new THREE.Color(1, 1, 1).lerp(new THREE.Color(0.35, 0.4, 0.6), night);
+    this.particles.setAmbient(ambient);
+    this.rain.setAmbient(ambient);
 
     this.terrain.update(dt);
     this.borders.update();
@@ -774,6 +819,7 @@ export class GameRenderer {
     this.spells.update(dt);
     this.continuousEffects(dt);
     this.particles.update(dt, G.uWind.value);
+    this.rain.update(dt, this.precip === 'rain' ? this.rainAmount : 0, this.cam.camera, this.cam.target, this.cam.viewSize, this.cam.dist, G.uWind.value);
 
     // night lights
     const lights = G.uLights.value;
@@ -801,7 +847,7 @@ export class GameRenderer {
     const U2 = this.water.uniforms;
     const waterSeen = this.waterInView();
     if (this.settings.reflections && waterSeen) {
-      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.markers, this.arrows.mesh]);
+      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh]);
       (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
       U2.uReflOn.value = 1;
     } else U2.uReflOn.value = 0;

@@ -7,3 +7,4 @@ __pycache__/
 reference/*/raw/
 reference/*/extracted/
 reference
+.claude/worktrees/

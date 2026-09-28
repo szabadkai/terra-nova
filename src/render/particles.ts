@@ -233,19 +233,13 @@ export class Particles {
   sparkle(x: number, y: number, z: number, n = 30, col: [number, number, number] = [2.0, 1.6, 0.6]) {
     this.emit({ x, y, z, vy: 1.2, spread: 2.4, vspread: 1.8, life: 1.6, size: 0.1, color: col, color2: [col[0] * 0.6, col[1] * 0.4, col[2] * 0.3], alpha: 1, gravity: -0.3, drag: 1.5, count: n, additive: true, kind: 1, jitter: 1.2 });
   }
-  leaves(x: number, y: number, z: number, n = 12) {
-    this.emit({ x, y: y + 1.2, z, vy: 0.4, spread: 1.6, vspread: 0.6, life: 2.4, size: 0.08, color: [0.35, 0.55, 0.18], color2: [0.45, 0.5, 0.15], alpha: 1, gravity: 0.8, drag: 1.4, count: n, kind: 1, jitter: 0.8 });
+  leaves(x: number, y: number, z: number, n = 12, color: [number, number, number] = [0.35, 0.55, 0.18], color2: [number, number, number] = [0.45, 0.5, 0.15]) {
+    this.emit({ x, y: y + 1.2, z, vy: 0.4, spread: 1.6, vspread: 0.6, life: 2.4, size: 0.08, color, color2, alpha: 1, gravity: 0.8, drag: 1.4, count: n, kind: 1, jitter: 0.8 });
   }
   hit(x: number, y: number, z: number) {
     this.emit({ x, y, z, vy: 0.8, spread: 1.6, life: 0.35, size: 0.08, color: [2, 1.8, 1.2], alpha: 1, gravity: 3, drag: 2, count: 6, additive: true, kind: 1 });
   }
   firefly(x: number, y: number, z: number) {
     this.emit({ x, y, z, vy: 0.05, spread: 0.3, vspread: 0.15, life: 3.5, size: 0.07, color: [1.2, 1.8, 0.5], color2: [0.6, 1.0, 0.2], alpha: 1, drag: 0.2, additive: true, kind: 1 });
-  }
-  rainDrop(x: number, y: number, z: number) {
-    this.emit({ x, y, z, vx: -1.0, vy: -14, life: 0.9, size: 0.35, color: [0.7, 0.75, 0.85], alpha: 0.35, drag: 0, kind: 2 });
-  }
-  ripple(x: number, y: number, z: number) {
-    this.emit({ x, y, z, life: 0.5, size: 0.18, grow: 2, color: [0.8, 0.85, 0.95], alpha: 0.25, drag: 5 });
   }
 }
