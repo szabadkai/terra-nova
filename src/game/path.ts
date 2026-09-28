@@ -45,6 +45,11 @@ export class PathFinder {
       return dx <= 1 && dy <= 1;
     };
     if (adj && isGoal(start)) return [];
+    // no land route between two landmasses: fail fast instead of flooding the whole island
+    if (!walkFn) {
+      const rs = w.region[start], rg = adj ? w.regionAt(goal) : w.region[goal];
+      if (rs && rg && rs !== rg) return null;
+    }
     if (!adj && !walk(goal)) {
       // allow walking into non walkable goal only if it's a building door etc: treat as adj fallback
       return null;
@@ -110,6 +115,62 @@ export class PathFinder {
       }
     }
     this.expansions += expanded;
+    return null;
+  }
+
+  /**
+   * Sea route over navigable water. Ships prefer open water: nodes close to the shore cost more.
+   * Returns the node path including start, or null.
+   */
+  findSea(start: number, goal: number, maxExpand = 60000): number[] | null {
+    const w = this.world;
+    const W = w.W, H = w.H;
+    if (!w.navigable(start) || !w.navigable(goal) || w.sea[start] !== w.sea[goal]) return null;
+    if (start === goal) return [start];
+    const gen = ++this.gen;
+    const g = this.g, from = this.from, seen = this.seen, closed = this.closed;
+    const heap = this.heap;
+    heap.clear();
+    const gx = w.nx(goal), gy = w.ny(goal);
+    const hfun = (i: number) => {
+      const dx = Math.abs(w.nx(i) - gx), dy = Math.abs(w.ny(i) - gy);
+      const mn = dx < dy ? dx : dy, mx = dx < dy ? dy : dx;
+      return mn * SQRT2 + (mx - mn);
+    };
+    g[start] = 0;
+    seen[start] = gen;
+    from[start] = -1;
+    heap.push(start, hfun(start));
+    let expanded = 0;
+    while (heap.size > 0) {
+      const cur = heap.pop();
+      if (closed[cur] === gen) continue;
+      closed[cur] = gen;
+      if (cur === goal) {
+        const path: number[] = [];
+        for (let c = cur; c !== -1; c = from[c]) path.push(c);
+        path.reverse();
+        return path;
+      }
+      if (++expanded > maxExpand) break;
+      const cx = cur % W, cy = (cur / W) | 0;
+      for (let d = 0; d < 8; d++) {
+        const nx = cx + DX8[d], ny = cy + DY8[d];
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const ni = ny * W + nx;
+        if (closed[ni] === gen || !w.navigable(ni)) continue;
+        if (d >= 4 && (!w.navigable(cy * W + nx) || !w.navigable(ny * W + cx))) continue;
+        const sd = w.shoreDist[ni];
+        const shore = sd <= 1 ? 2.5 : sd === 2 ? 0.9 : sd === 3 ? 0.3 : 0;
+        const ng = g[cur] + (d >= 4 ? SQRT2 : 1) * (1 + shore);
+        if (seen[ni] !== gen || ng < g[ni]) {
+          seen[ni] = gen;
+          g[ni] = ng;
+          from[ni] = cur;
+          heap.push(ni, ng + hfun(ni));
+        }
+      }
+    }
     return null;
   }
 }

@@ -9,6 +9,9 @@ import type { GameRenderer, Quality } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import { attackableSoldiers, launchAttack } from '../game/military';
 import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
+import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition } from '../game/sea';
+import type { Ship } from '../game/types';
+import { MAX_SHIPS } from '../game/defs';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
@@ -202,7 +205,7 @@ export class HUD {
   }
 
   startPlacing(t: BuildingType | null) {
-    if (t) this.gr.casting = null;
+    if (t) { this.gr.casting = null; this.gr.expedition = 0; }
     this.gr.placing = t;
     if (t && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
@@ -233,6 +236,18 @@ export class HUD {
       const inp = row.querySelector('input')!;
       inp.oninput = () => { p.toolPrio[t] = Number(inp.value); row.querySelector('span')!.textContent = inp.value; };
       c.appendChild(row);
+    }
+    const fleet = [...g.ships.values()].filter((sh) => sh.owner === g.local);
+    if (fleet.length || g.countBuildings(g.local, 'harbour') || g.countBuildings(g.local, 'shipyard')) {
+      c.appendChild(h('h3', '', `Fleet <small class="muted">${fleet.length}/${MAX_SHIPS}</small>`));
+      const list = h('div', 'list');
+      for (const sh of fleet) {
+        const row = h('button', 'lrow', `<span class="emo">⛵</span><span>${sh.name}</span><b>${shipDoing(g, sh)}</b>`);
+        row.onclick = () => { this.gr.cam.jumpTo(sh.x, sh.z + 2); this.select({ kind: 'ship', id: sh.id }); };
+        list.appendChild(row);
+      }
+      if (!fleet.length) list.appendChild(h('p', 'note', 'Build a Shipyard on the coast: its shipwright turns boards into ships.'));
+      c.appendChild(list);
     }
     c.appendChild(h('h3', '', 'Weapons'));
     const row = h('div', 'slider-row');
@@ -299,7 +314,7 @@ export class HUD {
 
   startCasting(id: SpellId | null) {
     this.gr.casting = id;
-    if (id) this.gr.placing = null;
+    if (id) { this.gr.placing = null; this.gr.expedition = 0; }
     if (id && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (id) {
@@ -442,8 +457,35 @@ export class HUD {
     c.appendChild(btn);
   }
 
+  /** Expedition targeting: pick a free coast for a colony founded from harbour `from`. */
+  startExpedition(from: number) {
+    this.gr.expedition = from;
+    this.gr.placing = null;
+    this.gr.casting = null;
+    if (window.innerWidth <= 700) this.left.classList.remove('open');
+    this.audio.play('ui');
+    if (from) {
+      this.hint.innerHTML = `Choose a coast for the <b>colony</b> — blue markers show free landing sites · <b>Esc</b>/right-click cancels`;
+      this.hint.classList.remove('hidden');
+    } else if (!this.gr.placing && !this.gr.casting) this.hint.classList.add('hidden');
+  }
+
+  /** Click during expedition targeting. */
+  expeditionAt(x: number, z: number) {
+    const g = this.game;
+    const from = g.buildings.get(this.gr.expedition);
+    if (!from) { this.startExpedition(0); return; }
+    const site = colonySite(g, g.local, from, x, z);
+    if (typeof site === 'string') { this.message(site, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+    startExpedition(g, g.local, from, site);
+    this.message('An expedition is gathering at the harbour: a builder, a digger, a soldier, two carriers and building materials', from.cx, from.cz, 'good');
+    this.audio.play('horn');
+    this.startExpedition(0);
+    this.lastInfoKey = '';
+  }
+
   // ------------------------------------------------------------ selection panel
-  select(sel: { kind: 'building' | 'settler'; id: number } | null) {
+  select(sel: { kind: 'building' | 'settler' | 'ship'; id: number } | null) {
     this.gr.selected = sel;
     this.lastInfoKey = '';
     this.infoT = 0;
@@ -459,6 +501,10 @@ export class HUD {
       const b = g.buildings.get(sel.id);
       if (!b) { this.select(null); return; }
       this.renderBuildingInfo(b);
+    } else if (sel.kind === 'ship') {
+      const sh = g.ships.get(sel.id);
+      if (!sh) { this.select(null); return; }
+      this.renderShipInfo(sh);
     } else {
       const s = g.settlers.get(sel.id);
       if (!s || s.dead) { this.select(null); return; }
@@ -519,12 +565,37 @@ export class HUD {
             : `<div class="status">No soldiers in reach. Build military buildings closer to attack.</div>`;
         }
       }
+      if (b.type === 'harbour' && mine) {
+        const tr = harbourTraffic(g, b);
+        body += `<div class="kv"><span>Ships moored · inbound</span><b>⛵ ${tr.docked} · ${tr.inbound}</b></div>`;
+        if (tr.waiting) body += `<div class="kv"><span>Waiting to sail</span><b>👥 ${tr.waiting}</b></div>`;
+        if (tr.exports) body += `<div class="kv"><span>Gathering for shipping</span><b>${GOODS.filter((gd) => b.seaWant && b.seaWant[gd] > 0).map((gd) => `${this.icon(gd, 'ci')}${b.seaWant![gd]}`).join(' ')}</b></div>`;
+        const ex = g.expeditions.find((e) => e.from === b.id && e.owner === g.local);
+        if (ex) {
+          let party = 0;
+          for (const s of g.settlers.values()) if (s.voyage === -ex.id && s.inside === b.id) party++;
+          const need = ex.people.builder + ex.people.digger + ex.people.soldier + ex.people.carrier;
+          body += `<div class="status">${ex.state === 'gathering' ? `⚓ Expedition gathering: party ${party}/${need} · ${this.icon('board', 'ci')}${Math.min(b.stock.board, ex.goods.board)}/${ex.goods.board} ${this.icon('stone', 'ci')}${Math.min(b.stock.stone, ex.goods.stone)}/${ex.goods.stone}${party >= need && b.stock.board >= ex.goods.board && b.stock.stone >= ex.goods.stone ? ' · waiting for a ship' : ''}` : '⛵ The expedition is at sea'}</div>`;
+        }
+      }
+      if (b.type === 'shipyard' && mine) {
+        let fleet = 0;
+        for (const sh of g.ships.values()) if (sh.owner === b.owner) fleet++;
+        body += `<div class="kv"><span>Hull on the slipway</span><b>${Math.round(b.shipProgress * 100)}%</b></div>${pct(b.shipProgress)}`;
+        body += `<div class="kv"><span>Fleet</span><b>⛵ ${fleet}/${MAX_SHIPS}</b></div>`;
+      }
       if (b.type === 'toolsmith' && mine) {
         body += `<div class="kv"><span>Forge</span><select data-act="tool"><option value="auto">Auto (by demand)</option>${TOOLS.map((t) => `<option value="${t}" ${b.toolChoice === t ? 'selected' : ''}>${GOOD_NAMES[t]}</option>`).join('')}</select></div>`;
       }
       if (b.status && !d.military) body += `<div class="status ${/Missing|No |Waiting|full|exhausted/.test(b.status) ? 'warn' : ''}">${b.status}</div>`;
     }
     const buttons: string[] = [];
+    if (mine && b.state === 'done' && b.type === 'harbour') {
+      const ex = g.expeditions.find((e) => e.from === b.id && e.owner === g.local);
+      if (ex && ex.state === 'gathering') buttons.push(`<button data-act="exCancel">✕ Call off expedition</button>`);
+      else if (!ex) buttons.push(`<button class="primary" data-act="expedition">⚓ Found a colony</button>`);
+      buttons.push(`<button data-act="scout">🧭 Scout the seas</button>`);
+    }
     if (mine && b.state === 'done' && (d.cycle || d.worker) && !d.military) buttons.push(`<button data-act="pause">${b.paused ? '▶ Resume' : '❚❚ Pause'}</button>`);
     if (mine && b.type !== 'hq' && b.state !== 'burning') buttons.push(`<button class="danger" data-act="destroy">🔥 Demolish</button>`);
     const key = `${b.id}|${body}|${buttons.join('')}`;
@@ -552,6 +623,16 @@ export class HUD {
         else if (act === 'destroy') { g.destroyBuilding(b, true); this.select(null); }
         else if (act === 'des-') b.desiredSoldiers = Math.max(1, b.desiredSoldiers - 1);
         else if (act === 'des+') b.desiredSoldiers = Math.min(b.def.military!.capacity, b.desiredSoldiers + 1);
+        else if (act === 'expedition') {
+          if (![...g.ships.values()].some((sh) => sh.owner === g.local)) this.message('You have no ship yet — build a Shipyard on the coast first', b.cx, b.cz, 'bad');
+          this.startExpedition(b.id);
+        } else if (act === 'exCancel') {
+          const ex = g.expeditions.find((e) => e.from === b.id && e.owner === g.local);
+          if (ex) cancelExpedition(g, ex);
+        } else if (act === 'scout') {
+          const err = scoutSeas(g, g.local, b);
+          this.message(err ?? 'A ship sets out to explore the seas', b.cx, b.cz, err ? 'bad' : 'good');
+        }
         else if (act === 'attack') {
           const n = launchAttack(g, g.local, b, this.attackCount);
           this.message(n ? `${n} soldiers march on the enemy ${d.name}!` : 'No soldiers available', b.cx, b.cz, n ? 'good' : 'bad');
@@ -563,15 +644,36 @@ export class HUD {
     });
   }
 
+  private renderShipInfo(sh: Ship) {
+    const g = this.game;
+    let body = `<div class="kv"><span>Doing</span><b>${shipDoing(g, sh)}</b></div>`;
+    const n = cargoCount(sh);
+    body += `<div class="kv"><span>Cargo</span><b>${n ? GOODS.filter((gd) => sh.cargo[gd] > 0).map((gd) => `${this.icon(gd, 'ci')}${sh.cargo[gd]}`).join(' ') : '<span class="muted">empty</span>'}</b></div>`;
+    if (sh.passengers.length) {
+      const jobs: Record<string, number> = {};
+      for (const id of sh.passengers) { const s = g.settlers.get(id); if (s) jobs[JOB_NAMES[s.job]] = (jobs[JOB_NAMES[s.job]] ?? 0) + 1; }
+      body += `<div class="kv"><span>Passengers</span><b>${Object.entries(jobs).map(([j, k]) => `${k} ${j.toLowerCase()}${k > 1 ? 's' : ''}`).join(', ')}</b></div>`;
+    }
+    body += `<div class="kv"><span>Speed</span><b>${sh.speed > 0.1 ? `${(sh.speed * 3.6).toFixed(1)} knots` : 'at rest'}</b></div>`;
+    const key = `ship${sh.id}|${body}`;
+    if (key === this.lastInfoKey) return;
+    this.lastInfoKey = key;
+    this.info.innerHTML = `
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[sh.owner])}">⛵</div><div><h2>${sh.name}</h2><div class="owner">${g.players[sh.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ibody">${body}</div>`;
+    this.info.querySelector<HTMLElement>('[data-act=close]')!.onclick = () => this.select(null);
+  }
+
   private renderSettlerInfo(s: Settler) {
     const g = this.game;
     const soldier = s.job === 'swordsman' || s.job === 'bowman';
     let body = `<div class="kv"><span>Occupation</span><b>${JOB_NAMES[s.job]}</b></div>`;
     if (s.carrying) body += `<div class="kv"><span>Carrying</span><b>${this.icon(s.carrying, 'ci')} ${GOOD_NAMES[s.carrying]}</b></div>`;
-    if (s.home) { const b = g.buildings.get(s.home); if (b) body += `<div class="kv"><span>Workplace</span><b>${b.def.name}</b></div>`; }
+    if (s.home && !s.voyage) { const b = g.buildings.get(s.home); if (b) body += `<div class="kv"><span>Workplace</span><b>${b.def.name}</b></div>`; }
+    if (s.aboard) { const sh = g.ships.get(s.aboard); if (sh) body += `<div class="kv"><span>Aboard</span><b>⛵ ${sh.name}</b></div>`; }
     if (soldier) {
       body += `<div class="kv"><span>Health</span><b>${Math.max(0, Math.round(s.hp))}/${s.maxHp}</b></div><div class="bar hp"><i style="width:${Math.max(0, (s.hp / s.maxHp) * 100)}%"></i></div>`;
-      body += `<div class="kv"><span>Orders</span><b>${{ garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: 'Attacking', defend: 'Defending', fight: 'Fighting', return: 'Returning' }[s.sstate]}</b></div>`;
+      body += `<div class="kv"><span>Orders</span><b>${{ garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: 'Attacking', defend: 'Defending', fight: 'Fighting', return: 'Returning', ship: 'Travelling by sea' }[s.sstate]}</b></div>`;
     } else {
       body += `<div class="kv"><span>Doing</span><b>${s.task || (s.idle ? 'Idle' : s.anim === 'walk' ? 'Walking' : 'Working')}</b></div>`;
     }
@@ -676,4 +778,19 @@ export class HUD {
       if (!this.info.matches(':hover') || !this.info.querySelector('input[type=range]:active')) this.refreshInfo();
     }
   }
+}
+
+/** Short description of what a ship is doing, for panels and lists. */
+function shipDoing(g: Game, sh: Ship): string {
+  const name = (id: number) => { const b = g.buildings.get(id); return b ? b.def.name.toLowerCase() : 'harbour'; };
+  switch (sh.state) {
+    case 'idle': return sh.at ? `Moored at the ${name(sh.at)}` : 'At anchor';
+    case 'toLoad': return 'Sailing to take on cargo';
+    case 'loading': return 'Loading';
+    case 'toUnload': return 'Sailing with cargo';
+    case 'unloading': return 'Unloading';
+    case 'expedition': return 'Carrying an expedition';
+    case 'scouting': return 'Scouting the seas';
+  }
+  return '';
 }

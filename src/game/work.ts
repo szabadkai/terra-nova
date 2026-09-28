@@ -5,6 +5,7 @@ import { OUT_CAP } from './game';
 import { A, enter, exit, plan } from './settlers';
 import type { Building, Settler, Tree } from './types';
 import { DX8, DY8, WATER_LEVEL } from './world';
+import { shipwrightThink } from './sea';
 
 function outFull(b: Building) {
   let n = 0;
@@ -49,6 +50,7 @@ export function workerThink(g: Game, s: Settler, b: Building) {
     case 'farm': return farmer(g, s, b);
     case 'waterworks': return waterman(g, s, b);
     case 'vineyard': return vintner(g, s, b);
+    case 'shipyard': return shipwrightThink(g, s, b);
     default:
       // indoor workers simply stay inside
       plan(s, [A.wait(1.5)]);
@@ -66,6 +68,7 @@ function woodcutter(g: Game, s: Settler, b: Building) {
     const t = g.trees.get(tid);
     if (!t || t.state !== 'mature' || t.reserved) return;
     if (w.owner[i] !== b.owner && w.owner[i] !== -1) return;
+    if (w.region[i] !== w.region[b.door]) return;
     if (d2 < bd) { bd = d2; best = t; }
   });
   if (!best) { b.status = 'No trees in range'; plan(s, [A.wait(5)]); return; }
@@ -132,7 +135,7 @@ function forester(g: Game, s: Settler, b: Building) {
     const x = Math.round(b.cx + Math.cos(a) * r), y = Math.round(b.cz + Math.sin(a) * r);
     if (!w.inBounds(x, y)) continue;
     const i = w.idx(x, y);
-    if (w.owner[i] !== b.owner) continue;
+    if (w.owner[i] !== b.owner || w.region[i] !== w.region[b.door]) continue;
     if (plantable(g, i, true)) { spot = i; break; }
   }
   if (spot < 0) { b.status = 'No space to plant'; plan(s, [A.wait(6)]); return; }
@@ -165,6 +168,7 @@ function stonecutter(g: Game, s: Settler, b: Building) {
   let best = null as import('./types').Stone | null, bd = Infinity;
   for (const st of g.stones.values()) {
     if (st.amount - st.reserved <= 0) continue;
+    if (w.region[st.node] !== w.region[b.door]) continue;
     const x = w.nx(st.node), y = w.ny(st.node);
     const d2 = (x - b.cx) ** 2 + (y - b.cz) ** 2;
     if (d2 > b.def.radius! ** 2) continue;
@@ -203,7 +207,7 @@ function shoreSpot(g: Game, b: Building, R: number, needFish: boolean): { land: 
   let best: { land: number; water: number } | null = null, bd = Infinity;
   w.forRadius(b.cx, b.cz, R, (i, x, y, d2) => {
     if (!w.walkable(i) || w.building[i]) return;
-    if (w.owner[i] !== b.owner) return;
+    if (w.owner[i] !== b.owner || w.region[i] !== w.region[b.door]) return;
     for (let d = 0; d < 8; d++) {
       const nx = x + DX8[d], ny = y + DY8[d];
       if (!w.inBounds(nx, ny)) continue;
@@ -257,7 +261,7 @@ function hunter(g: Game, s: Settler, b: Building) {
   const w = g.world;
   let best = null as import('./types').Animal | null, bd = Infinity;
   for (const a of g.animals.values()) {
-    if (!a.alive || a.reserved) continue;
+    if (!a.alive || a.reserved || w.region[a.node] !== w.region[b.door]) continue;
     const d2 = (a.x - b.cx) ** 2 + (a.z - b.cz) ** 2;
     if (d2 > b.def.radius! ** 2) continue;
     if (d2 < bd) { bd = d2; best = a; }
@@ -357,7 +361,7 @@ function farmer(g: Game, s: Settler, b: Building) {
   if (count < 14) {
     let spot = -1, sd = Infinity;
     w.forRadius(b.cx, b.cz, R, (i, x, y, d2) => {
-      if (w.owner[i] !== b.owner) return;
+      if (w.owner[i] !== b.owner || w.region[i] !== w.region[b.door]) return;
       const t = w.terrain[i];
       if (t !== T_GRASS && t !== T_MEADOW && t !== T_DIRT && t !== T_FOREST) return;
       if (!plantable(g, i, false)) return;
@@ -423,7 +427,7 @@ function vintner(g: Game, s: Settler, b: Building) {
     // vines go in rows: every other column around the press house
     let spot = -1, sd = Infinity;
     w.forRadius(b.cx, b.cz, R, (i, x, y, d2) => {
-      if (w.owner[i] !== b.owner || (x & 1)) return;
+      if (w.owner[i] !== b.owner || (x & 1) || w.region[i] !== w.region[b.door]) return;
       const t = w.terrain[i];
       if (t !== T_GRASS && t !== T_MEADOW && t !== T_DIRT) return;
       if (!plantable(g, i, false)) return;

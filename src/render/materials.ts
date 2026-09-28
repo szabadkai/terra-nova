@@ -53,6 +53,9 @@ def('marbleDark', () => { const t = stoneTex(); return std({ map: t.map, normalM
 def('grape', () => std({ color: 0x4a1a4c, roughness: 0.3 }));
 def('wine', () => std({ color: 0x4a0c24, roughness: 0.12 }));
 def('terracotta', () => std({ color: 0xb4643a, roughness: 0.8 }));
+// tarred clinker planking and hemp rope for ships
+def('hull', () => { const t = planksTex(); return std({ map: t.map, normalMap: t.normal, color: 0x8a6a4c, roughness: 0.7, side: THREE.DoubleSide }); });
+def('rope', () => std({ color: 0x5c4a34, roughness: 0.95 }));
 for (let p = 0; p < 4; p++) {
   def(`roof${p}`, () => { const t = roofTex(); return std({ map: t.map, normalMap: t.normal, color: ROOF_COLORS[p], roughness: 0.72, side: THREE.DoubleSide }); });
   def(`banner${p}`, () => { const t = clothTex(); return std({ map: t.map, color: BANNER_COLORS[p], roughness: 0.85, side: THREE.DoubleSide }); });
@@ -63,6 +66,7 @@ const WIND_MATS = new Set(['banner0', 'banner1', 'banner2', 'banner3', 'canvasFl
 
 const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'glowHoly', 'water', 'wine', 'metal', 'iron', 'gold']);
 const GRIME = new Set(['plaster', 'plasterWarm', 'sandstone', 'timber', 'stone', 'stoneDark', 'planks', 'marble', 'marbleDark', 'wood']);
+// ships float: no snow on the hull sides, no ground grime
 function patchOpts(key: string, clip: boolean) {
   const snow = NO_SNOW.has(key) || WIND_MATS.has(key) ? 0 : 1;
   const grime = GRIME.has(key) ? (key.startsWith('marble') ? 0.6 : 1) : 0;

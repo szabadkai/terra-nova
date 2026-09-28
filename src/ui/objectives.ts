@@ -32,6 +32,9 @@ export const OBJECTIVES: Objective[] = [
   { id: 'faith', text: 'Win the favour of the gods', hint: 'Build a Vineyard and a Temple. The priest offers wine as mana — then cast a spell from the ✦ Faith tab.',
     done: (g) => g.players[g.local].spellsCast > 0,
     progress: (g) => `${[has(g, 'vineyard'), hasAny(g, ['temple', 'greattemple']), g.players[g.local].spellsCast > 0].filter(Boolean).length}/3` },
+  { id: 'sea', text: 'Take to the sea', hint: 'Build a Harbour and a Shipyard on the coast. Ships carry goods to your other harbours — and a harbour can send an expedition to found a colony on an island.',
+    done: (g) => has(g, 'harbour') && [...g.ships.values()].some((s) => s.owner === g.local),
+    progress: (g) => `${[has(g, 'harbour'), has(g, 'shipyard'), [...g.ships.values()].some((s) => s.owner === g.local)].filter(Boolean).length}/3` },
   { id: 'capture', text: 'Capture an enemy military building', hint: 'Select an enemy tower within reach and press Attack.', done: (g) => (g as any).__captured === true },
   { id: 'win', text: 'Conquer every rival kingdom', hint: 'Destroy or capture all enemy military buildings.', done: (g) => g.over && g.winner === g.local },
 ];

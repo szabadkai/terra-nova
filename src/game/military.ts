@@ -7,6 +7,9 @@ export function isSoldier(s: Settler) {
   return s.job === 'swordsman' || s.job === 'bowman';
 }
 
+const regB = (g: Game, b: Building) => g.world.region[b.door];
+const regS = (g: Game, s: Settler) => g.world.region[s.node];
+
 // ------------------------------------------------------------------ territory
 export function recomputeTerritory(g: Game) {
   const w = g.world;
@@ -29,6 +32,11 @@ export function recomputeTerritory(g: Game) {
         w.owner[i] = b.owner;
       }
     });
+  }
+  // an expedition's harbour site holds the unclaimed shore around it until it is manned
+  for (const b of g.buildings.values()) {
+    if (!b.colony || b.occupied || b.state === 'burning') continue;
+    w.forRadius(b.cx, b.cz, 5.5, (i) => { if (w.owner[i] < 0 && !w.isWater(i)) w.owner[i] = b.owner; });
   }
   w.ownerDirty = true;
   g.ownerVersion++;
@@ -77,10 +85,12 @@ export function updateMilitary(g: Game, owner: number) {
   for (const b of mil) {
     if (b.type === 'hq') continue;
     let need = b.desiredSoldiers - b.garrison.length - b.soldiersIncoming;
+    const r = regB(g, b);
     while (need > 0) {
-      // nearest idle soldier
+      // nearest idle soldier on the same landmass
       let bi = -1, bd = Infinity;
       for (let i = 0; i < idle.length; i++) {
+        if (regS(g, idle[i]) !== r) continue;
         const d = (idle[i].x - b.cx) ** 2 + (idle[i].z - b.cz) ** 2;
         if (d < bd) { bd = d; bi = i; }
       }
@@ -100,7 +110,7 @@ export function updateMilitary(g: Game, owner: number) {
       need--;
     }
     // too many soldiers (desired lowered): send extras home
-    while (b.garrison.length > Math.max(1, b.desiredSoldiers) && hq && hq.id !== b.id) {
+    while (b.garrison.length > Math.max(1, b.desiredSoldiers) && hq && hq.id !== b.id && regB(g, hq) === r) {
       const id = b.garrison.pop()!;
       const s = g.settlers.get(id);
       if (!s) continue;
@@ -112,7 +122,9 @@ export function updateMilitary(g: Game, owner: number) {
   for (const s of idle) {
     if (s.actions.length) continue;
     let target: Building | null = null, bd = Infinity;
+    const r = regS(g, s);
     for (const b of mil) {
+      if (regB(g, b) !== r) continue;
       const cap = b.type === 'hq' ? 999 : b.desiredSoldiers;
       if (b.garrison.length + b.soldiersIncoming >= cap) continue;
       const d = (s.x - b.cx) ** 2 + (s.z - b.cz) ** 2 + (b.type === 'hq' ? 0 : 400);
@@ -128,7 +140,7 @@ function reserveSource(g: Game, owner: number, target: Building): Building | nul
   let best: Building | null = null, bd = Infinity;
   for (const b of g.buildings.values()) {
     if (b.owner !== owner || b.state !== 'done' || !b.def.military) continue;
-    if (b.id === target.id) continue;
+    if (b.id === target.id || regB(g, b) !== regB(g, target)) continue;
     const surplus = b.type === 'hq' ? b.garrison.length - 2 : b.garrison.length - b.desiredSoldiers;
     if (surplus <= 0) continue;
     const d = (b.cx - target.cx) ** 2 + (b.cz - target.cz) ** 2 - (b.type === 'hq' ? 0 : 0);
@@ -169,8 +181,9 @@ export function sendSoldierTo(g: Game, s: Settler, b: Building) {
 // ------------------------------------------------------------------ attack command
 export function attackableSoldiers(g: Game, owner: number, target: Building): Settler[] {
   const out: Settler[] = [];
+  const r = regB(g, target);
   for (const b of g.buildings.values()) {
-    if (b.owner !== owner || !b.def.military || b.state !== 'done') continue;
+    if (b.owner !== owner || !b.def.military || b.state !== 'done' || regB(g, b) !== r) continue;
     const d = Math.hypot(b.cx - target.cx, b.cz - target.cz);
     if (d > 42) continue;
     const keep = 1;
@@ -212,8 +225,9 @@ function orderAttack(g: Game, s: Settler, target: Building) {
 function defend(g: Game, b: Building) {
   if (!b.garrison.length) return;
   const threats: Settler[] = [];
+  const r = regB(g, b);
   for (const s of g.settlers.values()) {
-    if (s.owner === b.owner || !isSoldier(s) || s.dead || s.hidden) continue;
+    if (s.owner === b.owner || !isSoldier(s) || s.dead || s.hidden || regS(g, s) !== r) continue;
     const d = Math.hypot(s.x - b.cx, s.z - b.cz);
     if ((s.sstate === 'attack' && s.targetB === b.id && d < 12) || d < 5) threats.push(s);
   }
@@ -341,7 +355,7 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
           fireArrow(g, s, near, 13 * strength(g, s));
         }
         if (s.next < 0) return true;
-      } else if (d <= MELEE_RANGE + 1.4) {
+      } else if (d <= MELEE_RANGE + 1.4 && regS(g, near) === regS(g, s)) {
         engage(g, s, near);
         return true;
       }

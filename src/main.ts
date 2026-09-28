@@ -46,7 +46,7 @@ async function buildWorld() {
   if (hud) { hud.root.remove(); hud = null; }
   state = 'menu';
   speed = pausedSpeed = 1;
-  game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai });
+  game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands: params.get('islands') !== '0' });
   gr = new GameRenderer(canvas, game);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
   bindCanvas(canvas);
@@ -122,7 +122,7 @@ function setupGlobalInput() {
     if (state !== 'play' || !hud) return;
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
     const k = e.key;
-    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else if (gr.casting) hud.startCasting(null); else hud.select(null); }
+    if (k === 'Escape') { if (gr.placing) hud.startPlacing(null); else if (gr.casting) hud.startCasting(null); else if (gr.expedition) hud.startExpedition(0); else hud.select(null); }
     else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
     else if (k === '1') speed = pausedSpeed = 1;
     else if (k === '2') speed = pausedSpeed = 2;
@@ -163,9 +163,16 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (e.pointerType === 'touch') return;
     // hover tooltip for buildings (throttled)
     const now = performance.now();
-    if (!hud || gr.placing || gr.casting || e.buttons) { hud?.hideTip(); return; }
+    if (!hud || gr.placing || gr.casting || gr.expedition || e.buttons) { hud?.hideTip(); return; }
     if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
     tipT = now;
+    const shipId = gr.pickShip(e.clientX, e.clientY);
+    const sh = shipId ? game.ships.get(shipId) : undefined;
+    if (sh) {
+      hud.showTip(e, `<b>⛵ ${sh.name}</b><br><span class="muted">${game.players[sh.owner].name}</span>`);
+      c.style.cursor = 'pointer';
+      return;
+    }
     const b = gr.pickBuilding(e.clientX, e.clientY);
     const w = game.world;
     if (b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))]) {
@@ -189,6 +196,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     else if (e.button === 2) {
       if (gr.placing) hud.startPlacing(null);
       else if (gr.casting) hud.startCasting(null);
+      else if (gr.expedition) hud.startExpedition(0);
       else hud.select(null);
     }
   };
@@ -201,6 +209,11 @@ function onClick(e: PointerEvent) {
   if (gr.casting) {
     const p = gr.pickGround(e.clientX, e.clientY);
     if (p) hud.castAt(p.x, p.z, e.shiftKey);
+    return;
+  }
+  if (gr.expedition) {
+    const p = gr.pickGround(e.clientX, e.clientY);
+    if (p) hud.expeditionAt(p.x, p.z);
     return;
   }
   if (gr.placing) {
@@ -217,7 +230,9 @@ function onClick(e: PointerEvent) {
   const b = gr.pickBuilding(e.clientX, e.clientY);
   // settlers win when the click is right on them (or no building was hit)
   const s = gr.pickSettler(e.clientX, e.clientY, b ? 12 : 26);
+  const ship = s ? 0 : gr.pickShip(e.clientX, e.clientY);
   if (s) hud.select({ kind: 'settler', id: s.id });
+  else if (ship) hud.select({ kind: 'ship', id: ship });
   else if (b) hud.select({ kind: 'building', id: b.id });
   else hud.select(null);
 }
@@ -239,7 +254,7 @@ function loop() {
       gr.frame(dt, dt * 0.3);
     }
     audio.setListener(gr.cam.target.x, gr.cam.target.z, gr.cam.dist);
-    audio.update(dt, gr.sky.night, gr.raining, 0);
+    audio.update(dt, gr.sky.night, gr.raining, gr.waterFrac);
   }
   requestAnimationFrame(loop);
 }

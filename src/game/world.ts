@@ -24,6 +24,11 @@ export class World {
   fish: Uint8Array;
   wear: Float32Array;
   explored: Uint8Array; // for the local player
+  region: Int32Array; // connected landmass id (1..), 0 on water
+  sea: Int32Array; // connected navigable water body id (1..), 0 elsewhere
+  seaSize: number[] = [0];
+  regionSize: number[] = [0];
+  shoreDist: Uint8Array; // water nodes: steps to the nearest land (capped)
   // dirty regions for renderer
   heightDirty: { x0: number; y0: number; x1: number; y1: number } | null = null;
   splatDirty = true;
@@ -49,6 +54,88 @@ export class World {
     this.fish = new Uint8Array(N);
     this.wear = new Float32Array(N);
     this.explored = new Uint8Array(N);
+    this.region = new Int32Array(N);
+    this.sea = new Int32Array(N);
+    this.shoreDist = new Uint8Array(N);
+  }
+
+  /** Ships need a little depth under the keel. */
+  deep(i: number) {
+    return this.h[i] < WATER_LEVEL - 0.3;
+  }
+  /** Deep water that belongs to a sea big enough to sail (not a pond). */
+  navigable(i: number) {
+    const s = this.sea[i];
+    return s > 0 && this.seaSize[s] >= 300;
+  }
+
+  /**
+   * Label landmasses and water bodies. Land uses 4-connectivity, matching the pathfinder,
+   * which never cuts a corner between two water nodes.
+   */
+  computeRegions() {
+    const { W, H, N } = this;
+    this.region.fill(0);
+    this.sea.fill(0);
+    this.regionSize = [0];
+    this.seaSize = [0];
+    const stack: number[] = [];
+    const flood = (seed: number, id: number, out: Int32Array, ok: (i: number) => boolean, diag: boolean) => {
+      let n = 0;
+      out[seed] = id;
+      stack.push(seed);
+      while (stack.length) {
+        const c = stack.pop()!;
+        n++;
+        const cx = c % W, cy = (c / W) | 0;
+        for (let d = 0; d < (diag ? 8 : 4); d++) {
+          const nx = cx + DX8[d], ny = cy + DY8[d];
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const ni = ny * W + nx;
+          if (out[ni] || !ok(ni)) continue;
+          if (d >= 4 && (!ok(cy * W + nx) || !ok(ny * W + cx))) continue;
+          out[ni] = id;
+          stack.push(ni);
+        }
+      }
+      return n;
+    };
+    for (let i = 0; i < N; i++) {
+      if (!this.region[i] && !this.isWater(i)) this.regionSize.push(flood(i, this.regionSize.length, this.region, (j) => !this.isWater(j), false));
+      if (!this.sea[i] && this.deep(i)) this.seaSize.push(flood(i, this.seaSize.length, this.sea, (j) => this.deep(j), true));
+    }
+    // distance from land for water, so ships keep off the beaches
+    const q: number[] = [];
+    this.shoreDist.fill(255);
+    for (let i = 0; i < N; i++) if (!this.isWater(i)) { this.shoreDist[i] = 0; q.push(i); }
+    for (let k = 0; k < q.length; k++) {
+      const c = q[k];
+      const d = this.shoreDist[c];
+      if (d >= 12) continue;
+      const cx = c % W, cy = (c / W) | 0;
+      for (let dd = 0; dd < 4; dd++) {
+        const nx = cx + DX8[dd], ny = cy + DY8[dd];
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const ni = ny * W + nx;
+        if (this.shoreDist[ni] <= d + 1) continue;
+        this.shoreDist[ni] = d + 1;
+        q.push(ni);
+      }
+    }
+  }
+
+  /** Landmass of a node; a water node borrows the region of an adjacent shore. */
+  regionAt(i: number) {
+    const r = this.region[i];
+    if (r) return r;
+    const x = this.nx(i), y = this.ny(i);
+    for (let d = 0; d < 8; d++) {
+      const nx = x + DX8[d], ny = y + DY8[d];
+      if (!this.inBounds(nx, ny)) continue;
+      const rr = this.region[ny * this.W + nx];
+      if (rr) return rr;
+    }
+    return 0;
   }
 
   idx(x: number, y: number) {

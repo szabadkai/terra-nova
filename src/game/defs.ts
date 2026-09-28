@@ -30,7 +30,7 @@ export type Job =
   | 'woodcutter' | 'forester' | 'stonecutter' | 'sawyer'
   | 'fisher' | 'hunter' | 'farmer' | 'miller' | 'baker' | 'butcher' | 'pigfarmer' | 'waterman'
   | 'miner' | 'smelter' | 'toolsmith' | 'weaponsmith'
-  | 'vintner' | 'priest'
+  | 'vintner' | 'priest' | 'shipwright'
   | 'swordsman' | 'bowman';
 
 export const JOB_NAMES: Record<Job, string> = {
@@ -38,12 +38,12 @@ export const JOB_NAMES: Record<Job, string> = {
   stonecutter: 'Stonecutter', sawyer: 'Sawyer', fisher: 'Fisher', hunter: 'Hunter', farmer: 'Farmer',
   miller: 'Miller', baker: 'Baker', butcher: 'Butcher', pigfarmer: 'Pig Farmer', waterman: 'Water Carrier',
   miner: 'Miner', smelter: 'Smelter', toolsmith: 'Toolsmith', weaponsmith: 'Weaponsmith',
-  vintner: 'Vintner', priest: 'Priest', swordsman: 'Swordsman', bowman: 'Bowman',
+  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', swordsman: 'Swordsman', bowman: 'Bowman',
 };
 
 export const JOB_TOOL: Partial<Record<Job, Good>> = {
   builder: 'hammer', digger: 'shovel', woodcutter: 'axe', stonecutter: 'pickaxe', sawyer: 'saw',
-  fisher: 'rod', hunter: 'bow', farmer: 'scythe', miner: 'pickaxe', weaponsmith: 'hammer',
+  fisher: 'rod', hunter: 'bow', farmer: 'scythe', miner: 'pickaxe', weaponsmith: 'hammer', shipwright: 'hammer',
 };
 
 export type BuildingType =
@@ -53,9 +53,10 @@ export type BuildingType =
   | 'coalmine' | 'ironmine' | 'goldmine' | 'stonemine'
   | 'ironsmelter' | 'goldsmelter' | 'toolsmith' | 'weaponsmith'
   | 'vineyard' | 'temple' | 'greattemple'
+  | 'harbour' | 'shipyard'
   | 'barracks' | 'tower_s' | 'tower_l' | 'castle';
 
-export type Category = 'basic' | 'food' | 'industry' | 'military' | 'faith';
+export type Category = 'basic' | 'food' | 'industry' | 'military' | 'faith' | 'sea';
 
 export interface InputSpec {
   goods: Good[]; // any of these satisfies the slot
@@ -78,6 +79,7 @@ export interface BuildingDef {
   residence?: number; // number of carriers spawned
   storage?: boolean;
   mana?: number; // mana gained per production cycle (temples)
+  coastal?: boolean; // needs deep, navigable sea water beside it (harbours, shipyards)
   desc: string;
   buildable?: boolean;
 }
@@ -145,6 +147,13 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   greattemple: D({ type: 'greattemple', name: 'Great Temple', size: 4, category: 'faith', cost: { board: 8, stone: 14 },
     worker: 'priest', inputs: [{ goods: ['wine'], cap: 8 }], cycle: 8, mana: 6, desc: 'A domed sanctuary. Earns more mana and unlocks the mightiest spells.' }),
 
+  harbour: D({ type: 'harbour', name: 'Harbour', size: 3, category: 'sea', cost: { board: 6, stone: 5 },
+    storage: true, coastal: true, military: { capacity: 2, radius: 8 },
+    desc: 'A coastal storehouse where ships dock. Ships carry goods and settlers between your harbours and sail expeditions to found colonies overseas.' }),
+  shipyard: D({ type: 'shipyard', name: 'Shipyard', size: 3, category: 'sea', cost: { board: 4, stone: 2 },
+    worker: 'shipwright', coastal: true, inputs: [{ goods: ['board'], cap: 8 }],
+    desc: 'A shipwright builds sailing ships on the slipway, plank by plank.' }),
+
   barracks: D({ type: 'barracks', name: 'Barracks', size: 3, category: 'military', cost: { board: 4, stone: 4 },
     inputs: [{ goods: ['sword'], cap: 4 }, { goods: ['bow'], cap: 4 }], cycle: 6, desc: 'Trains carriers into soldiers using weapons.' }),
   tower_s: D({ type: 'tower_s', name: 'Guard Tower', size: 2, category: 'military', cost: { board: 3, stone: 2 },
@@ -161,11 +170,18 @@ export const BUILD_ORDER: Record<Category, BuildingType[]> = {
   industry: ['coalmine', 'ironmine', 'goldmine', 'stonemine', 'ironsmelter', 'goldsmelter', 'toolsmith', 'weaponsmith'],
   military: ['tower_s', 'tower_l', 'castle', 'barracks'],
   faith: ['vineyard', 'temple', 'greattemple'],
+  sea: ['harbour', 'shipyard'],
 };
 
 export const CATEGORY_NAMES: Record<Category, string> = {
-  basic: 'Basic', food: 'Food', industry: 'Industry', military: 'Military', faith: 'Faith',
+  basic: 'Basic', food: 'Food', industry: 'Industry', military: 'Military', faith: 'Faith', sea: 'Sea',
 };
+
+/** Boards a shipwright hammers into one ship. */
+export const SHIP_BOARDS = 10;
+export const SHIP_CARGO = 20;
+export const SHIP_PASSENGERS = 12;
+export const MAX_SHIPS = 8;
 
 export const PLAYER_COLORS = [0xc8342a, 0x2f6fd0, 0xe0b020, 0x8a3fd0];
 export const PLAYER_NAMES = ['Red Kingdom', 'Blue Empire', 'Golden Realm', 'Violet Dynasty'];

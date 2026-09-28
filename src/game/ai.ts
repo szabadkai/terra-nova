@@ -3,6 +3,7 @@ import { BUILDINGS, BuildingType, MINE_ORE } from './defs';
 import type { Game } from './game';
 import { attackableSoldiers, launchAttack } from './military';
 import { SPELLS, castSpell, faithStatus } from './faith';
+import { colonySite, startExpedition } from './sea';
 import type { Building } from './types';
 
 interface Want { type: BuildingType; n: number; cond?: () => boolean; }
@@ -23,6 +24,7 @@ export class AIController {
 
   private garrisonT = 5;
   private castT = 8;
+  private seaT = 60;
   private unmannedSince = new Map<number, number>();
 
   update(dt: number) {
@@ -40,6 +42,11 @@ export class AIController {
     if (this.castT <= 0) {
       this.castT = [6, 3, 2][this.level] ?? 3;
       this.castStep();
+    }
+    this.seaT -= dt;
+    if (this.seaT <= 0) {
+      this.seaT = 20;
+      this.seaStep();
     }
     if (this.t > 0) return;
     this.t = this.interval;
@@ -65,6 +72,14 @@ export class AIController {
     const c = (t: BuildingType) => this.count(t);
     const hasOre = (ore: string) => this.oreInTerritory(ore) > 10;
     const t = g.time;
+    // worked-out mines make way for new ones; count the ones starving for food
+    let hungry = 0;
+    for (const b of g.buildings.values()) {
+      if (b.owner !== this.p || !b.def.mine || b.state !== 'done') continue;
+      if (g.mineOreLeft(b) <= 0) { g.destroyBuilding(b, false); continue; }
+      if (b.status === 'Waiting for food') hungry++;
+    }
+    const water = this.waterInTerritory();
 
     const wants: Want[] = [
       { type: 'woodcutter', n: 2 },
@@ -96,6 +111,13 @@ export class AIController {
       { type: 'slaughter', n: 1 },
       { type: 'fisher', n: 2, cond: () => this.waterInTerritory() > 20 },
       { type: 'coalmine', n: 2, cond: () => hasOre('coal') },
+      // mines idle for want of food: more kitchens
+      { type: 'fisher', n: 3, cond: () => hungry >= 2 && water > 20 },
+      { type: 'hunter', n: 2, cond: () => hungry >= 2 },
+      { type: 'farm', n: 3, cond: () => hungry >= 2 },
+      { type: 'waterworks', n: 2, cond: () => hungry >= 2 && water > 4 },
+      { type: 'mill', n: 2, cond: () => hungry >= 2 && c('farm') >= 3 },
+      { type: 'bakery', n: 2, cond: () => hungry >= 2 && c('mill') >= 2 },
       { type: 'goldmine', n: 1, cond: () => hasOre('gold') },
       { type: 'goldsmelter', n: 1, cond: () => c('goldmine') > 0 },
       { type: 'vineyard', n: 1, cond: () => t > 1100 && c('weaponsmith') > 0 && stock.stone > 6 },
@@ -122,9 +144,11 @@ export class AIController {
       const big = g.time > 700 && stock.stone >= 10 && g.rng.chance(0.4);
       if (this.tryPlace(big ? 'tower_l' : 'tower_s', stoneStarved ? 'stone' : this.aggressive ? 'enemy' : undefined)) return;
     }
-    // residences when out of carriers
-    if (pop.idle < 2 && c('residence_s') + c('residence_m') < 8 && sites < maxSites) {
-      if (this.tryPlace(pop.total > 60 ? 'residence_m' : 'residence_s')) return;
+    // residences when out of carriers; a growing realm keeps needing more hands
+    const homes = c('residence_s') * 8 + c('residence_m') * 18 + c('residence_l') * 32;
+    if (pop.idle < 2 && homes < 64 + t / 15 && sites < maxSites) {
+      const big = stock.board >= 20 && stock.stone >= 14 && t > 1500;
+      if (this.tryPlace(big ? 'residence_l' : pop.total > 60 ? 'residence_m' : 'residence_s')) return;
     }
     for (const w of wants) {
       if (c(w.type) >= w.n) continue;
@@ -140,6 +164,51 @@ export class AIController {
         continue;
       }
     }
+  }
+
+  /** Mid-game: a harbour, a shipyard, a couple of ships, then colonies on free islands. */
+  private seaStep() {
+    const g = this.g;
+    if (this.level === 0 || g.time < 1100 || !g.isles.length) return;
+    const stock = g.totalStock(this.p);
+    const hq = g.buildings.get(g.players[this.p].hq);
+    if (!hq) return;
+    const mine = [...g.buildings.values()].filter((b) => b.owner === this.p);
+    const home = g.world.region[hq.door];
+    const harbour = mine.find((b) => b.type === 'harbour' && g.world.region[b.door] === home);
+    let colonies = 0;
+    for (const b of mine) if (b.type === 'harbour' && g.world.region[b.door] !== home) colonies++;
+    if (colonies >= 2) return;
+    let sites = 0;
+    for (const b of mine) if (b.state === 'leveling' || b.state === 'building') sites++;
+    if (!harbour) {
+      if (sites < 3 && stock.board >= 12 && stock.stone >= 8) this.tryPlace('harbour');
+      return;
+    }
+    const yard = mine.find((b) => b.type === 'shipyard');
+    let ships = 0;
+    for (const sh of g.ships.values()) if (sh.owner === this.p) ships++;
+    if (!yard) {
+      if (harbour.state === 'done' && sites < 3 && stock.board >= 10) this.tryPlace('shipyard');
+      return;
+    }
+    yard.paused = ships >= 2;
+    if (!ships || harbour.state !== 'done' || g.expeditions.some((e) => e.owner === this.p)) return;
+    // nearest free island coast
+    let best: { x: number; y: number; landing: number; shore: number } | null = null, bd = Infinity;
+    for (const I of g.isles) {
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2;
+        const px = I.x + Math.cos(a) * I.r * 0.75, pz = I.y + Math.sin(a) * I.r * 0.75;
+        const d = Math.hypot(px - harbour.cx, pz - harbour.cz);
+        if (d >= bd) continue;
+        const cs = colonySite(g, this.p, harbour, px, pz);
+        if (typeof cs === 'string') continue;
+        bd = d;
+        best = cs;
+      }
+    }
+    if (best && stock.board >= 10 && stock.stone >= 8) startExpedition(g, this.p, harbour, best);
   }
 
   private territoryNodes(): number[] {
@@ -208,7 +277,10 @@ export class AIController {
         // a tower nobody can reach would block expansion forever: give up on it
         const since = this.unmannedSince.get(b.id) ?? g.time;
         this.unmannedSince.set(b.id, since);
-        if (g.time - since > 150 && !b.soldiersIncoming) { g.destroyBuilding(b, true); this.unmannedSince.delete(b.id); continue; }
+        // (overseas towers wait for a ship to bring their soldier)
+        const home = g.buildings.get(g.players[this.p].hq);
+        const overseas = home && g.world.region[home.door] !== g.world.region[b.door];
+        if (g.time - since > (overseas ? 600 : 150) && !b.soldiersIncoming) { g.destroyBuilding(b, true); this.unmannedSince.delete(b.id); continue; }
         unmanned++;
       } else this.unmannedSince.delete(b.id);
       if (b.type === 'hq') reserve += Math.max(0, b.garrison.length - 2);
@@ -282,12 +354,22 @@ export class AIController {
           break;
         }
         case 'farm': case 'pigfarm': case 'vineyard': score = -dHQ * 0.4 + this.freeLand(cx, cz, 5) * 0.4 - this.countTrees(cx, cz, 5); break;
+        case 'harbour': case 'shipyard': {
+          // a sheltered spot close to home, the yard next to the harbour
+          const hb = [...g.buildings.values()].find((o) => o.owner === this.p && o.type === 'harbour');
+          score = -dHQ * 0.5 + (type === 'shipyard' && hb ? -Math.hypot(cx - hb.cx, cz - hb.cz) * 2 : 0);
+          break;
+        }
       }
       if (score > bs) { bs = score; best = a; }
     }
     if (!best) return false;
-    // settlers must be able to walk there from the headquarters
-    if (hq && def.military && !g.path.find(hq.door, g.doorOf(def.size, best.x, best.y), false, 12000)) return false;
+    // settlers must be able to walk there from a storehouse on the same landmass
+    if (def.military) {
+      const door = g.doorOf(def.size, best.x, best.y);
+      const st = g.nearestStorage(this.p, w.nx(door), w.ny(door), w.region[door]);
+      if (!st || !g.path.find(st.door, door, false, 12000)) return false;
+    }
     const b = g.placeBuilding(type, this.p, best.x, best.y);
     return !!b;
   }

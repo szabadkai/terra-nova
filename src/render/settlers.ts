@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GOODS, Good, Job } from '../game/defs';
 import type { Game } from '../game/game';
 import type { Settler } from '../game/types';
+import { DECK_H, shipDeckY } from '../game/sea';
 import { hash2 } from '../core/rng';
 import { patchMaterial } from './shaderPatch';
 import { BANNER_COLORS } from './materials';
@@ -120,6 +121,7 @@ const JOB_LOOK: Record<Job, JobLook> = {
   weaponsmith: { hat: 'bandana', hatCol: 0x6a2a2a, apron: 0x6a4a30, beardy: 0.5 },
   vintner: { hat: 'straw', hatCol: 0x9a6ab0, apron: 0x5a2448 },
   priest: { hat: 'hood', hatCol: 0xf4efe2, apron: 0xf8f2e0, beardy: 0.6 },
+  shipwright: { hat: 'bandana', hatCol: 0x2a5a8a, apron: 0x8a6440, beardy: 0.6 },
   swordsman: { hat: 'helmet', hatCol: 0xb8bcc4 },
   bowman: { hat: 'hood', hatCol: 0x4a5a2a },
 };
@@ -127,7 +129,7 @@ const JOB_LOOK: Record<Job, JobLook> = {
 const TOOL: Partial<Record<Job, Good>> = {
   woodcutter: 'axe', stonecutter: 'pickaxe', builder: 'hammer', digger: 'shovel', farmer: 'scythe', fisher: 'rod',
   hunter: 'bow', miner: 'pickaxe', forester: 'shovel', swordsman: 'sword', bowman: 'bow', sawyer: 'saw', waterman: 'water',
-  toolsmith: 'hammer', weaponsmith: 'hammer',
+  toolsmith: 'hammer', weaponsmith: 'hammer', shipwright: 'hammer',
 };
 
 interface Look {
@@ -424,9 +426,10 @@ export class SettlersRenderer {
     const P = this.P;
     let count = 0;
     for (const s of g.settlers.values()) {
-      if (s.hidden) continue;
+      if (s.hidden && !s.aboard) continue;
       if (count >= this.cap) break;
-      const y0 = w.heightAt(s.x, s.z);
+      // passengers stand on the deck of their ship
+      const y0 = s.aboard ? shipDeckY(time, s.aboard) - 0.02 + DECK_H : w.heightAt(s.x, s.z);
       this.sphere.center.set(s.x, y0 + 0.35, s.z);
       if (!this.frustum.intersectsSphere(this.sphere)) continue;
       if (!w.explored[w.idx(Math.round(s.x), Math.round(s.z))] && s.owner !== g.local) continue;

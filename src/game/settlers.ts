@@ -194,6 +194,7 @@ export function updateSettler(g: Game, s: Settler, dt: number) {
     if (s.deadT > 5) g.settlers.delete(s.id);
     return;
   }
+  if (s.aboard) return; // the ship moves them
   if (s.hidden) {
     // inside building: only process actions (waiting, etc.)
     if (s.actions.length) {
@@ -252,7 +253,7 @@ export function idleWander(g: Game, s: Settler, dt: number) {
   s.wanderT = g.rng.range(5, 14);
   const w = g.world;
   // hang around nearest storage / residence
-  let base = g.nearestStorage(s.owner, s.x, s.z);
+  let base = g.nearestStorage(s.owner, s.x, s.z, g.world.region[s.node]);
   if (!base) {
     s.anim = 'idle';
     return;

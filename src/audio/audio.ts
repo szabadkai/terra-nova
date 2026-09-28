@@ -397,6 +397,33 @@ export class Audio {
         });
         life = 2.5;
         break;
+      case 'bell': {
+        // ship's bell: inharmonic partials with a long ring
+        const f = 740;
+        for (const [m, a, d] of [[1, 0.14, 2.2], [2.76, 0.06, 1.2], [5.4, 0.03, 0.6], [0.5, 0.05, 1.6]] as const) this.tone(t, f * m, d, 'sine', a, out);
+        this.tone(t + 0.45, f, 1.8, 'sine', 0.09, out);
+        this.tone(t + 0.45, f * 2.76, 0.9, 'sine', 0.04, out);
+        life = 3;
+        break;
+      }
+      case 'creak': {
+        // timber and rope taking the strain
+        const o = this.ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(95, t);
+        o.frequency.linearRampToValueAtTime(140, t + 0.35);
+        o.frequency.linearRampToValueAtTime(110, t + 0.6);
+        const f = this.ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = 900;
+        f.Q.value = 6;
+        const g = this.ctx.createGain();
+        this.env(g, t, 0.08, 0.12, 0.55);
+        o.connect(f).connect(g).connect(out);
+        o.start(t);
+        o.stop(t + 0.8);
+        break;
+      }
       case 'heal':
         this.tone(t, 523.3, 0.9, 'triangle', 0.1, out, 1046.5, 0.05);
         [659.3, 784, 1046.5, 1318.5].forEach((f, k) => this.tone(t + 0.15 + k * 0.08, f, 1.1, 'sine', 0.06, out));
@@ -407,6 +434,8 @@ export class Audio {
   }
 
   // ------------------------------------------------------------ ambience & music
+  private gullT = 4;
+  private surfT = 2;
   private scale = [146.8, 164.8, 174.6, 196, 220, 246.9, 261.6, 293.7, 329.6, 349.2, 392, 440];
   private chord = 0;
   private step = 0;
@@ -433,7 +462,45 @@ export class Audio {
         for (let k = 0; k < n; k++) this.tone(t + k * 0.11, base * (1 + Math.random() * 0.2), 0.08, 'sine', 0.6, out, base * (0.7 + Math.random() * 0.6));
       }
     }
-    void nearWater;
+    // gulls and the wash of the surf along the coast
+    this.gullT -= dt;
+    if (this.gullT <= 0 && nearWater > 0.12 && night < 0.5) {
+      this.gullT = 2.5 + Math.random() * 7 / Math.max(0.3, nearWater);
+      const out = this.ctx.createGain();
+      out.gain.value = 0.05 * Math.min(1, nearWater * 1.5) * (1 - night);
+      const pan = this.ctx.createStereoPanner();
+      pan.pan.value = Math.random() * 1.6 - 0.8;
+      out.connect(pan).connect(this.amb);
+      const calls = 1 + Math.floor(Math.random() * 3);
+      for (let k = 0; k < calls; k++) {
+        const t0 = t + k * (0.28 + Math.random() * 0.1);
+        const base = 1500 + Math.random() * 500;
+        this.tone(t0, base, 0.22, 'triangle', 0.7, out, base * 0.62, 0.03);
+        this.tone(t0, base * 2.01, 0.16, 'sine', 0.18, out, base * 1.3, 0.02);
+      }
+      setTimeout(() => { try { out.disconnect(); pan.disconnect(); } catch { /* */ } }, 3000);
+    }
+    this.surfT -= dt;
+    if (this.surfT <= 0 && nearWater > 0.08) {
+      this.surfT = 3.2 + Math.random() * 3;
+      const ctx = this.ctx;
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.setValueAtTime(300, t);
+      f.frequency.linearRampToValueAtTime(900, t + 1.2);
+      f.frequency.linearRampToValueAtTime(250, t + 3.0);
+      const g = ctx.createGain();
+      const peak = 0.05 * Math.min(1, nearWater * 1.4);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + 1.1);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+      src.connect(f).connect(g).connect(this.amb);
+      src.start(t, Math.random() * 1.5);
+      src.stop(t + 3.3);
+    }
     // generative music: lute arpeggios over a drone, dorian mode
     if (!this.musicOn) return;
     this.musicT -= dt;

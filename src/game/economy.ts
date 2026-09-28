@@ -16,6 +16,10 @@ function dist2(ax: number, az: number, bx: number, bz: number) {
   return (ax - bx) ** 2 + (az - bz) ** 2;
 }
 
+/** Landmass a building's door stands on; carriers never cross water. */
+const reg = (g: Game, b: Building) => g.world.region[b.door];
+const regS = (g: Game, s: Settler) => g.world.region[s.node];
+
 // ------------------------------------------------------------------ building tick
 export function updateBuilding(g: Game, b: Building, dt: number) {
   if (b.state === 'burning') {
@@ -192,10 +196,11 @@ function updateBarracks(g: Game, b: Building, dt: number) {
   // find idle carrier (always keep a few carriers for transport)
   let best: Settler | null = null, bd = Infinity;
   let idleCount = 0;
-  for (const s of g.settlers.values()) if (s.owner === b.owner && s.job === 'carrier' && s.idle && !s.dead) idleCount++;
+  const r = reg(g, b);
+  for (const s of g.settlers.values()) if (s.owner === b.owner && s.job === 'carrier' && s.idle && !s.dead && regS(g, s) === r) idleCount++;
   if (idleCount <= 4) { b.status = 'Keeping carriers for transport'; return; }
   for (const s of g.settlers.values()) {
-    if (s.owner !== b.owner || s.job !== 'carrier' || !s.idle || s.dead) continue;
+    if (s.owner !== b.owner || s.job !== 'carrier' || !s.idle || s.dead || regS(g, s) !== r) continue;
     const d = dist2(s.x, s.z, b.cx, b.cz);
     if (d < bd) { bd = d; best = s; }
   }
@@ -236,9 +241,9 @@ function updateBarracks(g: Game, b: Building, dt: number) {
 }
 
 // ------------------------------------------------------------------ logistics
-interface Need { b: Building; goods: Good[]; n: number; prio: number; }
+export interface Need { b: Building; goods: Good[]; n: number; prio: number; }
 
-function needsOf(g: Game, b: Building, out: Need[]) {
+export function needsOf(g: Game, b: Building, out: Need[]) {
   if (b.state === 'burning') return;
   if (b.state === 'leveling' || b.state === 'building') {
     const cost = b.def.cost;
@@ -248,6 +253,13 @@ function needsOf(g: Game, b: Building, out: Need[]) {
     if (nb > 0) out.push({ b, goods: ['board'], n: nb, prio: prio - 1 });
     if (ns > 0) out.push({ b, goods: ['stone'], n: ns, prio });
     return;
+  }
+  if (b.state === 'done' && b.seaWant) {
+    // a harbour gathers goods that ships will carry overseas
+    for (const gd of GOODS) {
+      const n = b.seaWant[gd] - b.stock[gd] - b.incoming[gd];
+      if (n > 0) out.push({ b, goods: [gd], n: Math.min(n, 8), prio: 160 });
+    }
   }
   if (b.state !== 'done' || b.paused || !b.def.inputs) return;
   for (const inp of b.def.inputs) {
@@ -264,6 +276,7 @@ function available(b: Building, gd: Good) {
   if (b.def.outputs && b.def.outputs.includes(gd)) return b.stock[gd] - b.outgoing[gd];
   return 0;
 }
+export const availableAt = available;
 
 export function updateEconomy(g: Game, owner: number) {
   const carriers: Settler[] = [];
@@ -285,11 +298,14 @@ export function updateEconomy(g: Game, owner: number) {
   let budget = 12;
   for (const need of needs) {
     if (!carriers.length || budget <= 0) break;
+    const r = reg(g, need.b);
     for (let k = 0; k < need.n && carriers.length && budget > 0; k++) {
-      // find nearest source
+      // find nearest source on the same landmass
       let best: Building | null = null, bestG: Good | null = null, bd = Infinity;
       for (const src of sources) {
-        if (src.id === need.b.id) continue;
+        if (src.id === need.b.id || reg(g, src) !== r) continue;
+        // a harbour does not feed its own export pile back to itself
+        if (need.b.type === 'harbour' && src.type === 'harbour' && need.prio === 160) continue;
         for (const gd of need.goods) {
           if (available(src, gd) <= 0) continue;
           let d = dist2(src.cx, src.cz, need.b.cx, need.b.cz);
@@ -298,7 +314,7 @@ export function updateEconomy(g: Game, owner: number) {
         }
       }
       if (!best || !bestG) break;
-      const c = nearestCarrier(carriers, best.cx, best.cz);
+      const c = nearestCarrier(carriers, best.cx, best.cz, g, r);
       if (!c) break;
       transport(g, c, best, need.b, bestG);
       budget--;
@@ -312,9 +328,9 @@ export function updateEconomy(g: Game, owner: number) {
     for (const gd of b.def.outputs) {
       const av = available(b, gd);
       if (av < 3) continue;
-      const st = g.nearestStorage(owner, b.cx, b.cz);
+      const st = g.nearestStorage(owner, b.cx, b.cz, reg(g, b));
       if (!st) break;
-      const c = nearestCarrier(carriers, b.cx, b.cz);
+      const c = nearestCarrier(carriers, b.cx, b.cz, g, reg(g, b));
       if (!c) break;
       transport(g, c, b, st, gd);
       budget--;
@@ -322,9 +338,10 @@ export function updateEconomy(g: Game, owner: number) {
   }
 }
 
-function nearestCarrier(list: Settler[], x: number, z: number): Settler | null {
+function nearestCarrier(list: Settler[], x: number, z: number, g?: Game, region = 0): Settler | null {
   let bi = -1, bd = Infinity;
   for (let i = 0; i < list.length; i++) {
+    if (region && g && g.world.region[list[i].node] !== region) continue;
     const d = dist2(list[i].x, list[i].z, x, z);
     if (d < bd) { bd = d; bi = i; }
   }
@@ -371,7 +388,7 @@ function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) 
     if (g.buildings.has(to.id)) to.incoming[gd] = Math.max(0, to.incoming[gd] - 1);
     if (picked && s.carrying) {
       // bring it back to a storage
-      const st = g.nearestStorage(s.owner, s.x, s.z);
+      const st = g.nearestStorage(s.owner, s.x, s.z, regS(g, s));
       const good = s.carrying;
       s.carrying = good;
       if (st) {
@@ -392,13 +409,19 @@ function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) 
 
 // ------------------------------------------------------------------ construction crew
 function assignConstruction(g: Game, owner: number, mine: Building[], carriers: Settler[]) {
-  const sites = mine.filter(isSite).sort((a, b) => a.created - b.created);
-  if (!sites.length) return;
+  const all = mine.filter(isSite).sort((a, b) => a.created - b.created);
+  if (!all.length) return;
+  // every landmass has its own crew
+  const regions = new Set(all.map((b) => reg(g, b)));
+  for (const r of regions) assignCrewIn(g, owner, all.filter((b) => reg(g, b) === r), carriers, r);
+}
+
+function assignCrewIn(g: Game, owner: number, sites: Building[], carriers: Settler[], r: number) {
   const idleBuilders: Settler[] = [];
   const idleDiggers: Settler[] = [];
   let totalBuilders = 0, totalDiggers = 0;
   for (const s of g.settlers.values()) {
-    if (s.owner !== owner || s.dead) continue;
+    if (s.owner !== owner || s.dead || s.aboard || s.voyage || regS(g, s) !== r) continue;
     if (s.job === 'builder') { totalBuilders++; if (!s.home) idleBuilders.push(s); }
     if (s.job === 'digger') { totalDiggers++; if (!s.home) idleDiggers.push(s); }
   }
@@ -433,13 +456,15 @@ function assignConstruction(g: Game, owner: number, mine: Building[], carriers: 
   }
   // recruit extra crew from carriers with tools
   const recruit = (job: Job, want: number, total: number) => {
-    if (want <= 0 || total >= 4 + sites.length * 1.5 || carriers.length < 2) return;
+    let local = 0;
+    for (const c of carriers) if (regS(g, c) === r) local++;
+    if (want <= 0 || total >= 4 + sites.length * 1.5 || local < (total > 0 ? 2 : 1)) return;
     const tool = JOB_TOOL[job]!;
-    const st = findToolSource(g, owner, tool, sites[0].cx, sites[0].cz);
+    const st = findToolSource(g, owner, tool, sites[0].cx, sites[0].cz, r);
     if (!st) return;
-    // keep one tool in reserve for specialists
-    if (g.totalStock(owner)[tool] < 2) return;
-    const c = nearestCarrier(carriers, st.cx, st.cz);
+    // keep one tool in reserve for specialists (a lone island crew may use the last one)
+    if (g.totalStock(owner)[tool] < 2 && total > 0) return;
+    const c = nearestCarrier(carriers, st.cx, st.cz, g, r);
     if (!c) return;
     equip(g, c, st, tool, job, null);
   };
@@ -451,10 +476,11 @@ function pickNearest(list: Settler[], x: number, z: number): Settler | null {
   return nearestCarrier(list, x, z);
 }
 
-export function findToolSource(g: Game, owner: number, tool: Good, x: number, z: number): Building | null {
+export function findToolSource(g: Game, owner: number, tool: Good, x: number, z: number, region = 0): Building | null {
   let best: Building | null = null, bd = Infinity;
   for (const b of g.buildings.values()) {
     if (b.owner !== owner || b.state !== 'done') continue;
+    if (region && reg(g, b) !== region) continue;
     if (available(b, tool) <= 0) continue;
     const d = dist2(b.cx, b.cz, x, z);
     if (d < bd) { bd = d; best = b; }
@@ -514,10 +540,11 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
       else continue;
     }
     const job = b.def.worker;
+    const r = reg(g, b);
     // unemployed specialist?
     let spec: Settler | null = null, sd = Infinity;
     for (const s of g.settlers.values()) {
-      if (s.owner !== owner || s.job !== job || s.home || s.dead) continue;
+      if (s.owner !== owner || s.job !== job || s.home || s.dead || s.aboard || s.voyage || regS(g, s) !== r) continue;
       const d = dist2(s.x, s.z, b.cx, b.cz);
       if (d < sd) { sd = d; spec = s; }
     }
@@ -537,20 +564,20 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
     if (!carriers.length) { b.status = 'No free settlers'; continue; }
     const tool = JOB_TOOL[job];
     if (tool) {
-      const src = findToolSource(g, owner, tool, b.cx, b.cz);
+      const src = findToolSource(g, owner, tool, b.cx, b.cz, r);
       if (!src) {
         b.status = `Missing tool: ${GOOD_NAMES[tool].replace(/s$/, '').toLowerCase()}`;
         // iron and coal keep the toolsmith going: borrow a miner from a gold or stone mine rather than deadlock
         if (b.type === 'ironmine' || b.type === 'coalmine') reassignMiner(g, owner, b, mine);
         continue;
       }
-      const c = nearestCarrier(carriers, src.cx, src.cz);
-      if (!c) continue;
+      const c = nearestCarrier(carriers, src.cx, src.cz, g, r);
+      if (!c) { b.status = 'No free settlers'; continue; }
       equip(g, c, src, tool, job, b);
       b.status = 'Worker on the way';
     } else {
-      const c = nearestCarrier(carriers, b.cx, b.cz);
-      if (!c) continue;
+      const c = nearestCarrier(carriers, b.cx, b.cz, g, r);
+      if (!c) { b.status = 'No free settlers'; continue; }
       claim(g, c);
       c.job = job;
       c.home = b.id;
@@ -569,6 +596,7 @@ function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settl
 function reassignMiner(g: Game, owner: number, b: Building, mine: Building[]) {
   for (const o of mine) {
     if (o.type !== 'goldmine' && o.type !== 'stonemine' && !(b.type === 'ironmine' && o.type === 'coalmine' && g.totalStock(owner).coal > 6)) continue;
+    if (reg(g, o) !== reg(g, b)) continue;
     const w = o.worker ? g.settlers.get(o.worker) : null;
     if (!w || w.dead) continue;
     o.worker = 0;
@@ -689,7 +717,7 @@ function crewIdle(g: Game, s: Settler, dt: number) {
   s.wanderT -= dt;
   if (s.wanderT > 0) return;
   s.wanderT = g.rng.range(6, 14);
-  const st = g.nearestStorage(s.owner, s.x, s.z);
+  const st = g.nearestStorage(s.owner, s.x, s.z, regS(g, s));
   if (!st) return;
   const w = g.world;
   const bx = w.nx(st.door), by = w.ny(st.door);

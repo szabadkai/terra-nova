@@ -8,6 +8,7 @@ import type { Anchors } from './geom';
 import { getClipMaterial, getMaterial } from './materials';
 import type { PilesRenderer } from './entities';
 import { patchedDepthMaterial } from './shaderPatch';
+import { Seaworks, buildSeaworks, showHullProgress } from './seaworks';
 
 interface BView {
   id: number;
@@ -25,6 +26,7 @@ interface BView {
   movers: THREE.Object3D[];
   shownProgress: number;
   burnT: number;
+  sea: Seaworks | null;
 }
 
 export class BuildingsRenderer {
@@ -48,9 +50,16 @@ export class BuildingsRenderer {
     const movers: THREE.Object3D[] = [];
     group.traverse((o) => { if (o.name) movers.push(o); });
     const box = new THREE.Box3().setFromObject(group);
+    // jetty or slipway out to this site's own stretch of sea
+    const sea = buildSeaworks(this.game, b, y);
+    let anchors = mb.anchors;
+    if (sea) {
+      group.add(sea.group);
+      anchors = { ...mb.anchors, fires: [...mb.anchors.fires, ...sea.fires] };
+    }
     const v: BView = {
-      id: b.id, type: b.type, owner: b.owner, group, anchors: mb.anchors, height: Math.max(0.8, box.max.y - y),
-      state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnT: 0,
+      id: b.id, type: b.type, owner: b.owner, group, anchors, height: Math.max(0.8, box.max.y - y),
+      state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnT: 0, sea,
     };
     this.views.set(b.id, v);
     return v;
@@ -58,6 +67,7 @@ export class BuildingsRenderer {
 
   private dispose(v: BView) {
     this.group.remove(v.group);
+    v.sea?.group.traverse((o) => { if (o.parent?.userData.own) (o as THREE.Mesh).geometry?.dispose(); });
     if (v.clipMats) for (const m of v.clipMats.values()) m.dispose();
     v.clipDepth?.dispose();
     this.views.delete(v.id);
@@ -161,7 +171,6 @@ export class BuildingsRenderer {
       const b = g.buildings.get(v.id);
       if (!b || b.owner !== v.owner) this.dispose(v);
     }
-    this.piles.begin();
     for (const b of g.buildings.values()) {
       let v = this.views.get(b.id);
       if (!v) v = this.create(b);
@@ -217,8 +226,16 @@ export class BuildingsRenderer {
         else if (m.name === 'saw') { if (b.working) m.rotation.x += dt * 18; }
         else if (m.name === 'winch') { if (b.worker && time % 6 < 2) m.rotation.x += dt * 4; }
         else if (m.name === 'pigs') { m.position.y = Math.abs(Math.sin(time * 2 + b.id)) * 0.01; m.visible = b.stock.pig > 0 || b.working; }
+        else if (m.name === 'crane') {
+          // swings to and fro while a ship is loaded or unloaded here
+          let busy = false;
+          for (const sh of g.ships.values()) if (sh.at === b.id && (sh.state === 'loading' || sh.state === 'unloading')) { busy = true; break; }
+          const target = busy ? Math.sin(time * 0.7 + b.id) * 1.1 - 0.4 : -0.2;
+          m.rotation.y += (target - m.rotation.y) * Math.min(1, dt * 1.5);
+        }
         void axis; void working;
       }
+      if (v.sea) showHullProgress(v.sea, b.shipProgress, b.state === 'done' && b.worker !== 0);
       // output / storage piles
       if (b.state === 'done') {
         const anchor = v.anchors.piles[0];
@@ -250,7 +267,6 @@ export class BuildingsRenderer {
         }
       }
     }
-    this.piles.end();
   }
 
   /** World-space anchor positions of lit windows / fires for night lights. */

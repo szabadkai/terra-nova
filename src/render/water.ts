@@ -22,6 +22,8 @@ export class WaterRenderer {
       tReflect: { value: null },
       uReflMat: { value: new THREE.Matrix4() },
       uReflOn: { value: 0 },
+      uWakes: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
+      uWakeN: { value: 0 },
     };
     const mat = new THREE.MeshStandardMaterial({
       color: 0xffffff, roughness: 0.06, metalness: 0.0, transparent: true, depthWrite: false,
@@ -41,6 +43,8 @@ uniform vec3 uSunCol;
 uniform sampler2D tReflect;
 uniform mat4 uReflMat;
 uniform float uReflOn;
+uniform vec4 uWakes[8]; // ship x, z, heading, speed
+uniform float uWakeN;
 #define C(r,g,b) pow(vec3(float(r),float(g),float(b))/255.0, vec3(2.2))
 vec2 wSlope;
 float wFoam;
@@ -67,6 +71,36 @@ vec3 wEmis;
   float waves = smoothstep(0.72, 0.98, sin(depth * 9.0 - uTime * 1.7 + n * 5.0)) * (1.0 - smoothstep(0.0, 0.9, depth));
   float fn = texture2D(tNoise, p * 0.9 - uTime * 0.03).g;
   float foam = clamp(shore * 0.9 + waves * 0.75, 0.0, 1.0) * smoothstep(0.25, 0.6, fn + shore * 0.4);
+  // ship wakes: foam hugging the hull, a churned trail and the two Kelvin arms fanning out behind
+  float wake = 0.0;
+  for (int k = 0; k < 8; k++) {
+    if (float(k) >= uWakeN) break;
+    vec4 wk = uWakes[k];
+    vec2 d = vWPos.xz - wk.xy;
+    if (dot(d, d) > 256.0) continue;
+    vec2 fwd = vec2(sin(wk.z), cos(wk.z));
+    vec2 rgt = vec2(fwd.y, -fwd.x);
+    float along = dot(d, fwd), side = dot(d, rgt);
+    float spd = clamp(wk.w / 3.4, 0.0, 1.0);
+    // bow wave and a thin collar of foam where the hull meets the water
+    float hull = length(vec2(side / 0.5, along / 1.45));
+    float ring = (1.0 - smoothstep(0.0, 0.1 + spd * 0.12, abs(hull - 1.02))) * (0.18 + 0.6 * spd) * (0.45 + 0.55 * smoothstep(-1.2, 1.4, along));
+    float back = -(along + 1.1);
+    if (back > 0.0) {
+      float armX = back * 0.34 + 0.38;
+      float w0 = 0.05 + back * 0.03;
+      // the arms are chains of short crests, not lines: modulate along their length
+      float crest = 0.55 + 0.45 * sin(back * 7.0 - uTime * 2.6 + side * 3.0);
+      float arm = (1.0 - smoothstep(0.0, w0, abs(abs(side) - armX))) * exp(-back * 0.5) * spd * 0.55 * crest;
+      float trail = (1.0 - smoothstep(0.0, 0.16 + back * 0.05, abs(side))) * exp(-back * 0.42) * spd * 0.7;
+      // faint transverse ripples between the arms
+      float tr = smoothstep(0.7, 1.0, sin(back * 4.0 - uTime * 3.0)) * (1.0 - smoothstep(armX * 0.6, armX, abs(side))) * exp(-back * 0.5) * spd * 0.18;
+      wake = max(wake, max(arm, max(trail, tr)));
+    }
+    wake = max(wake, ring);
+  }
+  float wn = texture2D(tNoise, p * 1.7 + uTime * vec2(0.02, -0.015)).b;
+  foam = max(foam, wake * smoothstep(0.25, 0.75, wn * 0.7 + fn * 0.5 + wake * 0.25));
   wFoam = foam;
   col = mix(col, vec3(0.62, 0.7, 0.72), foam);
   diffuseColor.rgb = col;

@@ -6,13 +6,14 @@ import {
 } from './defs';
 import { generateMap } from './mapgen';
 import { PathFinder } from './path';
-import type { Animal, Building, Field, GameEvent, Projectile, Settler, Stone, Tree } from './types';
+import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Stone, Tree } from './types';
 import { WATER_LEVEL, World } from './world';
 import { abortPlan, updateSettler } from './settlers';
 import { updateEconomy, updateBuilding, onBuildingComplete } from './economy';
 import { updateMilitary, recomputeTerritory, updateProjectiles } from './military';
 import { AIController } from './ai';
 import { updateFaith } from './faith';
+import { cancelVoyage, findDock, sinkFleet, updateSea } from './sea';
 
 export interface PlayerState {
   id: number;
@@ -38,6 +39,7 @@ export interface GameOptions {
   seed: number;
   players: number;
   aiLevel: number; // 0 easy .. 2 hard
+  islands?: boolean;
 }
 
 export const OUT_CAP = 8;
@@ -54,6 +56,11 @@ export class Game {
   stones = new Map<number, Stone>();
   fields = new Map<number, Field>();
   animals = new Map<number, Animal>();
+  ships = new Map<number, Ship>();
+  seaOrders: SeaOrder[] = [];
+  expeditions: Expedition[] = [];
+  seaT = 0;
+  isles: { x: number; y: number; r: number }[] = [];
   projectiles: Projectile[] = [];
   events: GameEvent[] = [];
   ai: AIController[] = [];
@@ -78,8 +85,9 @@ export class Game {
     this.rng = new RNG(opts.seed ^ 0x5bd1e995);
     this.world = new World(opts.size, opts.size);
     this.path = new PathFinder(this.world);
-    const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players });
+    const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands });
     this.starts = gen.starts;
+    this.isles = gen.isles;
 
     for (const t of gen.trees) this.addTree(t.node, t.species, t.growth);
     for (const s of gen.stones) this.addStone(s.node, s.amount);
@@ -235,7 +243,7 @@ export class Game {
       anim: 'idle', animT: this.rng.range(0, 10), carrying: null, actions: [], onAbort: null, idle: true,
       home: 0, task: '', hp: 100, maxHp: 100, level: 0, sstate: 'idle', target: 0, targetB: 0, engaged: 0,
       cooldown: 0, scanT: this.rng.range(0, 0.3), dead: false, deadT: 0, wanderT: this.rng.range(0, 6),
-      seed: this.rng.next(), blessUntil: 0,
+      seed: this.rng.next(), blessUntil: 0, voyage: 0, voyageFrom: 0, aboard: 0,
     };
     if (job === 'bowman') { s.hp = s.maxHp = 80; }
     this.settlers.set(s.id, s);
@@ -275,8 +283,8 @@ export class Game {
     return { x: hx - off, y: hy - off };
   }
 
-  /** Returns null if placeable, otherwise a reason. */
-  placeError(type: BuildingType, owner: number, x: number, y: number): string | null {
+  /** Returns null if placeable, otherwise a reason. `unclaimed` checks a colony site on no-one's land instead. */
+  placeError(type: BuildingType, owner: number, x: number, y: number, unclaimed = false): string | null {
     const def = BUILDINGS[type];
     const w = this.world;
     const size = def.size;
@@ -287,7 +295,7 @@ export class Game {
     for (let yy = y; yy < y + size; yy++) {
       for (let xx = x; xx < x + size; xx++) {
         const i = w.idx(xx, yy);
-        if (w.owner[i] !== owner) return 'Outside your territory';
+        if (unclaimed ? w.owner[i] >= 0 : w.owner[i] !== owner) return 'Outside your territory';
         if (w.isWater(i)) return 'Cannot build on water';
         if (w.building[i] || w.reserve[i]) return 'Occupied';
         if (w.stone[i]) return 'Rocks in the way';
@@ -303,7 +311,7 @@ export class Game {
     }
     if (mine && mountainCount < size * size * 0.6) return 'Mines must be built on mountains';
     const door = this.doorOf(size, x, y);
-    if (w.owner[door] !== owner || !w.walkable(door) || w.building[door] || w.tree[door]) return 'Entrance blocked';
+    if ((unclaimed ? w.owner[door] >= 0 : w.owner[door] !== owner) || !w.walkable(door) || w.building[door] || w.tree[door]) return 'Entrance blocked';
     const dh = w.h[door];
     hmin = Math.min(hmin, dh);
     hmax = Math.max(hmax, dh);
@@ -317,6 +325,7 @@ export class Game {
     }
     const lim = mine ? 3.5 : size <= 2 ? 1.7 : size === 3 ? 1.4 : 1.2;
     if (hmax - hmin > lim) return 'Ground too steep';
+    if (def.coastal && findDock(this, size, x, y) < 0) return 'Must be built on the coast, beside deep sea';
     return null;
   }
 
@@ -339,6 +348,7 @@ export class Game {
       garrison: [], soldiersIncoming: 0, desiredSoldiers: def.military?.capacity ?? 0, occupied: false,
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,
+      dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null,
     };
     this.buildings.set(b.id, b);
     const fp = this.footprint(size, x, y);
@@ -446,8 +456,11 @@ export class Game {
     for (const id of b.garrison) releaseSettler(id, true);
     b.garrison = [];
     for (const s of this.settlers.values()) {
+      if (s.aboard) continue;
       if (s.home === b.id || s.inside === b.id || s.targetB === b.id) releaseSettler(s.id, s.job === 'swordsman' || s.job === 'bowman');
+      else if (s.voyageFrom === b.id) { abortPlan(this, s); cancelVoyage(this, s); }
     }
+    b.seaWant = null;
     // fields of farm
     if (b.type === 'farm' || b.type === 'vineyard') for (const f of [...this.fields.values()]) if (f.farm === b.id) this.removeField(f);
     b.worker = 0;
@@ -487,10 +500,11 @@ export class Game {
     return out;
   }
 
-  nearestStorage(owner: number, x: number, z: number): Building | null {
+  nearestStorage(owner: number, x: number, z: number, region = 0): Building | null {
     let best: Building | null = null, bd = Infinity;
     for (const b of this.buildings.values()) {
       if (b.owner !== owner || !b.def.storage || b.state !== 'done') continue;
+      if (region && this.world.region[b.door] !== region) continue;
       const d = (b.cx - x) ** 2 + (b.cz - z) ** 2;
       if (d < bd) { bd = d; best = b; }
     }
@@ -570,6 +584,7 @@ export class Game {
     this.updateAnimals(dt);
     updateProjectiles(this, dt);
     updateFaith(this, dt);
+    updateSea(this, dt);
     // economy dispatch per player
     for (const p of this.players) {
       if (!p.alive) continue;
@@ -723,6 +738,7 @@ export class Game {
       if (s.owner !== this.local || s.hidden || s.dead) continue;
       reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : 4.5);
     }
+    for (const sh of this.ships.values()) if (sh.owner === this.local) reveal(sh.x, sh.z, 8);
     if (changed) w.exploredDirty = true;
   }
 
@@ -739,6 +755,7 @@ export class Game {
         // their settlers wander leaderless; soldiers die off
         for (const s of this.settlers.values()) if (s.owner === p.id) { s.dead = true; s.anim = 'die'; s.deadT = 0; abortPlan(this, s); }
         for (const b of this.buildings.values()) if (b.owner === p.id) this.destroyBuilding(b, true);
+        sinkFleet(this, p.id);
       }
     }
     if (!this.over) {

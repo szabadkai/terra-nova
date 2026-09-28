@@ -101,6 +101,20 @@ export class Minimap {
       this.ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
       this.ctx.fillRect(s.x - 0.8, s.z - 0.8, 1.6, 1.6);
     }
+    // ships: a pale hull with the owner's sail
+    for (const sh of g.ships.values()) {
+      const xi = Math.max(0, Math.min(w.W - 1, Math.round(sh.x))), zi = Math.max(0, Math.min(w.H - 1, Math.round(sh.z)));
+      if (sh.owner !== g.local && !w.explored[w.idx(xi, zi)]) continue;
+      const c = pc[sh.owner];
+      this.ctx.save();
+      this.ctx.translate(sh.x, sh.z);
+      this.ctx.rotate(-sh.heading);
+      this.ctx.fillStyle = '#f4ead4';
+      this.ctx.fillRect(-1.1, -2.2, 2.2, 4.4);
+      this.ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+      this.ctx.fillRect(-1.6, -0.6, 3.2, 1.2);
+      this.ctx.restore();
+    }
     // camera frustum footprint
     const cam = this.cam.camera;
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => {

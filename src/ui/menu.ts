@@ -45,6 +45,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <li><b>Expand.</b> Guard towers, Watchtowers and Castles claim land once a soldier moves in.</li>
         <li><b>Feed the mines.</b> Fishers, Hunters and Bakeries (Farm → Windmill → Bakery + Waterworks) supply food for mines on the mountains. Glittering specks in the rock reveal coal, iron and gold.</li>
         <li><b>Arm yourself.</b> Iron Smelter + Coal → Iron → Weaponsmith → swords & bows → Barracks trains soldiers. Gold in storage raises morale.</li>
+        <li><b>Take to the sea.</b> A Harbour and a Shipyard on the coast give you ships. They carry goods and settlers between your harbours, and a harbour can send an expedition to found a colony on the rich islands offshore.</li>
         <li><b>Conquer.</b> Select an enemy military building in reach and press Attack. Capture them all to win.</li>
       </ol>
       <p class="muted">Controls: WASD / arrows or right-drag to scroll, mouse wheel to zoom, Q/E to rotate, Space to pause.</p>

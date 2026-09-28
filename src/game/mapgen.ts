@@ -13,12 +13,14 @@ export interface MapGenResult {
   trees: { node: number; species: number; growth: number }[];
   stones: { node: number; amount: number }[];
   deer: { node: number; herd: number }[];
+  isles: { x: number; y: number; r: number }[];
 }
 
 export interface MapOptions {
   size: number;
   seed: number;
   players: number;
+  islands?: boolean; // offshore islands (default on)
 }
 
 export function generateMap(world: World, opt: MapOptions): MapGenResult {
@@ -127,6 +129,70 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
     }
   }
 
+  // ---- offshore islands: rich, unclaimed land reachable only by ship
+  interface Isle { x: number; y: number; r: number; mtn: Blob | null; }
+  const isles: Isle[] = [];
+  const landings: { x: number; y: number }[] = [];
+  const nearLanding = (x: number, y: number) => landings.some((L) => Math.hypot(x - L.x, y - L.y) < 3.6);
+  const wantIsles = opt.islands === false ? 0 : S >= 200 ? 4 : S >= 150 ? 3 : 2;
+  for (let tries = 0; tries < 400 && isles.length < wantIsles; tries++) {
+    // big ones first; later tries settle for smaller isles that fit the corners
+    const r = S * rng.range(0.042, tries < 200 ? 0.07 : 0.05);
+    const a = rng.range(0, Math.PI * 2);
+    const D = S * rng.range(0.38, 0.72);
+    const x = S / 2 + Math.cos(a) * D, y = S / 2 + Math.sin(a) * D;
+    if (x - r < 5 || y - r < 5 || x + r > W - 6 || y + r > H - 6) continue;
+    if (starts.some((st) => Math.hypot(st.x - x, st.y - y) < r + 24)) continue;
+    if (isles.some((o) => Math.hypot(o.x - x, o.y - y) < o.r + r + 10)) continue;
+    // open sea all around, with a channel to the mainland wide enough to sail
+    let deep = 0, n = 0, ring = 0, ringDeep = 0;
+    world.forRadius(x, y, r + 4.5, (i, _x, _y, d2) => {
+      const dp = world.h[i] < WATER_LEVEL - 0.35;
+      n++;
+      if (dp) deep++;
+      if (d2 > (r * 1.3) ** 2) { ring++; if (dp) ringDeep++; }
+    });
+    if (deep < n * 0.9 || ringDeep < ring * 0.985) continue;
+    // the mountain sits on the seaward side, away from the landing
+    const ma = Math.atan2(y - S / 2, x - S / 2) + rng.range(-0.9, 0.9);
+    const mtn = rng.chance(0.85) ? { x: x + Math.cos(ma) * r * 0.35, y: y + Math.sin(ma) * r * 0.35, r: r * 0.5 } : null;
+    isles.push({ x, y, r, mtn });
+  }
+  for (const I of isles) {
+    world.forRadius(I.x, I.y, I.r * 1.5, (i, x, y) => {
+      const u = x / S, v = y / S;
+      const dd = Math.hypot(x - I.x, y - I.y) / I.r + nDetail.noise(x * 0.12 + 17, y * 0.12 + 5) * 0.3;
+      let h = world.h[i];
+      if (dd < 1) {
+        const land = WATER_LEVEL + 0.12 + (1 - smoothstep(0.55, 1.0, dd)) * 1.3 + Math.max(0, nDetail.fbm(u * 14, v * 14, 3)) * 0.5;
+        h = Math.max(h, land);
+        if (I.mtn) {
+          const mt = blobF(I.mtn, x, y, nMount);
+          const ridge = nMount.ridged(u * 7, v * 7, 5);
+          h += mt * (1.4 + ridge * 5.5);
+          mountainness[i] = Math.max(mountainness[i], mt * (0.5 + ridge));
+        }
+      } else if (dd < 1.5) {
+        h = Math.max(h, WATER_LEVEL - 0.15 - ((dd - 1) / 0.5) * 3.2);
+      }
+      world.h[i] = h;
+    });
+    // a sheltered landing facing the mainland: flat, open meadow by deep water
+    const ta = Math.atan2(S / 2 - I.y, S / 2 - I.x) + rng.range(-0.5, 0.5);
+    const lx = I.x + Math.cos(ta) * I.r * 0.72, ly = I.y + Math.sin(ta) * I.r * 0.72;
+    landings.push({ x: lx, y: ly });
+    world.forRadius(lx, ly, 3.4, (i, x, y, d2) => {
+      if (world.h[i] < WATER_LEVEL - 0.1) return;
+      const k = 1 - smoothstep(2.2, 3.4, Math.sqrt(d2));
+      world.h[i] = world.h[i] * (1 - k) + (WATER_LEVEL + 0.45) * k;
+      mountainness[i] *= 1 - k;
+      void x; void y;
+    });
+    const fa = ta + Math.PI + rng.range(-1.2, 1.2);
+    forests.push({ x: I.x + Math.cos(fa) * I.r * 0.4, y: I.y + Math.sin(fa) * I.r * 0.4, r: I.r * 0.42 });
+    rocks.push({ x: I.x + Math.cos(fa + 1.6) * I.r * 0.45, y: I.y + Math.sin(fa + 1.6) * I.r * 0.45, r: 1.8 });
+  }
+
   // Ensure land connectivity between starts: carve land bridges if needed
   ensureConnectivity(world, starts);
 
@@ -202,6 +268,21 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
     }
   }
 
+  // island mountains hold the richest veins: gold and iron
+  for (const I of isles) {
+    if (!I.mtn) continue;
+    const kinds = [ORE_GOLD, ORE_IRON, ORE_GOLD, ORE_COAL];
+    for (let k = 0; k < kinds.length; k++) {
+      const a = (k / kinds.length) * Math.PI * 2 + rng.range(0, 0.8);
+      world.forRadius(I.mtn.x + Math.cos(a) * I.mtn.r * 0.4, I.mtn.y + Math.sin(a) * I.mtn.r * 0.4, 2.4, (i) => {
+        if (world.terrain[i] === T_ROCK || world.terrain[i] === T_SNOW) {
+          world.ore[i] = kinds[k];
+          world.oreAmt[i] = rng.int(12, 22);
+        }
+      });
+    }
+  }
+
   // ---- fish
   for (let i = 0; i < world.N; i++) {
     const hh = world.h[i] - WATER_LEVEL;
@@ -219,7 +300,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
       const hh = world.h[i] - WATER_LEVEL;
       if (hh < 0.15) continue;
       const nearStart = startInfluence(x, y, 6.5, 8.5);
-      if (nearStart > 0.01) continue;
+      if (nearStart > 0.01 || nearLanding(x, y)) continue;
       let p = 0;
       if (t === T_FOREST) p = 0.36 + moist[i] * 0.35;
       else if (t === T_GRASS) p = 0.035;
@@ -250,7 +331,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
       if (occupied[i]) continue;
       const hh = world.h[i] - WATER_LEVEL;
       if (hh < 0.3) continue;
-      if (startInfluence(x, y, 6.5, 8.5) > 0.01) continue;
+      if (startInfluence(x, y, 6.5, 8.5) > 0.01 || nearLanding(x, y)) continue;
       const t = world.terrain[i];
       let p = 0;
       const sn = nStone.noise(x * 0.09, y * 0.09);
@@ -283,6 +364,16 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
     }
     herdId++;
   }
+  for (const I of isles) {
+    for (let k = 0; k < 4; k++) {
+      const xx = Math.round(I.x + rng.range(-I.r, I.r) * 0.5), yy = Math.round(I.y + rng.range(-I.r, I.r) * 0.5);
+      if (!world.inBounds(xx, yy)) continue;
+      const ii = yy * W + xx;
+      if (world.isWater(ii) || occupied[ii] || world.terrain[ii] === T_ROCK || world.terrain[ii] === T_SNOW) continue;
+      deer.push({ node: ii, herd: herdId });
+    }
+    herdId++;
+  }
 
   // yard around each start HQ is bare earth
   for (const s of starts) {
@@ -291,7 +382,8 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
     });
   }
 
-  return { starts, trees, stones, deer };
+  world.computeRegions();
+  return { starts, trees, stones, deer, isles: isles.map((I) => ({ x: I.x, y: I.y, r: I.r })) };
 }
 
 function ensureConnectivity(world: World, starts: { x: number; y: number }[]) {

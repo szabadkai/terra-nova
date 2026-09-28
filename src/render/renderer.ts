@@ -21,6 +21,8 @@ import { PlanarReflection } from './reflection';
 import { BordersRenderer } from './borders';
 import { SpellFX } from './spells';
 import { SPELLS, SpellId, castError } from '../game/faith';
+import { ShipsRenderer } from './ships';
+import { findDock } from '../game/sea';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -114,6 +116,7 @@ export class GameRenderer {
   arrows: ProjectilesRenderer;
   piles: PilesRenderer;
   buildings: BuildingsRenderer;
+  ships: ShipsRenderer;
   particles: Particles;
   fx: PostFX;
   birds: Birds;
@@ -127,11 +130,13 @@ export class GameRenderer {
   // interaction state
   placing: BuildingType | null = null;
   casting: SpellId | null = null;
+  /** Harbour an expedition is being planned from (target picking mode), 0 when off. */
+  expedition = 0;
   private castCheckT = 0;
   private castOk = true;
   hoverNode = -1;
   hoverPoint: THREE.Vector3 | null = null;
-  selected: { kind: 'building' | 'settler'; id: number } | null = null;
+  selected: { kind: 'building' | 'settler' | 'ship'; id: number } | null = null;
   private ghost: THREE.Group | null = null;
   private ghostType: BuildingType | null = null;
   private ghostMat: THREE.MeshStandardMaterial;
@@ -190,6 +195,8 @@ export class GameRenderer {
     this.scene.add(this.buildings.group);
     this.particles = new Particles();
     this.scene.add(this.particles.group);
+    this.ships = new ShipsRenderer(game, this.piles, this.particles);
+    this.scene.add(this.ships.group);
     this.birds = new Birds(game.world.W, game.world.H);
     this.scene.add(this.birds.mesh);
     this.borders = new BordersRenderer(game);
@@ -309,6 +316,13 @@ export class GameRenderer {
     return best;
   }
 
+  pickShip(clientX: number, clientY: number): number {
+    const n = this.ndc(clientX, clientY);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(n.x, n.y), this.cam.camera);
+    return this.ships.pick(ray);
+  }
+
   pickBuilding(clientX: number, clientY: number): Building | null {
     // raycast building meshes first (tall models), fall back to ground footprint
     const n = this.ndc(clientX, clientY);
@@ -346,6 +360,7 @@ export class GameRenderer {
     const g = this.game;
     const w = g.world;
     const U = this.terrain.uniforms;
+    if (!this.placing && this.expedition) { this.updateExpedition(dt); return; }
     if (!this.placing) {
       if (this.ghost) this.ghost.visible = false;
       this.markers.count = 0;
@@ -393,6 +408,69 @@ export class GameRenderer {
       for (const j of g.footprint(def.size, a.x, a.y)) { hmin = Math.min(hmin, w.h[j]); hmax = Math.max(hmax, w.h[j]); }
       const flat = 1 - Math.min(1, (hmax - hmin) / 1.2);
       col.setRGB(0.9 - flat * 0.75, 0.55 + flat * 0.35, 0.08);
+      this.markers.setColorAt(n, col);
+      n++;
+    });
+    this.markers.count = n;
+    this.markers.instanceMatrix.needsUpdate = true;
+    if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
+  }
+
+  /** Expedition targeting: free coasts get markers, the harbour ghost follows the cursor to the nearest one. */
+  private updateExpedition(dt: number) {
+    const g = this.game;
+    const w = g.world;
+    const from = g.buildings.get(this.expedition);
+    if (!from || from.dock < 0) { this.expedition = 0; return; }
+    const sea = w.sea[from.dock];
+    this.ensureGhost('harbour');
+    const ghost = this.ghost!;
+    const size = BUILDINGS.harbour.size;
+    const ok = (x: number, y: number) => {
+      const a = g.anchorFor('harbour', x, y);
+      if (g.placeError('harbour', g.local, a.x, a.y, true)) return null;
+      const d = findDock(g, size, a.x, a.y);
+      return d >= 0 && w.sea[d] === sea ? a : null;
+    };
+    ghost.visible = false;
+    if (this.hoverNode >= 0) {
+      const hx = w.nx(this.hoverNode), hy = w.ny(this.hoverNode);
+      let best: { x: number; y: number } | null = null, bd = Infinity;
+      w.forRadius(hx, hy, 4, (_i, x, y, d2) => { if (d2 < bd && (x + y) % 2 === 0) { const a = ok(x, y); if (a) { bd = d2; best = a; } } });
+      if (best) {
+        const a = best as { x: number; y: number };
+        let hs = 0;
+        for (const i of g.footprint(size, a.x, a.y)) hs += w.h[i];
+        ghost.position.set(a.x + (size - 1) / 2, hs / (size * size), a.y + (size - 1) / 2);
+        ghost.visible = true;
+        this.ghostMat.color.set(0x70d0ff);
+        this.ghostMat.emissive.set(0x103050);
+      }
+    }
+    this.markerT -= dt;
+    if (this.markerT > 0) return;
+    this.markerT = 0.4;
+    const t = this.cam.target;
+    const R = Math.min(40, this.cam.viewSize * 1.0);
+    let n = 0;
+    const m = new THREE.Matrix4();
+    const col = new THREE.Color(0.35, 0.8, 1.0);
+    const taken = new Set<number>();
+    w.forRadius(t.x, t.z, R, (i, x, y) => {
+      if (n >= 4000) return;
+      if (w.owner[i] >= 0 || w.isWater(i) || !w.explored[i] || w.shoreDist[i] > 0) return;
+      // only coastal nodes can host a harbour; one marker per 3x3 cell
+      if (w.region[i] && x > 4 && y > 4 && x < w.W - 5 && y < w.H - 5) {
+        let coast = false;
+        for (let d = -4; d <= 4 && !coast; d += 2) coast = w.isWater(i + d) || w.isWater(i + d * w.W);
+        if (!coast) return;
+      }
+      const cell = Math.floor(x / 3) * 1000 + Math.floor(y / 3);
+      if (taken.has(cell)) return;
+      if (!ok(x, y)) return;
+      taken.add(cell);
+      m.makeTranslation(x, w.h[i] + 0.05, y);
+      this.markers.setMatrixAt(n, m);
       this.markers.setColorAt(n, col);
       n++;
     });
@@ -460,6 +538,12 @@ export class GameRenderer {
         case 'equip': P.sparkle(x, y + 0.6, z, 6); break;
         case 'produced': if (Math.random() < 0.3) snd('pop', 0.3); break;
         case 'attack': snd('horn'); break;
+        case 'launch': P.splash(x, WATER_LEVEL, z); P.splash(x + 0.6, WATER_LEVEL, z); P.sparkle(x, WATER_LEVEL + 1.4, z, 30); snd('splash'); snd('bell'); snd('horn', 0.6); break;
+        case 'setsail': snd('bell', 0.7); break;
+        case 'moor': P.splash(x, WATER_LEVEL, z); snd('creak', 0.6); break;
+        case 'landed': P.sparkle(x, y + 1.5, z, 50, [0.8, 1.4, 2.0]); snd('fanfare'); break;
+        case 'ashore': P.splash(x, WATER_LEVEL, z); break;
+        case 'sink': for (let k = 0; k < 4; k++) P.splash(x + (Math.random() - 0.5), WATER_LEVEL, z + (Math.random() - 0.5)); snd('splash'); break;
       }
     }
   }
@@ -635,7 +719,13 @@ export class GameRenderer {
     this.fields.update();
     this.vines.update();
     this.grass.update(dt);
+    this.piles.begin();
     this.buildings.update(dt, this.time);
+    this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z);
+    this.piles.end();
+    const WU = this.water.uniforms;
+    WU.uWakeN.value = this.ships.wakeCount;
+    for (let k = 0; k < this.ships.wakeCount; k++) (WU.uWakes.value as THREE.Vector4[])[k].copy(this.ships.wakes[k]);
     this.settlers.update(dt, this.time, this.cam.camera);
     this.animals.update(dt, this.time);
     this.arrows.update();
@@ -648,7 +738,8 @@ export class GameRenderer {
 
     // night lights
     const lights = G.uLights.value;
-    const n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+    let n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+    n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
     G.uLightCount.value = n;
     void MAX_LIGHTS;
 
@@ -658,6 +749,9 @@ export class GameRenderer {
       if (this.selected.kind === 'building') {
         const b = g.buildings.get(this.selected.id);
         if (b) U.uSel.value.set(b.cx, 0, b.cz, b.size * 0.75 + 0.3); else { this.selected = null; U.uSel.value.w = 0; }
+      } else if (this.selected.kind === 'ship') {
+        if (!g.ships.has(this.selected.id)) this.selected = null;
+        U.uSel.value.w = 0;
       } else {
         const s = g.settlers.get(this.selected.id);
         if (s && !s.hidden) U.uSel.value.set(s.x, 0, s.z, 0.45); else if (!s) { this.selected = null; U.uSel.value.w = 0; } else U.uSel.value.w = 0;
@@ -666,7 +760,8 @@ export class GameRenderer {
 
     // planar water reflections (only when water is on screen)
     const U2 = this.water.uniforms;
-    if (this.settings.reflections && this.waterInView()) {
+    const waterSeen = this.waterInView();
+    if (this.settings.reflections && waterSeen) {
       this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.markers, this.arrows.mesh]);
       (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
       U2.uReflOn.value = 1;
@@ -677,6 +772,8 @@ export class GameRenderer {
 
   private waterCheckT = 0;
   private waterVisible = false;
+  /** Share of the view that is water (drives coastal ambience). */
+  waterFrac = 0;
   private waterInView() {
     this.waterCheckT -= 1;
     if (this.waterCheckT > 0) return this.waterVisible;
@@ -691,6 +788,7 @@ export class GameRenderer {
         if (w.isWater(w.idx(x, z))) n++;
       }
     this.waterVisible = n > 0;
+    this.waterFrac = n / 169;
     return this.waterVisible;
   }
 }

@@ -735,6 +735,72 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.anchors.piles.push(new THREE.Vector3(-1.5, 0, 1.4));
     mb.anchors.top = yl + 0.7;
   },
+  harbour(mb, owner) {
+    // warehouse: stone ground floor, timbered loft with a hoist
+    house(mb, { w: 1.9, d: 1.2, wallH: 1.25, roofH: 0.7, x: -0.3, z: -0.45, wall: 'stone', timber: false, doorX: 0.1, win: 2, floors: 2, chim: -0.55, roof: `roof${owner}` });
+    mb.add('planks', box(0.5, 0.42, 0.05, 2), 0.35, 1.02, 0.17);
+    mb.add('timber', box(0.06, 0.06, 0.55), 0.35, 1.5, 0.3);
+    mb.add('rope', box(0.01, 0.42, 0.01), 0.35, 1.26, 0.55);
+    crate(mb, 0.28, 0.82, 0.5, 0.16, 0.2);
+    // beacon tower
+    const tx = 1.0, tz = -0.75, th = 2.1;
+    foundation(mb, 0.62, 0.62, tx, tz);
+    mb.add('stone', cyl(0.25, 0.3, th, 16, 1.2), tx, 0.1, tz);
+    mb.add('stoneDark', cyl(0.33, 0.33, 0.08, 16, 1.2), tx, th + 0.05, tz);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      mb.add('iron', box(0.025, 0.28, 0.025), tx + Math.sin(a) * 0.22, th + 0.27, tz + Math.cos(a) * 0.22);
+    }
+    mb.add('glowGold', cyl(0.14, 0.14, 0.22, 12), tx, th + 0.14, tz);
+    mb.anchors.fires.push(new THREE.Vector3(tx, th + 0.26, tz));
+    mb.add(`roof${owner}`, coneRoof(0.3, 0.32, 16, 1.2), tx, th + 0.42, tz);
+    mb.add('dark', box(0.05, 0.2, 0.05), tx, 1.2, tz + 0.29);
+    flag(mb, tx, th + 0.74, tz, 0.5, owner);
+    mb.anchors.soldiers.push(new THREE.Vector3(tx, th + 0.1, tz + 0.3));
+    // crane on the quay
+    const crane = mb.mover('crane', -1.12, 0, 0.72, 'y');
+    crane.add('timber', box(0.09, 1.3, 0.09, 2), 0, 0.65, 0);
+    crane.add('timber', box(0.07, 0.07, 1.0, 2), 0, 1.28, 0.38, 0, -0.35, 0);
+    crane.add('timber', box(0.05, 0.05, 0.62, 2), 0, 0.98, 0.2, 0, 0.55, 0);
+    crane.add('rope', box(0.012, 0.6, 0.012), 0, 1.15, 0.84);
+    crane.add('planks', box(0.18, 0.14, 0.18, 4), 0, 0.8, 0.84);
+    crane.add('wood', cyl(0.13, 0.13, 0.08, 10), 0, 0.16, 0, 0, 0, Math.PI / 2);
+    // cargo waiting on the quay
+    for (const [px, pz] of [[0.75, 0.55], [0.95, 0.35], [0.6, 0.85]]) barrel(mb, px, 0, pz);
+    crate(mb, -0.55, 0, 0.75, 0.24, 0.3);
+    crate(mb, -0.7, 0.24, 0.72, 0.18, -0.2);
+    crate(mb, -0.35, 0, 0.95, 0.2, 0.9);
+    mb.add('rope', new THREE.TorusGeometry(0.1, 0.03, 6, 14), 1.25, 0.03, 0.9, 0, Math.PI / 2, 0);
+    // an anchor leaning on the wall
+    mb.add('iron', box(0.035, 0.46, 0.035), -1.28, 0.25, -0.05, 0, 0, 0.12);
+    mb.add('iron', new THREE.TorusGeometry(0.14, 0.02, 5, 12, Math.PI), -1.25, 0.08, -0.05, 0, 0, Math.PI);
+    mb.anchors.piles.push(new THREE.Vector3(-1.0, 0, 1.1));
+    mb.anchors.top = th + 1.2;
+  },
+  shipyard(mb) {
+    house(mb, { w: 1.15, d: 0.95, wallH: 0.8, roofH: 0.55, x: -0.8, z: -0.8, timber: true, doorX: 0.2, win: 1, chim: -0.3 });
+    // open timber shed with boards stacked under it
+    for (const [px, pz] of [[0.25, -0.2], [1.2, -0.2], [0.25, -1.05], [1.2, -1.05]]) mb.add('timber', box(0.07, 0.9, 0.07), px, 0.45, pz);
+    const r = gableRoof(1.1, 1.0, 0.35, 0.1, 1.2, 'thatch');
+    mb.add('thatch', r.roof, 0.72, 0.9, -0.62);
+    mb.add('thatch', ridgeCap(1.3, 'thatch'), 0.72, 1.25, -0.62);
+    for (let k = 0; k < 6; k++) mb.add('planks', box(0.8, 0.03, 0.12, 3), 0.72, 0.05 + k * 0.032, -0.75 + (k % 2) * 0.13);
+    logPile(mb, 0.72, 0, -0.35, 2, 0.8, 0);
+    // sawhorse with a plank
+    for (const sx of [-1, 1]) mb.add('timber', box(0.04, 0.26, 0.2), -0.1 + sx * 0.3, 0.13, 0.55);
+    mb.add('planks', box(0.9, 0.035, 0.14, 3), -0.1, 0.28, 0.55);
+    // tar pot over a fire
+    mb.add('stoneDark', cyl(0.16, 0.18, 0.1, 10), -1.05, 0, 0.55);
+    mb.add('iron', cyl(0.12, 0.1, 0.16, 12), -1.05, 0.12, 0.55);
+    mb.add('dark', cyl(0.11, 0.11, 0.01, 12), -1.05, 0.275, 0.55);
+    mb.add('glowFire', box(0.12, 0.05, 0.12), -1.05, 0.1, 0.55);
+    mb.anchors.fires.push(new THREE.Vector3(-1.05, 0.2, 0.55));
+    mb.anchors.chimneys.push(new THREE.Vector3(-1.05, 0.3, 0.55));
+    // steamed ribs leaning against the workshop
+    for (let k = 0; k < 3; k++) mb.add('timber', new THREE.TorusGeometry(0.34, 0.02, 4, 10, Math.PI * 0.7), -0.25 + k * 0.1, 0.05, -0.28, 0, 0.2, Math.PI * 0.62);
+    mb.anchors.piles.push(new THREE.Vector3(0.9, 0, 0.75));
+    mb.anchors.top = 1.6;
+  },
   barracks(mb, owner) {
     house(mb, { w: 2.3, d: 1.2, wallH: 0.95, roofH: 0.6, x: -0.1, z: -0.45, wall: 'stone', doorX: 0.0, win: 3, chim: 0.8, roof: `roof${owner}` });
     flag(mb, -1.35, 0, 0.35, 1.5, owner);
