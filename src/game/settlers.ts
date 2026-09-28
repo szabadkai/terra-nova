@@ -2,7 +2,8 @@
 import type { Game } from './game';
 import type { Action, Anim, Building, Settler } from './types';
 import { workerThink } from './work';
-import { soldierUpdate, isSoldier } from './military';
+import { soldierUpdate, isSoldier, isCombatant } from './military';
+import { DX8, DY8 } from './world';
 import { builderThink, diggerThink } from './economy';
 import { pioneerThink } from './pioneers';
 import { donkeyThink } from './trade';
@@ -219,6 +220,8 @@ export function updateSettler(g: Game, s: Settler, dt: number) {
     if (!s.actions.length) s.onAbort = null;
   } else {
     think(g, s, dt);
+    // nothing to do: make sure he is not standing on someone else's spot
+    if (!s.actions.length) unstack(g, s, dt);
   }
   updateMovement(g, s, dt);
   if (s.next < 0 && s.anim === 'walk' && (!s.path || s.pathI >= s.path.length)) s.anim = 'idle';
@@ -273,10 +276,138 @@ export function idleWander(g: Game, s: Settler, dt: number) {
     const tx = bx + g.rng.int(-R, R + 1), ty = by + g.rng.int(-R + 1, R + 2);
     if (!w.inBounds(tx, ty)) continue;
     const ti = w.idx(tx, ty);
-    if (!w.walkable(ti) || w.reserve[ti] || w.building[ti]) continue;
-    if (w.owner[ti] !== s.owner) continue;
-    s.actions.push(A.walk(ti));
+    if (!parkable(g, s, ti) || w.owner[ti] !== s.owner) continue;
+    park(g, s, ti);
     return;
+  }
+}
+
+// ------------------------------------------------------------------ parking
+// Settlers walk through one another, but one standing about looks for a spot of his own, and one
+// who finds someone else standing where he is steps aside onto a free node beside it.
+
+/** Who stands on each node and where walkers are bound. Rebuilt at the start of every step by `markSpots`. */
+export class Spots {
+  /** the settler who keeps the node: someone busy there before anyone idling, a guard before a loafer */
+  stand: Int32Array;
+  /** how many settlers stand on the node (capped) */
+  crowd: Uint8Array;
+  /** a settler whose walk ends on the node */
+  dest: Int32Array;
+  marks: number[] = [];
+  constructor(n: number) {
+    this.stand = new Int32Array(n);
+    this.crowd = new Uint8Array(n);
+    this.dest = new Int32Array(n);
+  }
+}
+
+/** How firmly a settler holds the node he stands on: busy > guard at his post > idle. */
+const keep = (s: Settler) => (s.actions.length ? 2 : s.sstate === 'hold' && isCombatant(s) ? 1 : 0);
+
+export function markSpots(g: Game) {
+  const sp = g.spots;
+  const { stand, crowd, dest, marks } = sp;
+  for (let k = 0; k < marks.length; k++) {
+    const i = marks[k];
+    stand[i] = 0;
+    crowd[i] = 0;
+    dest[i] = 0;
+  }
+  marks.length = 0;
+  for (const s of g.settlers.values()) {
+    if (s.hidden || s.dead || s.aboard) continue;
+    if (s.next < 0) {
+      const i = s.node;
+      if (!crowd[i]) {
+        stand[i] = s.id;
+        marks.push(i);
+      } else {
+        const o = g.settlers.get(stand[i]);
+        if (!o || keep(s) > keep(o)) stand[i] = s.id;
+      }
+      if (crowd[i] < 255) crowd[i]++;
+    }
+    let to = -1;
+    if (s.path && s.pathI < s.path.length) to = s.path[s.path.length - 1];
+    else if (s.actions[0]?.k === 'walk') to = s.actions[0].to;
+    if (to >= 0 && !dest[to]) {
+      dest[to] = s.id;
+      marks.push(to);
+    }
+  }
+}
+
+/** Nobody but `id` stands on node i or is walking there. */
+export function spotFree(g: Game, i: number, id: number) {
+  const sp = g.spots;
+  const c = sp.crowd[i];
+  return (c === 0 || (c === 1 && sp.stand[i] === id)) && (sp.dest[i] === 0 || sp.dest[i] === id);
+}
+
+/** A free node on s's landmass that is fit to stand about on: open ground, off doors and footprints, not inside a tree (unless `trees`). */
+export function parkable(g: Game, s: Settler, i: number, trees = false) {
+  const w = g.world;
+  return w.walkable(i) && !w.building[i] && !w.reserve[i] && (trees || !w.tree[i]) && w.region[i] === w.region[s.node] && spotFree(g, i, s.id);
+}
+
+/** Book node i for settler `id`, so nobody else picks it before his walk there shows up in the next `markSpots`. */
+export function book(g: Game, i: number, id: number) {
+  const sp = g.spots;
+  if (sp.dest[i]) return;
+  sp.dest[i] = id;
+  sp.marks.push(i);
+}
+
+/** Book node i for s and walk there. */
+export function park(g: Game, s: Settler, i: number) {
+  book(g, i, s.id);
+  s.actions.push(A.walk(i));
+}
+
+/** The free node within `r` steps of `c` (and no further than `maxD` from it) nearest to s, or -1. */
+export function freeSpotNear(g: Game, s: Settler, c: number, r: number, maxD = Infinity, trees = false) {
+  const w = g.world;
+  const cx = w.nx(c), cy = w.ny(c);
+  const m2 = maxD * maxD;
+  let best = -1, bd = Infinity;
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      if (!w.inBounds(x, y) || (x - cx) ** 2 + (y - cy) ** 2 > m2) continue;
+      const i = w.idx(x, y);
+      if (i === c || !parkable(g, s, i, trees)) continue;
+      const d = (x - s.x) ** 2 + (y - s.z) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+  }
+  return best;
+}
+
+/** An idle settler sharing his node with another steps onto a free one beside it (a guard makes that his post). */
+function unstack(g: Game, s: Settler, dt: number) {
+  if (s.hidden || s.dead || s.aboard || s.next >= 0 || s.engaged) return;
+  const sp = g.spots, i = s.node;
+  if (sp.crowd[i] < 2 || sp.stand[i] === s.id) return;
+  const w = g.world;
+  // look up a few times a second, each at his own moment, so a crowd does not break up in lockstep
+  // (but clear a doorway at once)
+  const ph = s.seed * 3;
+  if (!w.reserve[i] && Math.floor(g.time * 3 + ph) === Math.floor((g.time - dt) * 3 + ph)) return;
+  const x = w.nx(i), y = w.ny(i);
+  const k0 = s.id & 7; // each starts looking in his own direction, so they spread out
+  for (let ring = 1; ring <= 2; ring++) {
+    for (let k = 0; k < 8; k++) {
+      const d = (k0 + k) & 7;
+      const tx = x + DX8[d] * ring, ty = y + DY8[d] * ring;
+      if (!w.inBounds(tx, ty)) continue;
+      const ti = w.idx(tx, ty);
+      if (!parkable(g, s, ti)) continue;
+      if (s.sstate === 'hold' && isCombatant(s)) {
+        s.order = ti;
+        book(g, ti, s.id);
+      } else park(g, s, ti);
+      return;
+    }
   }
 }
 

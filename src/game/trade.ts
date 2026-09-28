@@ -7,7 +7,7 @@
 // needs them. Nothing here crosses water: that is what ships are for.
 import { DONKEYS_PER_MARKET, DONKEY_LOAD, GOODS, GOOD_NAMES, Good, MAX_DONKEYS, emptyStock } from './defs';
 import type { Game } from './game';
-import { A, claim, plan } from './settlers';
+import { A, claim, park, parkable, plan } from './settlers';
 import type { Building, Settler, TradeOrder } from './types';
 
 /** How many of a good one click in the market panel adds to (or takes off) an order. */
@@ -301,8 +301,8 @@ export function donkeyThink(g: Game, s: Settler, dt: number) {
     const tx = bx + g.rng.int(-3, 4), ty = by + g.rng.int(1, 4);
     if (!w.inBounds(tx, ty)) continue;
     const ti = w.idx(tx, ty);
-    if (!w.walkable(ti) || w.reserve[ti] || w.building[ti] || w.owner[ti] !== s.owner) continue;
-    s.actions.push(A.walk(ti));
+    if (!parkable(g, s, ti) || w.owner[ti] !== s.owner) continue;
+    park(g, s, ti);
     return;
   }
 }
