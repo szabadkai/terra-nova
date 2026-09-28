@@ -58,6 +58,8 @@ function softNormals(g: THREE.BufferGeometry, center: THREE.Vector3, amount = 0.
 // ------------------------------------------------------------------ trees
 export interface TreeGeo {
   trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry; cards?: THREE.BufferGeometry; needles?: boolean;
+  /** the same foliage from fewer, larger cards, for the distance and the shadow map */
+  cardsFar?: THREE.BufferGeometry;
   /** deciduous only: bare limbs, drawn while the leaves are thin */
   branches?: THREE.BufferGeometry;
 }
@@ -207,14 +209,14 @@ function branchSkeleton(seed: number, trunkTop: number, trunkR: number, c: THREE
 }
 
 /** Drooping skirt of needle cards around a conifer trunk. */
-function pineCards(tiers: number, seed: number): THREE.BufferGeometry {
+function pineCards(tiers: number, seed: number, density = 1): THREE.BufferGeometry {
   const pos: number[] = [], nrm: number[] = [], uv: number[] = [], col: number[] = [];
   for (let t = 0; t < tiers; t++) {
     const f = t / (tiers - 1);
     const y = 0.5 + t * 0.42;
     const r = 0.78 - f * 0.55;
     const drop = 0.42 - f * 0.12;
-    const n = Math.max(5, Math.round(10 - f * 4));
+    const n = Math.max(3, Math.round((10 - f * 4) * density));
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2 + t * 0.7 + hash2(k, t, seed) * 0.4;
       const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
@@ -246,6 +248,10 @@ function pineCards(tiers: number, seed: number): THREE.BufferGeometry {
   return g;
 }
 
+/** Far foliage: this share of the cards, each this much larger (about the same cover), set a little further in. */
+const FAR_CARDS = 0.4;
+const FAR_CARD_SIZE = 1.5;
+
 export function buildTreeGeos(): TreeGeo[] {
   const out: TreeGeo[] = [];
   // 0 oak / broadleaf
@@ -262,10 +268,12 @@ export function buildTreeGeos(): TreeGeo[] {
     crown.translate(0, 1.55 * 0.28, 0);
     softNormals(crown, c, 0.75);
     crownColor(crown, [0x223c12, 0x284416, 0x1e3610], c, 1);
-    const cards = leafCards(c, 0.84, 0.74, 0.84, 64, 0.72, 1, [0x9ac860, 0x8aba54, 0xa8d06a, 0x86b04e]);
+    const tint = [0x9ac860, 0x8aba54, 0xa8d06a, 0x86b04e];
+    const cards = leafCards(c, 0.84, 0.74, 0.84, 64, 0.72, 1, tint);
+    const cardsFar = leafCards(c, 0.8, 0.7, 0.8, Math.round(FAR_CARDS * 64), 0.72 * FAR_CARD_SIZE, 1, tint);
     const trunk = merge([trunkGeo(1.3, 0.1, 0x5a4230, 0.03), (() => { const b = trunkGeo(0.55, 0.05, 0x5a4230); b.rotateZ(0.8); b.translate(0.05, 0.85, 0); return b; })(), (() => { const b = trunkGeo(0.5, 0.045, 0x5a4230); b.rotateZ(-0.9); b.rotateY(1.2); b.translate(-0.02, 1.0, 0.02); return b; })()]);
     const branches = branchSkeleton(1, 1.3, 0.1, c, new THREE.Vector3(0.74, 0.66, 0.74), 6, 0x5a4230, 0.35);
-    out.push({ trunk, crown, cards, branches });
+    out.push({ trunk, crown, cards, cardsFar, branches });
   }
   // 1 pine
   {
@@ -294,7 +302,7 @@ export function buildTreeGeos(): TreeGeo[] {
     const c = new THREE.Vector3(0, 1.4, 0);
     softNormals(crown, c, 0.35);
     crownColor(crown, [0x1a3818, 0x1e3e1a, 0x183416], c, 7);
-    out.push({ trunk: trunkGeo(1.9, 0.09, 0x4a3426), crown, cards: pineCards(5, 3), needles: true });
+    out.push({ trunk: trunkGeo(1.9, 0.09, 0x4a3426), crown, cards: pineCards(5, 3), cardsFar: pineCards(5, 3, 0.55), needles: true });
   }
   // 2 birch
   {
@@ -305,9 +313,11 @@ export function buildTreeGeos(): TreeGeo[] {
     crown.translate(0, 1.7 * 0.25, 0);
     softNormals(crown, c, 0.75);
     crownColor(crown, [0x345a1c, 0x3a6220], c, 3);
-    const cards = leafCards(c, 0.58, 0.8, 0.58, 46, 0.52, 7, [0xc0e070, 0xb0d466, 0xd0e880]);
+    const tint = [0xc0e070, 0xb0d466, 0xd0e880];
+    const cards = leafCards(c, 0.58, 0.8, 0.58, 46, 0.52, 7, tint);
+    const cardsFar = leafCards(c, 0.55, 0.76, 0.55, Math.round(FAR_CARDS * 46), 0.52 * FAR_CARD_SIZE, 7, tint);
     const branches = branchSkeleton(7, 1.5, 0.065, c, new THREE.Vector3(0.5, 0.72, 0.5), 6, 0x4a3a34, 0.9);
-    out.push({ trunk: trunkGeo(1.5, 0.065, 0xe8e2d6, 0.02, true), crown, cards, branches });
+    out.push({ trunk: trunkGeo(1.5, 0.065, 0xe8e2d6, 0.02, true), crown, cards, cardsFar, branches });
   }
   // 3 palm
   {
@@ -358,9 +368,11 @@ export function buildTreeGeos(): TreeGeo[] {
       colorize(f, () => lin(k % 2 ? 0xd83a2a : 0xe8a020));
       fruits.push(f);
     }
-    const cards = leafCards(c, 0.64, 0.54, 0.64, 44, 0.56, 13, [0xa0cc60, 0x94c058]);
+    const tint = [0xa0cc60, 0x94c058];
+    const cards = leafCards(c, 0.64, 0.54, 0.64, 44, 0.56, 13, tint);
+    const cardsFar = leafCards(c, 0.6, 0.5, 0.6, Math.round(FAR_CARDS * 44), 0.56 * FAR_CARD_SIZE, 13, tint);
     const branches = branchSkeleton(13, 0.95, 0.08, c, new THREE.Vector3(0.58, 0.48, 0.58), 5, 0x5a4230, 0.25);
-    out.push({ trunk: trunkGeo(0.95, 0.08, 0x5a4230, 0.04), crown: merge([crown, ...fruits]), cards, branches });
+    out.push({ trunk: trunkGeo(0.95, 0.08, 0x5a4230, 0.04), crown: merge([crown, ...fruits]), cards, cardsFar, branches });
   }
   return out;
 }

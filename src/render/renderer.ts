@@ -34,11 +34,17 @@ import { OrdersFX } from './orders';
 import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
+import { commitInstances } from './instancing';
+import { lodView } from './lod';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
+/** Share of the screen's resolution the world renders at before it is scaled up. */
+export type Resolution = 'full' | '85' | '70' | '50';
+const RES_SCALE: Record<Resolution, number> = { full: 1, '85': 0.85, '70': 0.7, '50': 0.5 };
 
 export interface RenderSettings {
   quality: Quality;
+  resolution: Resolution;
   bloom: boolean;
   dof: boolean;
   grass: boolean;
@@ -51,7 +57,7 @@ export interface RenderSettings {
 }
 
 export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
-  quality: 'high', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
+  quality: 'high', resolution: 'full', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
 };
 
 /** Falling-leaf colours of the deciduous species (oak, birch, fruit tree). */
@@ -116,8 +122,7 @@ class Birds {
       m.compose(p.set(b.x, b.y + Math.sin(b.ph + b.x * 0.3) * 0.3, b.z), q, s);
       this.mesh.setMatrixAt(n++, m);
     }
-    this.mesh.count = night > 0.6 ? 0 : n;
-    this.mesh.instanceMatrix.needsUpdate = true;
+    commitInstances(this.mesh, night > 0.6 ? 0 : n);
   }
 }
 
@@ -188,6 +193,8 @@ export class GameRenderer {
   private rainStrength = 0; // strength of the current spell: drizzle ~0.3 .. downpour 1
   private boltT = 20;
   seasons = new Seasons();
+  /** level-of-detail picking and instance culling (lod.ts) */
+  readonly lod = lodView;
   onEvent: ((e: GameEvent) => void) | null = null;
   private sound: ((name: string, x?: number, z?: number, vol?: number) => void) | null = null;
 
@@ -302,7 +309,7 @@ export class GameRenderer {
       const m = o as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
     });
-    this.fx.composer.dispose();
+    this.fx.dispose();
     this.reflection.rt.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -328,6 +335,7 @@ export class GameRenderer {
     this.fx.settings.dof = s.dof;
     this.fx.settings.grade = s.grade;
     this.fx.enableAO(s.ao);
+    this.fx.scale = RES_SCALE[s.resolution] ?? 1;
     this.sky.cycle = s.dayCycle;
     this.terrain.uniforms.uBorderOn.value = s.borders ? 1 : 0;
     if (this.borders) { this.borders.posts.visible = s.borders; this.borders.caps.visible = s.borders; }
@@ -336,6 +344,10 @@ export class GameRenderer {
 
   private lastW = 0;
   private lastH = 0;
+  /** Pixels per CSS pixel of the world's render target. */
+  get renderPixelRatio() {
+    return this.renderer.getPixelRatio() * this.fx.scale;
+  }
   resize() {
     const w = this.canvas.clientWidth || window.innerWidth, h = this.canvas.clientHeight || window.innerHeight;
     this.lastW = w;
@@ -344,7 +356,8 @@ export class GameRenderer {
     this.cam.camera.aspect = w / h;
     this.cam.camera.updateProjectionMatrix();
     this.fx.setSize(w, h);
-    const pr = this.renderer.getPixelRatio();
+    // the world renders at the resolution scale (the final pass scales it up to the canvas)
+    const pr = this.renderPixelRatio;
     this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
     const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
     this.particles.setScale(pxScale);
@@ -431,7 +444,7 @@ export class GameRenderer {
     if (!this.placing && this.pioneering) { if (this.ghost) this.ghost.visible = false; this.updatePioneering(dt); return; }
     if (!this.placing) {
       if (this.ghost) this.ghost.visible = false;
-      this.markers.count = 0;
+      commitInstances(this.markers, 0);
       if (!this.casting && !this.prospecting) U.uRange.value.w = 0;
       return;
     }
@@ -490,9 +503,7 @@ export class GameRenderer {
       this.markers.setColorAt(n, col);
       n++;
     });
-    this.markers.count = n;
-    this.markers.instanceMatrix.needsUpdate = true;
-    if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
+    commitInstances(this.markers, n);
   }
 
   /** Expedition targeting: free coasts get markers, the harbour ghost follows the cursor to the nearest one. */
@@ -553,9 +564,7 @@ export class GameRenderer {
       this.markers.setColorAt(n, col);
       n++;
     });
-    this.markers.count = n;
-    this.markers.instanceMatrix.needsUpdate = true;
-    if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
+    commitInstances(this.markers, n);
   }
 
   /** Pioneer targeting: the circle they would claim, with markers on the free land inside it. */
@@ -564,7 +573,7 @@ export class GameRenderer {
     const w = g.world;
     const U = this.terrain.uniforms;
     const p = this.hoverPoint;
-    if (!p) { U.uRange.value.w = 0; this.markers.count = 0; return; }
+    if (!p) { U.uRange.value.w = 0; commitInstances(this.markers, 0); return; }
     (U.uRange.value as THREE.Vector4).set(p.x, 0, p.z, PIONEER_RADIUS);
     this.markerT -= dt;
     if (this.markerT > 0) return;
@@ -583,9 +592,7 @@ export class GameRenderer {
         n++;
       });
     }
-    this.markers.count = n;
-    this.markers.instanceMatrix.needsUpdate = true;
-    if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
+    commitInstances(this.markers, n);
   }
 
   private updateCasting(dt: number) {
@@ -886,6 +893,7 @@ export class GameRenderer {
     this.updateWeather(dt);
     const zoom01 = (this.cam.dist - this.cam.minDist) / (this.cam.maxDist - this.cam.minDist);
     this.sky.update(gameDt, this.cam.target, this.cam.viewSize);
+    lodView.update(this.cam.camera, this.lastH * this.renderPixelRatio, this.sky.sun);
     // fresh snow throws the moonlight back; hold the exposure down so a winter night still reads as night
     this.renderer.toneMappingExposure = this.sky.exposure * (1 - G.uSnow.value * G.uNight.value * 0.32);
     this.terrain.uniforms.uSunI.value = this.sky.sunIntensity / 3;

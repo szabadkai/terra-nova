@@ -14,6 +14,7 @@ import { isCombatant } from './game/military';
 import { commandable } from './game/orders';
 import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
+import { lodReady } from './render/lod';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, warmUp } from './ui/saveStore';
 
@@ -270,6 +271,8 @@ async function restart() {
 
 async function boot() {
   void warmUp();
+  // models are simplified for the distance as the world is built
+  await lodReady;
   // a game that was being played when the page went away carries on (unless the URL asks for a new one)
   let resumed: SaveData | null = null;
   if (wantsResume() && !params.has('play') && !params.has('seed')) {

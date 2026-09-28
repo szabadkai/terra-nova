@@ -7,6 +7,7 @@ import type { Game } from '../game/game';
 import type { Settler } from '../game/types';
 import { buildCatapultGeos } from './models';
 import { patchMaterial } from './shaderPatch';
+import { commitInstances } from './instancing';
 
 const SCALE = 1.1;
 const MAX = 64;
@@ -121,13 +122,11 @@ export class CatapultsRenderer {
       this.flags.setColorAt(n, this.col);
       n++;
     }
-    this.frame.count = n; this.arms.count = n; this.flags.count = n; this.wheels.count = nw; this.stones.count = ns;
-    this.frame.instanceMatrix.needsUpdate = true;
-    this.arms.instanceMatrix.needsUpdate = true;
-    this.flags.instanceMatrix.needsUpdate = true;
-    this.flags.instanceColor!.needsUpdate = true;
-    this.wheels.instanceMatrix.needsUpdate = true;
-    this.stones.instanceMatrix.needsUpdate = true;
+    commitInstances(this.frame, n);
+    commitInstances(this.arms, n);
+    commitInstances(this.flags, n);
+    commitInstances(this.wheels, nw);
+    commitInstances(this.stones, ns);
     if (this.roll.size > 200) for (const id of this.roll.keys()) if (!g.settlers.has(id)) { this.roll.delete(id); this.shot.delete(id); }
   }
 }

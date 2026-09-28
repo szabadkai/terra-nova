@@ -7,6 +7,7 @@ import type { Game } from '../game/game';
 import type { Building } from '../game/types';
 import type { BuildingsRenderer } from './buildings';
 import { patchMaterial } from './shaderPatch';
+import { commitInstances } from './instancing';
 
 const MAX = 600;
 /** height of the lantern glass above the ground, and how far it hangs out from the post */
@@ -120,9 +121,7 @@ export class LanternsRenderer {
       this.glass.setColorAt(n, lanternLit(b) ? lit : dark);
       n++;
     }
-    this.frames.count = this.glass.count = n;
-    this.frames.instanceMatrix.needsUpdate = true;
-    this.glass.instanceMatrix.needsUpdate = true;
-    if (this.glass.instanceColor) this.glass.instanceColor.needsUpdate = true;
+    commitInstances(this.frames, n);
+    commitInstances(this.glass, n);
   }
 }

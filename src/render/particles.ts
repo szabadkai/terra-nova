@@ -1,6 +1,7 @@
 // CPU-simulated soft particles rendered as point sprites (normal + additive layers).
 import * as THREE from 'three';
 import { G } from './shaderPatch';
+import { uploadFirst } from './instancing';
 
 export interface EmitOpts {
   x: number; y: number; z: number;
@@ -166,8 +167,7 @@ class Layer {
       ar[i] = this.rot[i];
       ak[i] = this.kind[i];
     }
-    this.aPos.needsUpdate = true; this.aCol.needsUpdate = true; this.aSize.needsUpdate = true;
-    this.aAlpha.needsUpdate = true; this.aRot.needsUpdate = true; this.aKind.needsUpdate = true;
+    for (const a of [this.aPos, this.aCol, this.aSize, this.aAlpha, this.aRot, this.aKind]) uploadFirst(a, n);
     this.geo.setDrawRange(0, n);
   }
 

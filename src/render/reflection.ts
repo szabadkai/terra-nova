@@ -1,5 +1,6 @@
 // Planar reflection for the water surface (mirrored camera + oblique near plane).
 import * as THREE from 'three';
+import { lodPass } from './lod';
 
 export class PlanarReflection {
   rt: THREE.WebGLRenderTarget;
@@ -74,7 +75,9 @@ export class PlanarReflection {
     renderer.shadowMap.needsUpdate = false;
     renderer.setRenderTarget(this.rt);
     renderer.clear();
+    lodPass.reflect = true;
     renderer.render(scene, vc);
+    lodPass.reflect = false;
     renderer.setRenderTarget(oldTarget);
     renderer.shadowMap.autoUpdate = shadowAuto;
     hide.forEach((o, i) => (o.visible = vis[i]));

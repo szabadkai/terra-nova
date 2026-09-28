@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { Game } from '../game/game';
 import { signLife } from '../game/geology';
 import { patchMaterial } from './shaderPatch';
+import { commitInstances } from './instancing';
 
 const ORE_COL = [0xf2eee6, 0x1e1e22, 0xa0522d, 0xf0c040, 0x9a968e];
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3(), tmpS = new THREE.Vector3(), tmpC = new THREE.Color();
@@ -113,11 +114,7 @@ export class SignsRenderer {
         else { this.lumps.setMatrixAt(nl, m); this.lumps.setColorAt(nl, tmpC.set(ORE_COL[sg.ore])); nl++; }
       }
     }
-    for (const [mesh, n] of [[this.posts, np], [this.boards, np], [this.flags, np], [this.lumps, nl], [this.gold, ng], [this.crosses, nx]] as const) {
-      mesh.count = n;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
+    for (const [mesh, n] of [[this.posts, np], [this.boards, np], [this.flags, np], [this.lumps, nl], [this.gold, ng], [this.crosses, nx]] as const) commitInstances(mesh, n);
     if (this.born.size > g.signs.size + 100) for (const id of this.born.keys()) if (!g.signs.has(id)) this.born.delete(id);
   }
 }

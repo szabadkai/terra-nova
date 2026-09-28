@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { Game } from '../game/game';
 import type { GameEvent, Settler } from '../game/types';
 import { commandable } from '../game/orders';
+import { commitInstances } from './instancing';
 
 const MAX_RINGS = 256;
 const PULSE_COLORS: Record<string, number> = { move: 0xffd36a, attack: 0xff5a40, garrison: 0x7ac8ff };
@@ -72,9 +73,7 @@ export class OrdersFX {
       const big = s?.job === 'catapult' ? 2.2 : s?.job === 'donkey' ? 1.5 : 1.1;
       if (h.foe) ring(s, big, 1, 0.16, 0.08); else ring(s, big, 0.85, 0.82, 0.7);
     }
-    this.rings.count = n;
-    this.rings.instanceMatrix.needsUpdate = true;
-    this.rings.instanceColor!.needsUpdate = true;
+    commitInstances(this.rings, n);
     for (let i = this.pulses.length - 1; i >= 0; i--) {
       const p = this.pulses[i];
       p.t += dt;

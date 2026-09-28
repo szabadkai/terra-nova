@@ -3,7 +3,7 @@
 // screen it opens with just the settings pages.
 import { GOODS, PLAYER_COLORS } from '../game/defs';
 import type { Game } from '../game/game';
-import type { GameRenderer, Quality, RenderSettings } from '../render/renderer';
+import type { GameRenderer, Quality, RenderSettings, Resolution } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
@@ -411,6 +411,8 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Quality'));
     c.appendChild(this.seg('Detail level', 'Resolution and shadow sharpness. Lower it if the game stutters.',
       [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']], () => s.quality, (v) => set('quality')(v as Quality)));
+    c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens.',
+      [['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
     c.appendChild(h('h3', '', 'Effects'));
     c.appendChild(this.toggle('Bloom and glow', 'Glowing windows, forges and water glints', () => s.bloom, set('bloom')));
     c.appendChild(this.toggle('Tilt-shift depth of field', 'Miniature diorama look', () => s.dof, set('dof')));

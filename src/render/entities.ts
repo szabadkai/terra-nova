@@ -2,15 +2,19 @@
 import * as THREE from 'three';
 import { GOODS, Good, T_FOREST, T_GRASS, T_MEADOW } from '../game/defs';
 import type { Game } from '../game/game';
+import type { Tree } from '../game/types';
 import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
+import { LOD_PIXELS, LodPair, lodView, simplify } from './lod';
+import { commitInstances, uploadFirst } from './instancing';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
+const tmpQ2 = new THREE.Quaternion();
 const tmpE = new THREE.Euler();
 const tmpV = new THREE.Vector3();
 const tmpS = new THREE.Vector3();
@@ -103,15 +107,28 @@ float cardAlpha(float st) {
   return st > 0.5 ? la : ta;
 }` : ''}`;
 
+/** Geometric error allowed in a far tree (model units): used once it is under LOD_PIXELS on screen. */
+const TREE_FAR_ERR = 0.03;
+
 export class TreesRenderer {
   group = new THREE.Group();
-  private trunks: THREE.InstancedMesh[] = [];
-  private crowns: THREE.InstancedMesh[] = [];
-  private cards: (THREE.InstancedMesh | null)[] = [];
-  private limbs: (THREE.InstancedMesh | null)[] = [];
+  private trunks: LodPair[] = [];
+  private crowns: LodPair[] = [];
+  private cards: (LodPair | null)[] = [];
+  private limbs: (LodPair | null)[] = [];
   private version = -1;
   private fallStart = new Map<number, number>();
   private leafMat: THREE.Material;
+  // every tree's instance, rebuilt when the forest changes; culled and sorted by level every frame
+  private n = 0;
+  private mats = new Float32Array(0);
+  private cols: THREE.Color[] = [];
+  private species = new Uint8Array(0);
+  private spheres = new Float32Array(0);
+  private falling: { i: number; id: number }[] = [];
+  /** deciduous crowns: a thinning material (cuts the crown away as leaves fall) and a full one */
+  private crownMats: { sp: number; thin: THREE.Material; thinDepth: THREE.Material; full: THREE.Material; fullDepth: THREE.Material }[] = [];
+  private fullLeaf: boolean | null = null;
 
   constructor(private game: Game) {
     const geos = buildTreeGeos();
@@ -157,6 +174,14 @@ export class TreesRenderer {
         }`,
         fragEmissive: leafEmissive(0.1, 0.35),
       });
+      // in full leaf nothing is ever cut out of the crown: without the discard (and with its hidden
+      // inside faces culled) the GPU can drop the crown's covered pixels before shading them
+      const crownFull = vcMat({ roughness: 0.8 }, 'tree', 1, {
+        key: 'leafSf', snow: 0.8, uniforms,
+        vertexHead: leafVertHead(false), vertexBegin: leafVert(false), fragHead: leafFragHead(false, false),
+        fragRough: 'diffuseColor.rgb = seasonLeaf(diffuseColor.rgb, crownNoise());',
+        fragEmissive: leafEmissive(0.1, 0.35),
+      });
       const crownDepth = patchedDepthMaterial({
         wind: 'tree', key: 'leafSd', uniforms: depthU,
         vertexHead: leafVertHead(false), vertexBegin: leafVert(false), fragHead: leafFragHead(false, true),
@@ -181,82 +206,115 @@ export class TreesRenderer {
         vertexHead: leafVertHead(true), vertexBegin: leafVert(true), fragHead: leafFragHead(true, true),
         fragPost: 'if (cardAlpha(cardState()) < 0.45) discard;',
       });
-      return { crown, crownDepth, card, cardDepth };
+      return { crown, crownFull, crownDepth, card, cardDepth };
     };
     const cap = Math.max(4000, game.trees.size * 2);
+    const far = (g: THREE.BufferGeometry) => simplify(g, 0.2, TREE_FAR_ERR).geo;
+    const pair = (near: THREE.BufferGeometry, farGeo: THREE.BufferGeometry, mat: THREE.Material, dm: THREE.Material, colors: 0 | 1) => {
+      const p = new LodPair(near, farGeo, mat, cap, { colors, depth: dm });
+      this.group.add(...p.meshes);
+      return p;
+    };
     geos.forEach((g, sp) => {
       const sm = DECIDUOUS[sp] ? seasonal(sp) : null;
-      const t = inst(g.trunk, barkMat, cap, true, depth);
-      const c = inst(g.crown, sm ? sm.crown : this.leafMat, cap, true, sm ? sm.crownDepth : depth);
-      this.trunks.push(t);
-      this.crowns.push(c);
-      this.group.add(t, c);
+      this.trunks.push(pair(g.trunk, far(g.trunk), barkMat, depth, 0));
+      this.crowns.push(pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depth, 1));
+      if (sm) this.crownMats.push({ sp, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depth });
       if (g.cards) {
-        const cm = g.needles ? inst(g.cards, needleMat, cap, true, needleDepth) : inst(g.cards, sm!.card, cap, true, sm!.cardDepth);
-        this.cards.push(cm);
-        this.group.add(cm);
+        const cf = g.cardsFar ?? g.cards;
+        this.cards.push(g.needles ? pair(g.cards, cf, needleMat, needleDepth, 1) : pair(g.cards, cf, sm!.card, sm!.cardDepth, 1));
       } else this.cards.push(null);
-      if (g.branches) {
-        const lm = inst(g.branches, limbMat, cap, true, depth);
-        lm.visible = false;
-        this.limbs.push(lm);
-        this.group.add(lm);
-      } else this.limbs.push(null);
+      this.limbs.push(g.branches ? pair(g.branches, far(g.branches), limbMat, depth, 0) : null);
     });
+  }
+
+  /** Recompute every tree's matrix and tint (when the forest changed). */
+  private rebuild(time: number) {
+    const g = this.game;
+    const w = g.world;
+    const n = g.trees.size;
+    if (this.mats.length < n * 16) {
+      this.mats = new Float32Array(n * 32);
+      this.species = new Uint8Array(n * 2);
+      this.spheres = new Float32Array(n * 8);
+    }
+    while (this.cols.length < n) this.cols.push(new THREE.Color());
+    this.falling.length = 0;
+    let i = 0;
+    for (const t of g.trees.values()) {
+      this.species[i] = t.species;
+      const tint = 0.85 + hash2(t.node, 4, 7) * 0.3;
+      // a few copper-leaved trees for variety (real autumn colour comes from the season)
+      const warm = hash2(t.node, 6, 7) > 0.9 ? 0.12 : 0;
+      this.cols[i].setRGB(tint * (1 + warm * 0.9), tint * (0.95 + hash2(t.node, 5, 7) * 0.1), tint * (0.9 - warm));
+      if (t.state === 'falling') this.falling.push({ i, id: t.id });
+      this.place(i, t, time);
+      i++;
+    }
+    this.n = i;
+  }
+
+  private place(i: number, t: Tree, time: number) {
+    const w = this.game.world;
+    const x = w.nx(t.node) + (hash2(t.node, 1, 7) - 0.5) * 0.5;
+    const z = w.ny(t.node) + (hash2(t.node, 2, 7) - 0.5) * 0.5;
+    const y = w.heightAt(x, z) - 0.05;
+    const s = t.scale * (0.18 + 0.82 * Math.min(1, t.growth));
+    tmpE.set(0, t.rot, 0);
+    tmpQ.setFromEuler(tmpE);
+    if (t.state === 'falling') {
+      let st = this.fallStart.get(t.id);
+      if (st === undefined) { st = time; this.fallStart.set(t.id, st); }
+      const k = Math.min(1, (time - st) / 1.5);
+      const ang = k * k * (Math.PI / 2 - 0.08);
+      const axis = tmpV.set(Math.cos(t.fallDir), 0, -Math.sin(t.fallDir)).normalize();
+      tmpQ.premultiply(tmpQ2.setFromAxisAngle(axis, ang));
+    }
+    tmpM.compose(tmpS.set(x, y, z), tmpQ, tmpV.set(s, s * (0.95 + hash2(t.node, 3, 7) * 0.15), s));
+    tmpM.toArray(this.mats, i * 16);
+    const sp = this.spheres;
+    sp[i * 4] = x; sp[i * 4 + 1] = y + 1.2 * s; sp[i * 4 + 2] = z; sp[i * 4 + 3] = 1.7 * s;
   }
 
   update(time: number) {
     const g = this.game;
+    if (g.treesVersion !== this.version) {
+      this.version = g.treesVersion;
+      this.rebuild(time);
+    } else {
+      // only falling trees move between rebuilds
+      for (const f of this.falling) {
+        const t = g.trees.get(f.id);
+        if (t) this.place(f.i, t, time);
+      }
+    }
     // bare limbs only matter once the crowns start to thin
     const bare = G.uSeasonA.value.x < 0.97;
-    for (const lm of this.limbs) if (lm) lm.visible = bare;
-    let falling = false;
-    for (const t of g.trees.values()) if (t.state === 'falling') { falling = true; break; }
-    if (g.treesVersion === this.version && !falling) return;
-    this.version = g.treesVersion;
-    const w = g.world;
-    const counts = this.trunks.map(() => 0);
-    for (const t of g.trees.values()) {
-      const sp = t.species;
-      const i = counts[sp]++;
-      const x = w.nx(t.node) + (hash2(t.node, 1, 7) - 0.5) * 0.5;
-      const z = w.ny(t.node) + (hash2(t.node, 2, 7) - 0.5) * 0.5;
-      const y = w.heightAt(x, z) - 0.05;
-      const s = t.scale * (0.18 + 0.82 * Math.min(1, t.growth));
-      tmpE.set(0, t.rot, 0);
-      tmpQ.setFromEuler(tmpE);
-      if (t.state === 'falling') {
-        let st = this.fallStart.get(t.id);
-        if (st === undefined) { st = time; this.fallStart.set(t.id, st); }
-        const k = Math.min(1, (time - st) / 1.5);
-        const ang = k * k * (Math.PI / 2 - 0.08);
-        const axis = tmpV.set(Math.cos(t.fallDir), 0, -Math.sin(t.fallDir)).normalize();
-        const fq = new THREE.Quaternion().setFromAxisAngle(axis, ang);
-        tmpQ.premultiply(fq);
+    // no crown is cut away above 0.96 leaf, the least leafy tree included (see treeLeaf/crownGone)
+    const full = G.uSeasonA.value.x >= 0.96;
+    if (full !== this.fullLeaf) {
+      this.fullLeaf = full;
+      for (const c of this.crownMats) for (const m of this.crowns[c.sp].meshes) {
+        m.material = full ? c.full : c.thin;
+        m.customDepthMaterial = full ? c.fullDepth : c.thinDepth;
       }
-      tmpM.compose(tmpS.set(x, y, z), tmpQ, new THREE.Vector3(s, s * (0.95 + hash2(t.node, 3, 7) * 0.15), s));
-      this.trunks[sp].setMatrixAt(i, tmpM);
-      this.crowns[sp].setMatrixAt(i, tmpM);
-      this.limbs[sp]?.setMatrixAt(i, tmpM);
-      const tint = 0.85 + hash2(t.node, 4, 7) * 0.3;
-      // a few copper-leaved trees for variety (real autumn colour comes from the season)
-      const warm = hash2(t.node, 6, 7) > 0.9 ? 0.12 : 0;
-      tmpC.setRGB(tint * (1 + warm * 0.9), tint * (0.95 + hash2(t.node, 5, 7) * 0.1), tint * (0.9 - warm));
-      this.crowns[sp].setColorAt(i, tmpC);
-      const cm = this.cards[sp];
-      if (cm) { cm.setMatrixAt(i, tmpM); cm.setColorAt(i, tmpC); }
     }
-    for (let sp = 0; sp < this.trunks.length; sp++) {
-      this.trunks[sp].count = counts[sp];
-      this.crowns[sp].count = counts[sp];
-      const lm = this.limbs[sp];
-      if (lm) { lm.count = counts[sp]; lm.instanceMatrix.needsUpdate = true; }
-      const cm = this.cards[sp];
-      if (cm) { cm.count = counts[sp]; cm.instanceMatrix.needsUpdate = true; if (cm.instanceColor) cm.instanceColor.needsUpdate = true; }
-      this.trunks[sp].instanceMatrix.needsUpdate = true;
-      this.crowns[sp].instanceMatrix.needsUpdate = true;
-      if (this.crowns[sp].instanceColor) this.crowns[sp].instanceColor!.needsUpdate = true;
+    const V = lodView;
+    const sp = this.spheres, M = this.mats;
+    for (let i = 0; i < this.n; i++) {
+      const x = sp[i * 4], y = sp[i * 4 + 1], z = sp[i * 4 + 2], r = sp[i * 4 + 3];
+      const c = V.cull(x, y, z, r);
+      if (!c) continue;
+      // the tree's scale sits in its matrix: far detail goes where its error shrinks under a pixel
+      const lv = c === 1 ? -1 : V.px(x, y, z) * TREE_FAR_ERR * (r / 1.7) < LOD_PIXELS ? 1 : 0;
+      const s = this.species[i];
+      const col = this.cols[i];
+      this.trunks[s].addArray(lv, M, i * 16);
+      this.crowns[s].addArray(lv, M, i * 16, col);
+      this.cards[s]?.addArray(lv, M, i * 16, col);
+      if (bare) this.limbs[s]?.addArray(lv, M, i * 16);
     }
+    for (const p of [...this.trunks, ...this.crowns, ...this.cards, ...this.limbs]) p?.finish();
     if (this.fallStart.size > 200) {
       for (const id of this.fallStart.keys()) if (!g.trees.has(id)) this.fallStart.delete(id);
     }
@@ -367,7 +425,7 @@ export class StonesRenderer {
       tmpM.compose(tmpS.set(x, y, z), tmpQ, tmpV.set(k * 1.3, k * 1.25, k * 1.3));
       this.meshes[v].setMatrixAt(counts[v]++, tmpM);
     }
-    this.meshes.forEach((m, i) => { m.count = counts[i]; m.instanceMatrix.needsUpdate = true; });
+    this.meshes.forEach((m, i) => commitInstances(m, counts[i]));
   }
 }
 
@@ -398,9 +456,7 @@ export class FieldsRenderer {
       this.mesh.setColorAt(n, tmpC);
       n++;
     }
-    this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    commitInstances(this.mesh, n);
   }
 }
 
@@ -441,11 +497,8 @@ export class VinesRenderer {
         m++;
       }
     }
-    for (const [mesh, count] of [[this.plants, n], [this.grapes, m]] as const) {
-      mesh.count = count;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
+    commitInstances(this.plants, n);
+    commitInstances(this.grapes, m);
   }
 }
 
@@ -498,9 +551,10 @@ export class GrassRenderer {
         n++;
       }
     }
+    // (visibility belongs to the grass setting)
     this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    uploadFirst(this.mesh.instanceMatrix, n);
+    uploadFirst(this.mesh.instanceColor, n);
   }
   update(dt: number) {
     this.mesh.visible = this.enabled;
@@ -554,9 +608,8 @@ export class AnimalsRenderer {
         this.legs.setMatrixAt(nl++, m);
       }
     }
-    this.body.count = nb; this.legs.count = nl;
-    this.body.instanceMatrix.needsUpdate = true;
-    this.legs.instanceMatrix.needsUpdate = true;
+    commitInstances(this.body, nb);
+    commitInstances(this.legs, nl);
   }
 }
 
@@ -627,10 +680,8 @@ export class ProjectilesRenderer {
       tmpM.compose(pos, tmpQ, tmpV.set(1, 1, 1));
       this.mesh.setMatrixAt(n++, tmpM);
     }
-    this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.stones.count = ns;
-    this.stones.instanceMatrix.needsUpdate = true;
+    commitInstances(this.mesh, n);
+    commitInstances(this.stones, ns);
   }
 }
 
@@ -679,10 +730,7 @@ export class PilesRenderer {
     this.counts.set(gd, c);
   }
   end() {
-    for (const [gd, m] of this.meshes) {
-      m.count = this.counts.get(gd) ?? 0;
-      m.instanceMatrix.needsUpdate = true;
-    }
+    for (const [gd, m] of this.meshes) commitInstances(m, this.counts.get(gd) ?? 0);
   }
 }
 

@@ -281,19 +281,22 @@ const TERRAIN_MAP = /* glsl */ `
     }
     c *= dMod(ra, detK);
     dg += rgW * 1.1 * v[5]; dCav += rc * v[5]; dRough += rr * v[5];
-    // ore specks
+    // ore specks (only where some ore is known: most rock has none, and the specks cost six taps)
     vec4 ore = texture2D(tOre, muv);
-    vec3 wp2 = vWPos + vec3(r2.g - 0.5, 0.0, r2.b - 0.5) * 0.9;
-    vec4 on1 = triN(wp2, tw, 0.42, vec2(0.13, 0.57));
-    vec4 on2 = triN(wp2, tw, 0.23, vec2(0.71, 0.33));
-    float spk = (1.0 - smoothstep(0.08, 0.2, on1.b + n3.r * 0.08)) * step(0.62, on1.a) * farFade;
-    float spk2 = (1.0 - smoothstep(0.06, 0.18, on2.b + n3.g * 0.08)) * step(0.78, on2.a);
-    c = mix(c, C(28,26,28), clamp(ore.r * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
-    c = mix(c, C(168,78,44), clamp(ore.g * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
-    c = mix(c, C(214,206,196), clamp(ore.a * 2.0, 0.0, 1.0) * spk2 * 0.8);
-    float gold = clamp(ore.b * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6);
-    c = mix(c, C(250,200,60), gold);
-    tEmis += C(255,190,60) * gold * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(uTime * 2.5 + on1.a * 40.0), 8.0)) * 1.4;
+    float gold = 0.0;
+    if (dot(ore, vec4(1.0)) > 0.001) {
+      vec3 wp2 = vWPos + vec3(r2.g - 0.5, 0.0, r2.b - 0.5) * 0.9;
+      vec4 on1 = triN(wp2, tw, 0.42, vec2(0.13, 0.57));
+      vec4 on2 = triN(wp2, tw, 0.23, vec2(0.71, 0.33));
+      float spk = (1.0 - smoothstep(0.08, 0.2, on1.b + n3.r * 0.08)) * step(0.62, on1.a) * farFade;
+      float spk2 = (1.0 - smoothstep(0.06, 0.18, on2.b + n3.g * 0.08)) * step(0.78, on2.a);
+      c = mix(c, C(28,26,28), clamp(ore.r * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
+      c = mix(c, C(168,78,44), clamp(ore.g * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6));
+      c = mix(c, C(214,206,196), clamp(ore.a * 2.0, 0.0, 1.0) * spk2 * 0.8);
+      gold = clamp(ore.b * 2.0, 0.0, 1.0) * max(spk, spk2 * 0.6);
+      c = mix(c, C(250,200,60), gold);
+      tEmis += C(255,190,60) * gold * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(uTime * 2.5 + on1.a * 40.0), 8.0)) * 1.4;
+    }
     col += c * v[5]; rough += mix(0.72, 0.3, gold) * v[5]; bump += (r1.r * 0.3 + r2.r * 0.5 + r3.g * 0.3 - crack * 0.6) * 1.1 * v[5];
   }
   // snow

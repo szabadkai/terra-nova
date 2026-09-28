@@ -9,6 +9,7 @@ import { box } from './geom';
 import { getMaterial } from './materials';
 import type { Particles } from './particles';
 import { patchMaterial } from './shaderPatch';
+import { commitInstances } from './instancing';
 
 /** Seconds a building burns before the game removes it (economy.ts). */
 export const BURN_TIME = 12;
@@ -389,9 +390,7 @@ export class Demolition {
         const ch = c.hot0 > 0 ? 1 - c.hot / c.hot0 : 0;
         m.setColorAt(i, tmpC.copy(SOOT_COL).lerp(CHAR_COL, ch * 0.85));
       }
-      m.count = cs.length;
-      m.instanceMatrix.needsUpdate = true;
-      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      commitInstances(m, cs.length);
     }
 
     // ---- scorch marks fade in, linger, fade out

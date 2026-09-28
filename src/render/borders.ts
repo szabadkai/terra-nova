@@ -6,6 +6,7 @@ import type { Game } from '../game/game';
 import { hash2 } from '../core/rng';
 import { BANNER_COLORS } from './materials';
 import { patchMaterial } from './shaderPatch';
+import { uploadFirst } from './instancing';
 
 export class BordersRenderer {
   posts: THREE.InstancedMesh;
@@ -73,10 +74,10 @@ export class BordersRenderer {
         n++;
       }
     }
-    this.posts.count = n;
-    this.caps.count = n;
-    this.posts.instanceMatrix.needsUpdate = true;
-    this.caps.instanceMatrix.needsUpdate = true;
-    if (this.caps.instanceColor) this.caps.instanceColor.needsUpdate = true;
+    // (visibility belongs to the borders setting)
+    this.posts.count = this.caps.count = n;
+    uploadFirst(this.posts.instanceMatrix, n);
+    uploadFirst(this.caps.instanceMatrix, n);
+    uploadFirst(this.caps.instanceColor, n);
   }
 }

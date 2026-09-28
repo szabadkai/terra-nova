@@ -113,6 +113,8 @@ vec3 applyFog(vec3 col, vec3 wp) {
   if (uFogOn < 0.5) return col;
   vec2 uv = (wp.xz + 0.5) / uMapSize;
   float e = texture2D(tFog, uv).r;
+  // explored ground shows as it is (the noise below moves it by under half a percent)
+  if (e > 0.999) return col;
   float n = texture2D(tNoise, wp.xz * 0.05 + uTime * 0.004).r;
   float n2 = texture2D(tNoise, wp.xz * 0.013 - uTime * 0.002).g;
   float m = smoothstep(0.2, 0.85, e + (n - 0.5) * 0.35);
@@ -248,7 +250,8 @@ uniform float uGrime;`);
     if (o.fragAO) fs = fs.replace('#include <aomap_fragment>', `${o.fragAO}
 #include <aomap_fragment>`);
     let post = o.fragPost ?? '';
-    if (o.lights) post += `\n  outgoingLight += diffuseColor.rgb * (nightLights(vWPos) * uNight + flashLight(vWPos));`;
+    // the lamp loop only runs after dusk
+    if (o.lights) post += `\n  outgoingLight += diffuseColor.rgb * ((uNight > 0.001 ? nightLights(vWPos) * uNight : vec3(0.0)) + flashLight(vWPos));`;
     if (o.fog) post += `\n  outgoingLight = applyFog(outgoingLight, vWPos);`;
     fs = fs.replace('#include <opaque_fragment>', `${post}
 #include <opaque_fragment>`);

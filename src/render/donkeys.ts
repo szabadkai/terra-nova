@@ -6,6 +6,7 @@ import type { Game } from '../game/game';
 import type { Settler } from '../game/types';
 import { buildDonkeyGeos } from './models';
 import { patchMaterial } from './shaderPatch';
+import { commitInstances } from './instancing';
 
 /** Drawn a little larger than life, like the settlers, so they read at play distance. */
 const SCALE = 1.12;
@@ -108,14 +109,10 @@ export class DonkeysRenderer {
         }
       }
     }
-    this.body.count = nb; this.legs.count = nl; this.packs.count = np;
-    this.body.instanceMatrix.needsUpdate = true;
-    this.legs.instanceMatrix.needsUpdate = true;
-    this.packs.instanceMatrix.needsUpdate = true;
-    for (const [gd, mesh] of this.goods) {
-      mesh.count = counts.get(gd) ?? 0;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+    commitInstances(this.body, nb);
+    commitInstances(this.legs, nl);
+    commitInstances(this.packs, np);
+    for (const [gd, mesh] of this.goods) commitInstances(mesh, counts.get(gd) ?? 0);
     if (this.phase.size > 400) for (const id of this.phase.keys()) if (!g.settlers.has(id)) this.phase.delete(id);
   }
 }
