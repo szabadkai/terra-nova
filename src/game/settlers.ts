@@ -5,6 +5,7 @@ import { workerThink } from './work';
 import { soldierUpdate, isSoldier } from './military';
 import { builderThink, diggerThink } from './economy';
 import { pioneerThink } from './pioneers';
+import { donkeyThink } from './trade';
 
 const BASE_STEP = 0.52;
 
@@ -65,7 +66,8 @@ function startStep(g: Game, s: Settler): boolean {
   const dist = dx !== 0 && dz !== 0 ? 1.4142 : 1;
   const dh = w.h[n] - w.h[s.node];
   let dur = BASE_STEP * dist * (1 + Math.max(0, dh) * 0.55 + Math.max(0, -dh) * 0.1);
-  if (s.carrying) dur *= 1.06;
+  if (s.job === 'donkey') dur *= 0.88; // a donkey trots along, laden or not
+  else if (s.carrying) dur *= 1.06;
   if (isSoldier(s) && s.sstate === 'attack') dur *= 0.92;
   s.stepDur = dur;
   s.next = n;
@@ -226,6 +228,7 @@ function think(g: Game, s: Settler, dt: number) {
   if (s.job === 'builder') return builderThink(g, s, dt);
   if (s.job === 'digger') return diggerThink(g, s, dt);
   if (s.job === 'pioneer') return pioneerThink(g, s, dt);
+  if (s.job === 'donkey') return donkeyThink(g, s, dt);
   // specialist worker
   if (s.home) {
     const b = g.buildings.get(s.home);

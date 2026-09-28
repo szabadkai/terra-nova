@@ -95,6 +95,8 @@ export interface Settler {
   // standing orders (pioneers)
   order: number; // node the settler was sent to work around, -1 none
   fails: number; // consecutive failed attempts at the current order
+  // donkeys carry a second good beside `carrying`; `target` holds the market they are bound for
+  pack: Good | null;
 }
 
 export type BState = 'leveling' | 'building' | 'done' | 'burning';
@@ -150,7 +152,9 @@ export interface Building {
   dock: number; // navigable water node where ships moor (harbours, shipyards), -1 otherwise
   colony: boolean; // an expedition's harbour site: claims land around itself until manned
   shipProgress: number; // shipyard: 0..1 of the hull on the slipway
-  seaWant: Record<Good, number> | null; // harbour: goods to gather here for shipping out
+  seaWant: Record<Good, number> | null; // harbour or market: goods to gather here for ships or donkeys to carry away
+  // overland trade
+  tradeTo: number; // market: the market its donkeys deliver to (chosen by the player), 0 none
 }
 
 export interface Animal {
@@ -201,6 +205,7 @@ export interface Ship {
   wait: number; // loading: steps without anything to take on board
 }
 
+/** A lot of goods to move from one harbour to another by ship, or between two markets by donkey. */
 export interface SeaOrder {
   id: number;
   owner: number;
@@ -212,6 +217,7 @@ export interface SeaOrder {
   delivered: number;
   t: number; // last progress
 }
+export type TradeOrder = SeaOrder;
 
 export interface Expedition {
   id: number;

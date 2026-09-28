@@ -11,6 +11,7 @@ import { TerrainRenderer } from './terrain';
 import { WaterRenderer } from './water';
 import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
 import { SettlersRenderer } from './settlers';
+import { DonkeysRenderer } from './donkeys';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
@@ -129,6 +130,7 @@ export class GameRenderer {
   vines: VinesRenderer;
   grass: GrassRenderer;
   settlers: SettlersRenderer;
+  donkeys: DonkeysRenderer;
   animals: AnimalsRenderer;
   arrows: ProjectilesRenderer;
   piles: PilesRenderer;
@@ -214,6 +216,8 @@ export class GameRenderer {
     this.scene.add(this.grass.mesh);
     this.settlers = new SettlersRenderer(game, goodGeos);
     this.scene.add(this.settlers.group);
+    this.donkeys = new DonkeysRenderer(game, goodGeos);
+    this.scene.add(this.donkeys.group);
     this.orders = new OrdersFX(game);
     this.scene.add(this.orders.group);
     this.animals = new AnimalsRenderer(game);
@@ -345,7 +349,7 @@ export class GameRenderer {
     const r = this.canvas.getBoundingClientRect();
     let best: Settler | null = null, bd = maxPx * maxPx;
     const v = new THREE.Vector3();
-    for (const it of this.settlers.visibleList) {
+    for (const it of [...this.settlers.visibleList, ...this.donkeys.visibleList]) {
       v.set(it.x, it.y + 0.45, it.z).project(this.cam.camera);
       const sx = (v.x * 0.5 + 0.5) * r.width + r.left, sy = (-v.y * 0.5 + 0.5) * r.height + r.top;
       const d = (sx - clientX) ** 2 + (sy - clientY) ** 2;
@@ -647,6 +651,8 @@ export class GameRenderer {
         case 'spawn': P.sparkle(x, y + 0.5, z, 8, [1.2, 1.4, 1.8]); break;
         case 'soldier': P.sparkle(x, y + 0.6, z, 16, [1.8, 1.2, 0.6]); snd('horn', 0.5); break;
         case 'equip': P.sparkle(x, y + 0.6, z, 6); break;
+        case 'donkey': P.sparkle(x, y + 0.6, z, 10, [1.3, 1.2, 0.9]); P.dust(x, y, z, 4); snd('pop', 0.5); break;
+        case 'caravan': P.dust(x, y, z, 3, [0.6, 0.55, 0.45]); snd('pop', 0.35); break;
         case 'produced': if (Math.random() < 0.3) snd('pop', 0.3); break;
         case 'attack': snd('horn'); break;
         case 'launch': P.splash(x, WATER_LEVEL, z); P.splash(x + 0.6, WATER_LEVEL, z); P.sparkle(x, WATER_LEVEL + 1.4, z, 30); snd('splash'); snd('bell'); snd('horn', 0.6); break;
@@ -889,6 +895,7 @@ export class GameRenderer {
     WU.uWakeN.value = this.ships.wakeCount;
     for (let k = 0; k < this.ships.wakeCount; k++) (WU.uWakes.value as THREE.Vector4[])[k].copy(this.ships.wakes[k]);
     this.settlers.update(dt, this.time, this.cam.camera);
+    this.donkeys.update(dt, this.time, this.cam.camera);
     this.animals.update(dt, this.time);
     this.arrows.update();
     this.birds.update(dt, night);

@@ -226,6 +226,7 @@ export class BuildingsRenderer {
         else if (m.name === 'saw') { if (b.working) m.rotation.x += dt * 18; }
         else if (m.name === 'winch') { if (b.worker && time % 6 < 2) m.rotation.x += dt * 4; }
         else if (m.name === 'pigs') { m.position.y = Math.abs(Math.sin(time * 2 + b.id)) * 0.01; m.visible = b.stock.pig > 0 || b.working; }
+        else if (m.name === 'donkeys') { m.rotation.y = Math.sin(time * 0.6 + b.id) * 0.04; m.visible = b.working || b.prodCount > 0; }
         else if (m.name === 'crane') {
           // swings to and fro while a ship is loaded or unloaded here
           let busy = false;

@@ -40,6 +40,8 @@ def('water', () => std({ color: 0x3a7a9a, roughness: 0.05, metalness: 0.1 }));
 def('rock', () => { const t = stoneTex(); return std({ map: t.map, normalMap: t.normal, color: 0x9a9690, roughness: 0.9 }); });
 def('soil', () => std({ color: 0x5a4028, roughness: 1 }));
 def('pig', () => std({ color: 0xe8a898, roughness: 0.8 }));
+def('donkey', () => std({ color: 0x8a7c70, roughness: 0.9 }));
+def('donkeyPale', () => std({ color: 0xd8d0c4, roughness: 0.9 }));
 def('meat', () => std({ color: 0xa83a30, roughness: 0.6 }));
 def('coal', () => std({ color: 0x1c1c1e, roughness: 0.7 }));
 def('ironore', () => std({ color: 0x8a4a30, roughness: 0.8 }));

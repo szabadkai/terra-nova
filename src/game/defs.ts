@@ -30,15 +30,17 @@ export type Job =
   | 'woodcutter' | 'forester' | 'stonecutter' | 'sawyer'
   | 'fisher' | 'hunter' | 'farmer' | 'miller' | 'baker' | 'butcher' | 'pigfarmer' | 'waterman'
   | 'miner' | 'smelter' | 'toolsmith' | 'weaponsmith'
-  | 'vintner' | 'priest' | 'shipwright' | 'geologist' | 'pioneer'
-  | 'swordsman' | 'bowman';
+  | 'vintner' | 'priest' | 'shipwright' | 'geologist' | 'pioneer' | 'donkeybreeder'
+  | 'swordsman' | 'bowman'
+  | 'donkey';
 
 export const JOB_NAMES: Record<Job, string> = {
   carrier: 'Carrier', builder: 'Builder', digger: 'Digger', woodcutter: 'Woodcutter', forester: 'Forester',
   stonecutter: 'Stonecutter', sawyer: 'Sawyer', fisher: 'Fisher', hunter: 'Hunter', farmer: 'Farmer',
   miller: 'Miller', baker: 'Baker', butcher: 'Butcher', pigfarmer: 'Pig Farmer', waterman: 'Water Carrier',
   miner: 'Miner', smelter: 'Smelter', toolsmith: 'Toolsmith', weaponsmith: 'Weaponsmith',
-  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', geologist: 'Geologist', pioneer: 'Pioneer', swordsman: 'Swordsman', bowman: 'Bowman',
+  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', geologist: 'Geologist', pioneer: 'Pioneer', donkeybreeder: 'Donkey Breeder',
+  swordsman: 'Swordsman', bowman: 'Bowman', donkey: 'Donkey',
 };
 
 export const JOB_TOOL: Partial<Record<Job, Good>> = {
@@ -53,10 +55,10 @@ export type BuildingType =
   | 'coalmine' | 'ironmine' | 'goldmine' | 'stonemine'
   | 'ironsmelter' | 'goldsmelter' | 'toolsmith' | 'weaponsmith'
   | 'vineyard' | 'temple' | 'greattemple'
-  | 'harbour' | 'shipyard'
+  | 'market' | 'donkeyfarm' | 'harbour' | 'shipyard'
   | 'barracks' | 'tower_s' | 'tower_l' | 'castle';
 
-export type Category = 'basic' | 'food' | 'industry' | 'military' | 'faith' | 'sea';
+export type Category = 'basic' | 'food' | 'industry' | 'military' | 'faith' | 'trade';
 
 export interface InputSpec {
   goods: Good[]; // any of these satisfies the slot
@@ -147,10 +149,15 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   greattemple: D({ type: 'greattemple', name: 'Great Temple', size: 4, category: 'faith', cost: { board: 8, stone: 14 },
     worker: 'priest', inputs: [{ goods: ['wine'], cap: 8 }], cycle: 8, mana: 6, desc: 'A domed sanctuary. Earns more mana and unlocks the mightiest spells.' }),
 
-  harbour: D({ type: 'harbour', name: 'Harbour', size: 3, category: 'sea', cost: { board: 6, stone: 5 },
+  market: D({ type: 'market', name: 'Market Place', size: 3, category: 'trade', cost: { board: 4, stone: 3 },
+    desc: 'The start of an overland trade route. Choose goods and another of your markets: carriers stock them here and donkeys carry them over, two at a time.' }),
+  donkeyfarm: D({ type: 'donkeyfarm', name: 'Donkey Ranch', size: 3, category: 'trade', cost: { board: 4, stone: 2 },
+    worker: 'donkeybreeder', inputs: [{ goods: ['grain'], cap: 6 }, { goods: ['water'], cap: 6 }], cycle: 16,
+    desc: 'Breeds donkeys on grain and water. Donkeys wait at your market places and carry the goods of your trade routes.' }),
+  harbour: D({ type: 'harbour', name: 'Harbour', size: 3, category: 'trade', cost: { board: 6, stone: 5 },
     storage: true, coastal: true, military: { capacity: 2, radius: 8 },
     desc: 'A coastal storehouse where ships dock. Ships carry goods and settlers between your harbours and sail expeditions to found colonies overseas.' }),
-  shipyard: D({ type: 'shipyard', name: 'Shipyard', size: 3, category: 'sea', cost: { board: 4, stone: 2 },
+  shipyard: D({ type: 'shipyard', name: 'Shipyard', size: 3, category: 'trade', cost: { board: 4, stone: 2 },
     worker: 'shipwright', coastal: true, inputs: [{ goods: ['board'], cap: 8 }],
     desc: 'A shipwright builds sailing ships on the slipway, plank by plank.' }),
 
@@ -170,12 +177,17 @@ export const BUILD_ORDER: Record<Category, BuildingType[]> = {
   industry: ['coalmine', 'ironmine', 'goldmine', 'stonemine', 'ironsmelter', 'goldsmelter', 'toolsmith', 'weaponsmith'],
   military: ['tower_s', 'tower_l', 'castle', 'barracks'],
   faith: ['vineyard', 'temple', 'greattemple'],
-  sea: ['harbour', 'shipyard'],
+  trade: ['market', 'donkeyfarm', 'harbour', 'shipyard'],
 };
 
 export const CATEGORY_NAMES: Record<Category, string> = {
-  basic: 'Basic', food: 'Food', industry: 'Industry', military: 'Military', faith: 'Faith', sea: 'Sea',
+  basic: 'Basic', food: 'Food', industry: 'Industry', military: 'Military', faith: 'Faith', trade: 'Trade',
 };
+
+/** Goods one donkey carries per trip, and how many donkeys a realm keeps: a few for each market. */
+export const DONKEY_LOAD = 2;
+export const DONKEYS_PER_MARKET = 4;
+export const MAX_DONKEYS = 24;
 
 /** Boards a shipwright hammers into one ship. */
 export const SHIP_BOARDS = 10;

@@ -6,7 +6,7 @@ import {
 } from './defs';
 import { generateMap } from './mapgen';
 import { PathFinder } from './path';
-import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, Tree } from './types';
+import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, TradeOrder, Tree } from './types';
 import { WATER_LEVEL, World } from './world';
 import { abortPlan, updateSettler } from './settlers';
 import { updateEconomy, updateBuilding, onBuildingComplete } from './economy';
@@ -15,6 +15,7 @@ import { AIController } from './ai';
 import { updateFaith } from './faith';
 import { cancelVoyage, findDock, sinkFleet, updateSea } from './sea';
 import { updateSigns } from './geology';
+import { updateTrade } from './trade';
 
 export interface PlayerState {
   id: number;
@@ -33,6 +34,7 @@ export interface PlayerState {
   mana: number;
   spellCd: number;
   spellsCast: number;
+  traded: number; // goods delivered by donkey caravans
 }
 
 export interface GameOptions {
@@ -63,6 +65,9 @@ export class Game {
   seaOrders: SeaOrder[] = [];
   expeditions: Expedition[] = [];
   seaT = 0;
+  /** overland trade between markets, carried by donkeys */
+  tradeOrders: TradeOrder[] = [];
+  tradeT = 0;
   isles: { x: number; y: number; r: number }[] = [];
   projectiles: Projectile[] = [];
   /** melee blows landing a moment after the swing */
@@ -121,7 +126,7 @@ export class Game {
     return {
       id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
       swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
-      produced: emptyStock(), history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0,
+      produced: emptyStock(), history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0, traded: 0,
     };
   }
 
@@ -255,7 +260,7 @@ export class Game {
       anim: 'idle', animT: this.rng.range(0, 10), carrying: null, actions: [], onAbort: null, idle: true,
       home: 0, task: '', hp: 100, maxHp: 100, level: 0, sstate: 'idle', target: 0, targetB: 0, engaged: 0,
       cooldown: 0, scanT: this.rng.range(0, 0.3), dead: false, deadT: 0, wanderT: this.rng.range(0, 6),
-      seed: this.rng.next(), blessUntil: 0, voyage: 0, voyageFrom: 0, aboard: 0, order: -1, fails: 0,
+      seed: this.rng.next(), blessUntil: 0, voyage: 0, voyageFrom: 0, aboard: 0, order: -1, fails: 0, pack: null,
     };
     if (job === 'bowman') { s.hp = s.maxHp = 80; }
     this.settlers.set(s.id, s);
@@ -412,7 +417,7 @@ export class Game {
       garrison: [], soldiersIncoming: 0, desiredSoldiers: def.military?.capacity ?? 0, occupied: false,
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,
-      dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null,
+      dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null, tradeTo: 0,
     };
   }
 
@@ -547,7 +552,7 @@ export class Game {
     const r = emptyStock();
     for (const b of this.buildings.values()) {
       if (b.owner !== owner || b.state !== 'done') continue;
-      if (b.def.storage) for (const g of GOODS) r[g] += b.stock[g];
+      if (b.def.storage || b.type === 'market') for (const g of GOODS) r[g] += b.stock[g];
       else if (b.def.outputs) for (const g of b.def.outputs) r[g] += b.stock[g];
     }
     return r;
@@ -565,9 +570,10 @@ export class Game {
   }
 
   population(owner: number) {
-    const r = { total: 0, carriers: 0, idle: 0, soldiers: 0, builders: 0, diggers: 0, workers: 0 };
+    const r = { total: 0, carriers: 0, idle: 0, soldiers: 0, builders: 0, diggers: 0, workers: 0, donkeys: 0 };
     for (const s of this.settlers.values()) {
       if (s.owner !== owner || s.dead) continue;
+      if (s.job === 'donkey') { r.donkeys++; continue; } // beasts of burden, not people
       r.total++;
       if (s.job === 'carrier') { r.carriers++; if (s.idle) r.idle++; }
       else if (s.job === 'swordsman' || s.job === 'bowman') r.soldiers++;
@@ -617,6 +623,7 @@ export class Game {
     updateProjectiles(this, dt);
     updateFaith(this, dt);
     updateSea(this, dt);
+    updateTrade(this, dt);
     // economy dispatch per player
     for (const p of this.players) {
       if (!p.alive) continue;
@@ -789,6 +796,7 @@ export class Game {
         for (const s of this.settlers.values()) if (s.owner === p.id) { s.dead = true; s.anim = 'die'; s.deadT = 0; abortPlan(this, s); }
         for (const b of this.buildings.values()) if (b.owner === p.id) this.destroyBuilding(b, true);
         sinkFleet(this, p.id);
+        this.tradeOrders = this.tradeOrders.filter((o) => o.owner !== p.id);
       }
     }
     if (!this.over) {

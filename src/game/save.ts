@@ -18,6 +18,7 @@ import { resumeTraining, storeCarried } from './economy';
 import { returnHome } from './work';
 import { resumeVoyage } from './sea';
 import { resumeTour } from './geology';
+import { reconcileLoads, resumeDonkey } from './trade';
 
 export const SAVE_FORMAT = 'terra-nova-save';
 export const SAVE_VERSION = 1;
@@ -241,9 +242,10 @@ function settle(g: Game) {
     const home = s.inside ? g.buildings.get(s.inside) : undefined;
     const tour = s.job === 'geologist' && s.task.startsWith('Prospect') && s.target > 0;
     s.task = '';
-    if (!isSoldier(s) && !tour) s.target = 0;
+    if (!isSoldier(s) && !tour && s.job !== 'donkey') s.target = 0;
 
     if (s.voyage) { resumeVoyage(g, s); continue; }
+    if (s.job === 'donkey') { resumeDonkey(g, s); continue; }
     if (isSoldier(s)) {
       // soldiers marching to a garrison set out again from where they stand
       if (s.sstate === 'moving' || s.sstate === 'ship' || (s.sstate === 'garrison' && !s.inside)) s.sstate = 'idle';
@@ -275,6 +277,7 @@ function settle(g: Game) {
     if (s.job === 'carrier') { s.idle = false; storeCarried(g, s); continue; }
     s.carrying = null;
   }
+  reconcileLoads(g);
 }
 
 // ------------------------------------------------------------------ files

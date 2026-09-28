@@ -15,6 +15,7 @@ import { MAX_SHIPS } from '../game/defs';
 import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
 import { callOut, commandable, fieldSoldiers, orderAttack, orderGarrison, orderMove, orderReturn } from '../game/orders';
+import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder, placeOrder } from '../game/trade';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
@@ -284,6 +285,21 @@ export class HUD {
         list.appendChild(row);
       }
       if (!fleet.length) list.appendChild(h('p', 'note', 'Build a Shipyard on the coast: its shipwright turns boards into ships.'));
+      c.appendChild(list);
+    }
+    const markets = [...g.buildings.values()].filter((b) => b.owner === g.local && b.type === 'market' && b.state === 'done');
+    if (markets.length || g.countBuildings(g.local, 'donkeyfarm')) {
+      c.appendChild(h('h3', '', `Caravans <small class="muted">${donkeysOf(g, g.local)} donkeys of ${donkeyCap(g, g.local)}</small>`));
+      const list = h('div', 'list');
+      const orders = g.tradeOrders.filter((o) => o.owner === g.local && o.n - o.delivered > 0);
+      for (const o of orders) {
+        const from = g.buildings.get(o.from), to = g.buildings.get(o.to);
+        if (!from || !to) continue;
+        const row = h('button', 'lrow', `${this.icon(o.good)}<span>${GOOD_NAMES[o.good]} → ${marketLabel(g, to, from.cx, from.cz).replace('Market ', '')}</span><b>${o.delivered}/${o.n}${o.loaded ? ` <small>· ${o.loaded} on the road</small>` : ''}</b>`);
+        row.onclick = () => { this.gr.cam.jumpTo(from.cx, from.cz + 2); this.select({ kind: 'building', id: from.id }); };
+        list.appendChild(row);
+      }
+      if (!orders.length) list.appendChild(h('p', 'note', markets.length < 2 ? 'Build two Market Places on the same land and a Donkey Ranch; donkeys carry goods between the markets.' : 'Select a market place, choose the other market and click + on the goods to send.'));
       c.appendChild(list);
     }
     c.appendChild(h('h3', '', 'Weapons'));
@@ -752,6 +768,26 @@ export class HUD {
         body += `<div class="kv"><span>Hull on the slipway</span><b>${Math.round(b.shipProgress * 100)}%</b></div>${pct(b.shipProgress)}`;
         body += `<div class="kv"><span>Fleet</span><b>⛵ ${fleet}/${MAX_SHIPS}</b></div>`;
       }
+      if (b.type === 'market' && mine) {
+        const tr = marketTraffic(g, b);
+        const dests = destinationsOf(g, b);
+        body += `<div class="kv"><span>Donkeys waiting · bound here</span><b>🐴 ${tr.here} · ${tr.coming}</b></div>`;
+        if (tr.incoming) body += `<div class="kv"><span>Expected from other markets</span><b>${tr.incoming}</b></div>`;
+        const opts = dests.map((d) => `<option value="${d.id}"${b.tradeTo === d.id ? ' selected' : ''}>${marketLabel(g, d, b.cx, b.cz)}</option>`).join('');
+        body += `<div class="kv"><span>Send goods to</span><b><select data-act="dest"><option value="0">${dests.length ? '— choose a market —' : 'no other market on this land'}</option>${opts}</select></b></div>`;
+        if (b.tradeTo && marketAlive(g, b.tradeTo, g.local)) {
+          body += `<div class="tgrid">${GOODS.map((gd) => {
+            const o = openOrder(g, b, b.tradeTo, gd);
+            const here = b.stock[gd];
+            return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${here} here${o ? `, ${o.delivered} of ${o.n} delivered${o.loaded ? `, ${o.loaded} on the road` : ''}` : ''}">${this.icon(gd, 'ci')}<span>${o ? `${o.delivered}/${o.n}` : here || ''}</span><div class="tbtn"><button class="mini" data-act="ord-|${gd}" title="Send ${ORDER_STEP} fewer">−</button><button class="mini" data-act="ord+|${gd}" title="Send ${ORDER_STEP} more">+</button></div></div>`;
+          }).join('')}</div>`;
+          body += `<p class="note">Each <b>+</b> orders ${ORDER_STEP} more of a good. Carriers stock them here${tr.ready ? ` (${tr.ready} ready)` : ''}; donkeys carry two at a time.</p>`;
+        } else if (dests.length) body += `<div class="status">Choose a market to trade with</div>`;
+        else body += `<div class="status">Build another Market Place on this land to trade with${g.countBuildings(g.local, 'donkeyfarm') ? '' : ', and a Donkey Ranch for the donkeys'}</div>`;
+      }
+      if (b.type === 'donkeyfarm' && mine) {
+        body += `<div class="kv"><span>Donkeys bred · kept</span><b>🐴 ${donkeysOf(g, g.local)} / ${donkeyCap(g, g.local)}</b></div>`;
+      }
       if (b.type === 'toolsmith' && mine) {
         body += `<div class="kv"><span>Forge</span><select data-act="tool"><option value="auto">Auto (by demand)</option>${TOOLS.map((t) => `<option value="${t}" ${b.toolChoice === t ? 'selected' : ''}>${GOOD_NAMES[t]}</option>`).join('')}</select></div>`;
       }
@@ -785,6 +821,10 @@ export class HUD {
         (el as HTMLSelectElement).onchange = () => { b.toolChoice = (el as HTMLSelectElement).value as any; };
         return;
       }
+      if (act === 'dest') {
+        (el as HTMLSelectElement).onchange = () => { b.tradeTo = Number((el as HTMLSelectElement).value) || 0; this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo(); };
+        return;
+      }
       el.onclick = () => {
         this.audio.play('ui');
         if (act === 'close') this.select(null);
@@ -805,6 +845,11 @@ export class HUD {
         } else if (act === 'scout') {
           const err = scoutSeas(g, g.local, b);
           this.message(err ?? 'A ship sets out to explore the seas', b.cx, b.cz, err ? 'bad' : 'good');
+        }
+        else if (act.startsWith('ord')) {
+          const gd = act.slice(5) as Good;
+          const err = placeOrder(g, b, b.tradeTo, gd, act[3] === '+' ? ORDER_STEP : -ORDER_STEP);
+          if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); }
         }
         else if (act === 'attack') {
           const n = launchAttack(g, g.local, b, this.attackCount);
@@ -840,22 +885,25 @@ export class HUD {
   private renderSettlerInfo(s: Settler) {
     const g = this.game;
     const soldier = s.job === 'swordsman' || s.job === 'bowman';
-    let body = `<div class="kv"><span>Occupation</span><b>${JOB_NAMES[s.job]}</b></div>`;
-    if (s.carrying) body += `<div class="kv"><span>Carrying</span><b>${this.icon(s.carrying, 'ci')} ${GOOD_NAMES[s.carrying]}</b></div>`;
+    const donkey = s.job === 'donkey';
+    let body = donkey ? '' : `<div class="kv"><span>Occupation</span><b>${JOB_NAMES[s.job]}</b></div>`;
+    if (donkey && (s.carrying || s.pack)) body += `<div class="kv"><span>Carrying</span><b>${[s.carrying, s.pack].filter(Boolean).map((gd) => `${this.icon(gd as Good, 'ci')} ${GOOD_NAMES[gd as Good]}`).join(' · ')}</b></div>`;
+    else if (s.carrying) body += `<div class="kv"><span>Carrying</span><b>${this.icon(s.carrying, 'ci')} ${GOOD_NAMES[s.carrying]}</b></div>`;
+    if (donkey && s.target) { const m = g.buildings.get(s.target); if (m) body += `<div class="kv"><span>Bound for</span><b>${marketLabel(g, m, s.x, s.z)}</b></div>`; }
     if (s.home && !s.voyage) { const b = g.buildings.get(s.home); if (b) body += `<div class="kv"><span>Workplace</span><b>${b.def.name}</b></div>`; }
     if (s.aboard) { const sh = g.ships.get(s.aboard); if (sh) body += `<div class="kv"><span>Aboard</span><b>⛵ ${sh.name}</b></div>`; }
     if (soldier) {
       body += `<div class="kv"><span>Health</span><b>${Math.max(0, Math.round(s.hp))}/${s.maxHp}</b></div><div class="bar hp"><i style="width:${Math.max(0, (s.hp / s.maxHp) * 100)}%"></i></div>`;
       body += `<div class="kv"><span>Orders</span><b>${{ garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: 'Attacking', defend: 'Defending', fight: 'Fighting', return: 'Returning', ship: 'Travelling by sea', hold: 'Holding position' }[s.sstate]}</b></div>`;
     } else {
-      body += `<div class="kv"><span>Doing</span><b>${s.task || (s.idle ? 'Idle' : s.anim === 'walk' ? 'Walking' : 'Working')}</b></div>`;
+      body += `<div class="kv"><span>Doing</span><b>${s.task || (s.idle ? (donkey ? 'Waiting for goods to carry' : 'Idle') : s.anim === 'walk' ? 'Walking' : 'Working')}</b></div>`;
     }
     const recall = s.job === 'pioneer' && s.order >= 0 && s.owner === g.local;
     const key = `s${s.id}|${body}|${recall}`;
     if (key === this.lastInfoKey) return;
     this.lastInfoKey = key;
     this.info.innerHTML = `
-      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[s.owner])}">${soldier ? '⚔' : s.job === 'pioneer' ? '⚑' : '☺'}</div><div><h2>${JOB_NAMES[s.job]}</h2><div class="owner">${g.players[s.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[s.owner])}">${soldier ? '⚔' : s.job === 'pioneer' ? '⚑' : donkey ? '🐴' : '☺'}</div><div><h2>${JOB_NAMES[s.job]}</h2><div class="owner">${g.players[s.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
       <div class="ibody">${body}</div>${recall ? '<div class="ibtns"><button data-act="recall">↩ Call back</button></div>' : ''}`;
     this.info.querySelector<HTMLElement>('[data-act=close]')!.onclick = () => this.select(null);
     const rb = this.info.querySelector<HTMLElement>('[data-act=recall]');
@@ -951,7 +999,7 @@ export class HUD {
     }
     if (this.infoT <= 0) {
       this.infoT = 0.25;
-      if (!this.info.matches(':hover') || !this.info.querySelector('input[type=range]:active')) this.refreshInfo();
+      if (!this.info.matches(':hover') || !this.info.querySelector('input[type=range]:active, select:focus')) this.refreshInfo();
     }
   }
 }

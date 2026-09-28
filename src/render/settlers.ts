@@ -124,8 +124,10 @@ const JOB_LOOK: Record<Job, JobLook> = {
   shipwright: { hat: 'bandana', hatCol: 0x2a5a8a, apron: 0x8a6440, beardy: 0.6 },
   geologist: { hat: 'hood', hatCol: 0x7a5a30, beardy: 0.9 },
   pioneer: { hat: 'bandana', hatCol: 0xb85a28, apron: 0x6a5a3a, beardy: 0.45 },
+  donkeybreeder: { hat: 'straw', hatCol: 0xb89a58, apron: 0x7a6a4a, beardy: 0.3 },
   swordsman: { hat: 'helmet', hatCol: 0xb8bcc4 },
   bowman: { hat: 'hood', hatCol: 0x4a5a2a },
+  donkey: { hat: null, hatCol: 0x7a6a5a }, // drawn by DonkeysRenderer, never as a person
 };
 
 const TOOL: Partial<Record<Job, Good>> = {
@@ -428,7 +430,7 @@ export class SettlersRenderer {
     const P = this.P;
     let count = 0;
     for (const s of g.settlers.values()) {
-      if (s.hidden && !s.aboard) continue;
+      if ((s.hidden && !s.aboard) || s.job === 'donkey') continue;
       if (count >= this.cap) break;
       // passengers stand on the deck of their ship
       const y0 = s.aboard ? shipDeckY(time, s.aboard) - 0.02 + DECK_H : w.heightAt(s.x, s.z);

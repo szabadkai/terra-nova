@@ -8,6 +8,7 @@ import { A, abortPlan, claim, enter, exit, plan } from './settlers';
 import type { Building, Settler } from './types';
 import { recomputeTerritory, isSoldier, sendSoldierTo } from './military';
 import { offer } from './faith';
+import { donkeyCap, donkeysOf, marketsOf, spawnDonkey } from './trade';
 
 const SITE_DIGGERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 const SITE_BUILDERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
@@ -145,6 +146,10 @@ function updateProduction(g: Game, b: Building, dt: number) {
     if (def.mine) {
       if (g.mineOreLeft(b) <= 0) { b.status = 'Deposit exhausted'; return; }
     }
+    if (b.type === 'donkeyfarm' && donkeysOf(g, b.owner) >= donkeyCap(g, b.owner)) {
+      b.status = marketsOf(g, b.owner).length ? 'The stables are full' : 'Waiting for a market place to work for';
+      return;
+    }
     for (const inp of def.inputs ?? []) takeInput(b, inp.goods);
     b.working = true;
     b.workT = 0;
@@ -156,6 +161,12 @@ function updateProduction(g: Game, b: Building, dt: number) {
       b.working = false;
       if (def.mana) {
         offer(g, b);
+        b.prodCount++;
+        b.lastProd = g.time;
+        return;
+      }
+      if (b.type === 'donkeyfarm') {
+        spawnDonkey(g, b);
         b.prodCount++;
         b.lastProd = g.time;
         return;
@@ -293,6 +304,8 @@ export function needsOf(g: Game, b: Building, out: Need[]) {
 function available(b: Building, gd: Good) {
   if (b.state !== 'done') return 0;
   if (b.def.storage) return b.stock[gd] - b.outgoing[gd];
+  // a market offers what came in by donkey; what it gathers for its own caravans is kept back
+  if (b.type === 'market') return Math.max(0, b.stock[gd] - b.outgoing[gd] - (b.seaWant?.[gd] ?? 0));
   if (b.def.outputs && b.def.outputs.includes(gd)) return b.stock[gd] - b.outgoing[gd];
   return 0;
 }
@@ -314,7 +327,7 @@ export function updateEconomy(g: Game, owner: number) {
   for (const b of mine) needsOf(g, b, needs);
   needs.sort((a, b) => a.prio - b.prio);
 
-  const sources = mine.filter((b) => b.state === 'done' && (b.def.storage || b.def.outputs));
+  const sources = mine.filter((b) => b.state === 'done' && (b.def.storage || b.def.outputs || b.type === 'market'));
   let budget = 12;
   for (const need of needs) {
     if (!carriers.length || budget <= 0) break;
@@ -324,8 +337,8 @@ export function updateEconomy(g: Game, owner: number) {
       let best: Building | null = null, bestG: Good | null = null, bd = Infinity;
       for (const src of sources) {
         if (src.id === need.b.id || reg(g, src) !== r) continue;
-        // a harbour does not feed its own export pile back to itself
-        if (need.b.type === 'harbour' && src.type === 'harbour' && need.prio === 160) continue;
+        // an export pile (harbour or market) is never stocked from another one, or goods would go round in circles
+        if (need.prio === 160 && (src.type === 'harbour' || src.type === 'market')) continue;
         for (const gd of need.goods) {
           if (available(src, gd) <= 0) continue;
           let d = dist2(src.cx, src.cz, need.b.cx, need.b.cz);
@@ -344,10 +357,11 @@ export function updateEconomy(g: Game, owner: number) {
   if (!carriers.length) return;
   for (const b of mine) {
     if (!carriers.length || budget <= 0) break;
-    if (b.state !== 'done' || b.def.storage || !b.def.outputs) continue;
-    for (const gd of b.def.outputs) {
+    if (b.state !== 'done' || b.def.storage || (!b.def.outputs && b.type !== 'market')) continue;
+    // goods a caravan brought to a market go on to the storehouse
+    for (const gd of b.def.outputs ?? GOODS) {
       const av = available(b, gd);
-      if (av < 3) continue;
+      if (av < (b.type === 'market' ? 1 : 3)) continue;
       const st = g.nearestStorage(owner, b.cx, b.cz, reg(g, b));
       if (!st) break;
       const c = nearestCarrier(carriers, b.cx, b.cz, g, reg(g, b));

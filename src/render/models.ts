@@ -596,6 +596,66 @@ export function buildDeerGeos() {
   return { body: prep(bodyG), leg: prep(leg) };
 }
 
+// ------------------------------------------------------------------ donkeys
+/** A pack donkey facing +z: barrel body with head, ears, mane and tail; legs pivot at the hip
+ *  (y = 0.34); the pack saddle is drawn on top only while it carries something. */
+export function buildDonkeyGeos() {
+  const coat: [number, number, number] = [0.34, 0.3, 0.27], pale: [number, number, number] = [0.6, 0.55, 0.49], dark: [number, number, number] = [0.13, 0.11, 0.09];
+  const tint = (g: THREE.BufferGeometry, c: [number, number, number], v = 0.08) => colorize(g, (x, y, z) => {
+    const k = 1 - v + hash2(Math.round(x * 60), Math.round(y * 60) + Math.round(z * 60) * 3, 5) * v * 2;
+    return [c[0] * k, c[1] * k, c[2] * k];
+  });
+  const body = new THREE.SphereGeometry(0.19, 12, 9);
+  body.scale(0.85, 0.8, 1.5);
+  body.translate(0, 0.47, 0);
+  colorize(body, (_x, y) => (y < 0.4 ? [pale[0] * 0.85, pale[1] * 0.85, pale[2] * 0.85] : coat));
+  const neck = new THREE.CylinderGeometry(0.065, 0.09, 0.32, 8);
+  neck.rotateX(-0.8);
+  neck.translate(0, 0.62, 0.25);
+  const head = new THREE.SphereGeometry(0.085, 10, 8);
+  head.scale(0.8, 0.85, 1.55);
+  head.translate(0, 0.745, 0.41);
+  const muzzle = new THREE.SphereGeometry(0.058, 8, 6);
+  muzzle.scale(0.85, 0.72, 1);
+  muzzle.translate(0, 0.725, 0.53);
+  const mane = new THREE.BoxGeometry(0.035, 0.07, 0.3);
+  mane.rotateX(-0.8);
+  mane.translate(0, 0.72, 0.23);
+  const tail = new THREE.CylinderGeometry(0.012, 0.018, 0.22, 5);
+  tail.rotateX(0.25);
+  tail.translate(0, 0.4, -0.3);
+  const tuft = new THREE.SphereGeometry(0.032, 6, 5);
+  tuft.translate(0, 0.29, -0.325);
+  const ears: THREE.BufferGeometry[] = [];
+  for (const s of [-1, 1]) {
+    const ear = new THREE.ConeGeometry(0.03, 0.17, 6);
+    ear.rotateX(-0.3);
+    ear.rotateZ(s * 0.4);
+    ear.translate(s * 0.055, 0.87, 0.35);
+    ears.push(tint(ear, coat));
+  }
+  const eyes: THREE.BufferGeometry[] = [];
+  for (const s of [-1, 1]) {
+    const eye = new THREE.SphereGeometry(0.014, 6, 5);
+    eye.translate(s * 0.058, 0.775, 0.47);
+    eyes.push(tint(eye, [0.05, 0.04, 0.03], 0));
+  }
+  const bodyG = merge([body, tint(neck, coat), tint(head, coat), tint(muzzle, pale), tint(mane, dark), tint(tail, coat), tint(tuft, dark), ...ears, ...eyes]);
+  const leg = new THREE.BoxGeometry(0.048, 0.34, 0.048);
+  leg.translate(0, -0.17, 0);
+  colorize(leg, (_x, y) => (y < -0.3 ? dark : y < -0.2 ? pale : coat));
+  // pack saddle: a striped blanket over the back with a girth strap
+  const blanket = new THREE.BoxGeometry(0.4, 0.035, 0.3);
+  blanket.translate(0, 0.615, 0.0);
+  colorize(blanket, (x) => (Math.sin(x * 40) > 0 ? [0.5, 0.14, 0.11] : [0.7, 0.62, 0.45]));
+  const strap = new THREE.TorusGeometry(0.175, 0.012, 5, 16);
+  strap.rotateY(Math.PI / 2);
+  strap.scale(1, 0.85, 1);
+  strap.translate(0, 0.47, 0.02);
+  const pack = merge([blanket, tint(strap, [0.35, 0.25, 0.16], 0)]);
+  return { body: prep(bodyG), leg: prep(leg), pack: prep(pack) };
+}
+
 // ------------------------------------------------------------------ goods
 export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
   const c = (g: THREE.BufferGeometry, hex: number, v = 0.12) => colorize(g, (x, y, z) => {

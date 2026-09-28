@@ -294,6 +294,77 @@ function pigModel(b: MB, x: number, z: number, ry: number) {
   for (const [dx, dz] of [[-0.05, -0.06], [0.05, -0.06], [-0.05, 0.06], [0.05, 0.06]]) b.add('pig', box(0.03, 0.08, 0.03), x + dx, 0.04, z + dz);
 }
 
+/** A donkey standing in a paddock, facing `ry`. */
+function donkeyModel(b: MB, x: number, z: number, ry: number) {
+  const c = Math.cos(ry), s = Math.sin(ry);
+  const at = (dx: number, dz: number): [number, number] => [x + c * dx + s * dz, z - s * dx + c * dz];
+  const body = sphere(0.15, 10, 8);
+  body.scale(0.8, 0.75, 1.4);
+  b.add('donkey', body, x, 0.36, z, ry);
+  let [px, pz] = at(0, 0.2);
+  b.add('donkey', cyl(0.05, 0.07, 0.26, 6), px, 0.4, pz, ry, -0.8, 0);
+  [px, pz] = at(0, 0.34);
+  const head = sphere(0.068, 8, 6);
+  head.scale(0.8, 0.85, 1.5);
+  b.add('donkey', head, px, 0.58, pz, ry);
+  [px, pz] = at(0, 0.44);
+  b.add('donkeyPale', sphere(0.045, 8, 6), px, 0.565, pz, ry);
+  for (const sx of [-1, 1]) {
+    [px, pz] = at(sx * 0.045, 0.29);
+    b.add('donkey', cone(0.025, 0.13, 5), px, 0.63, pz, ry, -0.3, sx * 0.4);
+  }
+  [px, pz] = at(0, 0.18);
+  b.add('dark', box(0.03, 0.05, 0.24), px, 0.58, pz, ry, -0.8, 0);
+  [px, pz] = at(0, -0.24);
+  b.add('dark', cyl(0.012, 0.016, 0.18, 5), px, 0.16, pz, ry);
+  for (const [dx, dz] of [[-0.07, 0.12], [0.07, 0.12], [-0.07, -0.13], [0.07, -0.13]]) {
+    [px, pz] = at(dx, dz);
+    b.add('donkey', box(0.04, 0.3, 0.04), px, 0.15, pz, ry);
+  }
+}
+
+/** Copy every part of a sub-model into `mb`, turned by `ry` and moved to (x, z). */
+function placeSub(mb: MB, sub: MB, x: number, z: number, ry: number) {
+  const m = new THREE.Matrix4().makeRotationY(ry);
+  m.setPosition(x, 0, z);
+  for (const [key, geos] of sub.parts) for (const g of geos) mb.add(key, g.clone().applyMatrix4(m));
+}
+
+/** A market stall: a counter under a striped awning, facing +z, with wares of kind `k`. */
+function marketStall(owner: number, k: number): MB {
+  const sub = new ModelBuilder();
+  sub.add('planks', box(0.9, 0.42, 0.34, 3), 0, 0.21, 0.18);
+  sub.add('timber', box(0.96, 0.04, 0.4, 2), 0, 0.44, 0.18);
+  for (const [px, pz] of [[-0.44, 0.34], [0.44, 0.34], [-0.44, -0.3], [0.44, -0.3]]) sub.add('timber', box(0.05, pz > 0 ? 0.95 : 1.12, 0.05), px, pz > 0 ? 0.475 : 0.56, pz);
+  // awning: alternating cloth strips sloping down towards the front, with a scalloped hem
+  for (let i = 0; i < 5; i++) {
+    const strip = box(0.196, 0.018, 0.78, 2);
+    sub.add(i % 2 ? `trim${owner}` : 'canvas', strip, -0.392 + i * 0.196, 1.05, 0.03, 0, 0.26, 0);
+    sub.add(i % 2 ? `trim${owner}` : 'canvas', new THREE.CylinderGeometry(0.06, 0.06, 0.02, 8, 1, false, 0, Math.PI), -0.392 + i * 0.196, 0.94, 0.41, 0, 0, Math.PI);
+  }
+  sub.add('timber', box(1.0, 0.04, 0.04), 0, 0.96, 0.42);
+  sub.add('timber', box(1.0, 0.04, 0.04), 0, 1.16, -0.32);
+  // wares
+  if (k === 0) {
+    for (const [px, pz] of [[-0.3, 0.14], [-0.12, 0.2], [0.06, 0.12]]) sub.add('hay', sphere(0.075, 8, 6), px, 0.5, pz);
+    sub.add('hay', sphere(0.075, 8, 6), -0.2, 0.62, 0.17);
+    amphora(sub, 0.3, 0.44, 0.18, 0.55);
+    for (const [px, pz] of [[-0.55, 0.5], [-0.3, 0.55]]) sub.add('hay', sphere(0.1, 8, 6), px, 0.08, pz);
+  } else if (k === 1) {
+    crate(sub, -0.28, 0.44, 0.16, 0.16, 0.2);
+    crate(sub, -0.28, 0.6, 0.16, 0.13, -0.3);
+    barrel(sub, 0.25, 0.44, 0.18, 0.7);
+    for (let i = 0; i < 3; i++) sub.add('meat', sphere(0.05, 7, 5), -0.2 + i * 0.2, 0.86, 0.36, 0, 0, 0, 1);
+    barrel(sub, 0.62, 0, 0.5, 0.9);
+  } else {
+    for (let i = 0; i < 4; i++) sub.add('planks', box(0.5, 0.03, 0.1, 3), 0.15, 0.455 + i * 0.032, 0.1 + (i % 2) * 0.1);
+    for (const [px, pz] of [[-0.32, 0.14], [-0.18, 0.22], [-0.3, 0.26]]) sub.add('wood', sphere(0.045, 7, 5), px, 0.485, pz);
+    for (let i = 0; i < 3; i++) sub.add('metal', box(0.04, 0.16, 0.015), -0.3 + i * 0.12, 0.84, 0.37);
+    sub.add('wood', cyl(0.11, 0.11, 0.26, 10, 3), -0.62, 0.11, 0.55, 0, 0, Math.PI / 2);
+  }
+  return sub;
+}
+
 function amphora(mb: MB, x: number, y: number, z: number, s = 1, tilt = 0) {
   const prof = [[0.0, 0.0], [0.05, 0.02], [0.1, 0.09], [0.12, 0.18], [0.11, 0.27], [0.07, 0.34], [0.045, 0.38], [0.048, 0.43], [0.06, 0.44]]
     .map(([r, yy]) => new THREE.Vector2(r * s, yy * s));
@@ -800,6 +871,69 @@ const designs: Partial<Record<BuildingType, Design>> = {
     for (let k = 0; k < 3; k++) mb.add('timber', new THREE.TorusGeometry(0.34, 0.02, 4, 10, Math.PI * 0.7), -0.25 + k * 0.1, 0.05, -0.28, 0, 0.2, Math.PI * 0.62);
     mb.anchors.piles.push(new THREE.Vector3(0.9, 0, 0.75));
     mb.anchors.top = 1.6;
+  },
+  market(mb, owner) {
+    // a cobbled square ringed by stalls, with the market cross and the weighing scales in the middle
+    mb.add('cobble', box(2.8, 0.07, 2.8, 1), 0, 0.035, 0);
+    mb.add('stoneDark', box(2.9, 0.05, 2.9, 1.2), 0, 0.0, 0);
+    placeSub(mb, marketStall(owner, 0), -0.05, -0.95, 0);
+    placeSub(mb, marketStall(owner, 1), -1.0, 0.05, Math.PI / 2);
+    placeSub(mb, marketStall(owner, 2), 1.0, -0.05, -Math.PI / 2);
+    // market cross
+    mb.add('stone', box(0.5, 0.14, 0.5, 3), 0.1, 0.14, 0.2);
+    mb.add('stoneDark', box(0.32, 0.12, 0.32, 3), 0.1, 0.27, 0.2);
+    flag(mb, 0.1, 0.33, 0.2, 1.35, owner);
+    mb.add('gold', sphere(0.05, 8, 6), 0.1, 1.72, 0.2);
+    // scales: a post, a beam and two pans on chains
+    const sx = -0.45, sz = 0.7;
+    mb.add('iron', cyl(0.05, 0.07, 0.04, 8), sx, 0.07, sz);
+    mb.add('iron', cyl(0.02, 0.025, 0.62, 6), sx, 0.1, sz);
+    mb.add('iron', box(0.56, 0.025, 0.025), sx, 0.72, sz, 0, 0, 0.06);
+    for (const s of [-1, 1]) {
+      mb.add('iron', box(0.006, 0.22, 0.006), sx + s * 0.26, 0.6 + s * 0.017, sz + 0.03);
+      mb.add('iron', box(0.006, 0.22, 0.006), sx + s * 0.26, 0.6 + s * 0.017, sz - 0.03);
+      mb.add('metal', cyl(0.075, 0.05, 0.03, 10), sx + s * 0.26, 0.47 + s * 0.017, sz);
+    }
+    mb.add('hay', sphere(0.05, 7, 5), sx + 0.26, 0.52, sz);
+    // goods waiting at the gate: a cart of sacks, crates and barrels
+    mb.add('planks', box(0.55, 0.14, 0.36, 3), 0.85, 0.24, 0.85, 0.3);
+    for (const s of [-1, 1]) mb.add('timber', new THREE.CylinderGeometry(0.11, 0.11, 0.035, 10), 0.85 + Math.sin(0.3) * s * 0.2, 0.13, 0.85 + Math.cos(0.3) * s * 0.2, 0.3, Math.PI / 2, 0);
+    mb.add('timber', box(0.04, 0.04, 0.5), 0.85 - Math.sin(0.3) * 0.45, 0.2, 0.85 - Math.cos(0.3) * 0.45, 0.3, 0, -0.35);
+    for (const [px, pz] of [[0.78, 0.8], [0.92, 0.9], [0.85, 0.72]]) mb.add('hay', sphere(0.08, 8, 6), px, 0.36, pz);
+    crate(mb, -1.05, 0, 1.0, 0.22, 0.2);
+    crate(mb, -1.05, 0.22, 1.0, 0.17, -0.4);
+    barrel(mb, -0.75, 0, 1.12, 0.9);
+    mb.anchors.piles.push(new THREE.Vector3(0.45, 0, 1.15));
+    mb.anchors.top = 1.9;
+  },
+  donkeyfarm(mb, owner) {
+    // a thatched stable and a fenced paddock with a trough, hay and the herd
+    house(mb, { w: 1.5, d: 1.05, wallH: 0.85, roofH: 0.62, x: -0.65, z: -0.75, wall: 'planks', roof: 'thatch', timber: true, doorX: 0.3, win: 1, chim: null, over: 0.16 });
+    // hay loft door and a hoist beam on the gable
+    mb.add('dark', box(0.3, 0.26, 0.03), -0.65, 1.1, -0.22);
+    mb.add('timber', box(0.05, 0.05, 0.36), -0.65, 1.3, -0.1);
+    mb.add('rope', box(0.01, 0.28, 0.01), -0.65, 1.15, 0.07);
+    fence(mb, [[-1.35, -0.1], [-1.35, 1.35], [1.35, 1.35], [1.35, -1.35], [0.35, -1.35]], 0, 0.3);
+    fence(mb, [[0.2, -0.15], [1.35, -0.15]], 0, 0.3);
+    mb.add('soil', box(2.6, 0.03, 1.3), 0, 0.015, 0.7);
+    mb.add('soil', box(1.1, 0.03, 1.2), 0.8, 0.015, -0.7);
+    // trough and a water pail
+    mb.add('wood', box(0.7, 0.16, 0.24, 3), 0.5, 0.08, 1.05);
+    mb.add('water', box(0.62, 0.02, 0.17), 0.5, 0.15, 1.05);
+    mb.add('iron', cyl(0.08, 0.07, 0.14, 8), 1.05, 0, 0.95);
+    mb.add('water', new THREE.CircleGeometry(0.07, 8), 1.05, 0.13, 0.95, 0, -Math.PI / 2, 0);
+    // hay: a rick and loose bundles
+    mb.add('hay', sphere(0.28, 10, 8, Math.PI * 2, Math.PI / 2), -0.95, 0, 0.9);
+    mb.add('hay', cone(0.26, 0.26, 10), -0.95, 0.18, 0.9);
+    for (const [px, pz] of [[-0.5, 0.45], [-0.3, 0.55]]) mb.add('hay', sphere(0.09, 8, 6), px, 0.07, pz);
+    // sacks of grain by the door
+    for (const [px, pz] of [[-0.2, -0.2], [-0.05, -0.28]]) mb.add('hay', sphere(0.09, 8, 6), px, 0.08, pz);
+    const herd = mb.mover('donkeys', 0, 0, 0, 'y');
+    donkeyModel(herd, 0.55, 0.45, 2.4);
+    donkeyModel(herd, 0.95, -0.75, 0.6);
+    donkeyModel(herd, -0.15, 0.95, 4.2);
+    mb.anchors.piles.push(new THREE.Vector3(1.05, 0, -1.15));
+    mb.anchors.top = 1.8;
   },
   barracks(mb, owner) {
     house(mb, { w: 2.3, d: 1.2, wallH: 0.95, roofH: 0.6, x: -0.1, z: -0.45, wall: 'stone', doorX: 0.0, win: 3, chim: 0.8, roof: `roof${owner}` });
