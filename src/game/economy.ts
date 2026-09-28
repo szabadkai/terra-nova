@@ -603,9 +603,19 @@ function reassignMiner(g: Game, owner: number, b: Building, mine: Building[]) {
     o.working = false;
     abortPlan(g, w);
     exit(g, w);
-    w.home = 0;
-    w.idle = true;
     o.status = `Miner sent to the ${b.def.name}`;
+    // straight to the mine that needs him, or the old one would simply hire him back
+    const s = w;
+    s.home = b.id;
+    s.idle = false;
+    b.workerIncoming = s.id;
+    b.status = 'Worker on the way';
+    plan(s, [A.walk(b.door), A.do(() => {
+      if (!g.buildings.has(b.id)) return false;
+      enter(g, s, b);
+      b.worker = s.id;
+      b.workerIncoming = 0;
+    })], () => { if (b.workerIncoming === s.id) b.workerIncoming = 0; s.home = 0; });
     return;
   }
 }

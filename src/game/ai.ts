@@ -4,7 +4,7 @@ import type { Game } from './game';
 import { attackableSoldiers, launchAttack } from './military';
 import { SPELLS, castSpell, faithStatus } from './faith';
 import { colonySite, startExpedition } from './sea';
-import { geologistsAtWork, sendGeologist } from './geology';
+import { PROBE_RADIUS, geologistsAtWork, prospectError, sendGeologist } from './geology';
 import type { Building } from './types';
 
 interface Want { type: BuildingType; n: number; cond?: () => boolean; }
@@ -265,14 +265,22 @@ export class AIController {
     if (geologistsAtWork(g, this.p) > 0) return;
     const hq = g.buildings.get(g.players[this.p].hq);
     if (!hq) return;
-    let best = -1, bd = Infinity, count = 0;
+    const cands: number[] = [];
     for (let i = 0; i < w.N; i++) {
       if (w.owner[i] !== this.p || !w.isMountain(i) || w.known(i, this.p) || !w.walkable(i)) continue;
-      count++;
-      const d = (w.nx(i) - hq.cx) ** 2 + (w.ny(i) - hq.cz) ** 2 + g.rng.next() * 30;
-      if (d < bd) { bd = d; best = i; }
+      cands.push(i);
     }
-    if (count < 8 || best < 0) return;
+    if (cands.length < 8) return;
+    // the heart of a stretch of unprobed rock, not a lone crag; closer to home is better
+    let best = -1, bs = -Infinity;
+    for (let k = 0; k < 40; k++) {
+      const i = cands[g.rng.int(0, cands.length)];
+      let n = 0;
+      w.forRadius(w.nx(i), w.ny(i), PROBE_RADIUS, (j) => { if (w.isMountain(j) && !w.known(j, this.p)) n++; });
+      const sc = n - Math.hypot(w.nx(i) - hq.cx, w.ny(i) - hq.cz) * 0.4;
+      if (sc > bs && prospectError(g, this.p, w.nx(i), w.ny(i)) === null) { bs = sc; best = i; }
+    }
+    if (best < 0) return;
     sendGeologist(g, this.p, w.nx(best), w.ny(best));
   }
 
