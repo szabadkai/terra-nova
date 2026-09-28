@@ -66,6 +66,9 @@ def('terracotta', () => std({ color: 0xb4643a, roughness: 0.8 }));
 // tarred clinker planking and hemp rope for ships
 def('hull', () => { const t = planksTex(); return std({ map: t.map, normalMap: t.normal, color: 0x8a6a4c, roughness: 0.7, side: THREE.DoubleSide }); });
 def('rope', () => std({ color: 0x5c4a34, roughness: 0.95 }));
+// warships: pitch-black tarred planking and a bronze ram
+def('hullTar', () => { const t = planksTex(); return std({ map: t.map, normalMap: t.normal, color: 0x4a3b30, roughness: 0.55, side: THREE.DoubleSide }); });
+def('bronze', () => std({ color: 0xb8864a, roughness: 0.32, metalness: 0.9 }));
 for (let p = 0; p < 4; p++) {
   def(`roof${p}`, () => { const t = roofTex(); return std({ map: t.map, normalMap: t.normal, color: ROOF_COLORS[p], roughness: 0.72, side: THREE.DoubleSide }); });
   def(`banner${p}`, () => { const t = clothTex(); return std({ map: t.map, color: BANNER_COLORS[p], roughness: 0.85, side: THREE.DoubleSide }); });
@@ -74,7 +77,7 @@ for (let p = 0; p < 4; p++) {
 
 const WIND_MATS = new Set(['banner0', 'banner1', 'banner2', 'banner3', 'canvasFlag']);
 
-const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'glowHoly', 'water', 'wine', 'metal', 'iron', 'gold']);
+const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'glowHoly', 'water', 'wine', 'metal', 'iron', 'gold', 'bronze']);
 const GRIME = new Set(['plaster', 'plasterWarm', 'sandstone', 'timber', 'stone', 'stoneDark', 'ashlar', 'brick', 'log', 'doorRed', 'planks', 'marble', 'marbleDark', 'wood']);
 // ships float: no snow on the hull sides, no ground grime
 function patchOpts(key: string, clip: boolean) {

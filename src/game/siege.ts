@@ -170,18 +170,19 @@ export function siegeHit(g: Game, p: Projectile) {
     const v = g.settlers.get(id);
     if (v && !v.dead) {
       kill(g, v);
-      g.message(b.owner, `A catapult stone struck your ${b.def.name} — a soldier was killed`, b.cx, b.cz, 'bad');
+      g.message(b.owner, `A ${p.by ? 'warship’s' : 'catapult'} stone struck your ${b.def.name} — a soldier was killed`, b.cx, b.cz, 'bad');
     }
     return;
   }
   b.damage += 1;
   const hits = siegeHits(b);
+  const who = p.by ? 'warships' : 'catapults';
   if (b.damage < hits - 1e-6) {
-    if (b.damage < 1.5) g.message(b.owner, `Catapults are battering your ${b.def.name}!`, b.cx, b.cz, 'bad');
+    if (b.damage < 1.5) g.message(b.owner, `${p.by ? 'Warships' : 'Catapults'} are battering your ${b.def.name}!`, b.cx, b.cz, 'bad');
     return;
   }
-  g.message(b.owner, `Your ${b.def.name} was razed by catapults!`, b.cx, b.cz, 'bad');
-  g.message(p.owner, `Our catapults razed the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
+  g.message(b.owner, `Your ${b.def.name} was razed by ${who}!`, b.cx, b.cz, 'bad');
+  g.message(p.owner, `Our ${who} razed the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
   g.emit({ type: 'razed', b: b.id, x: b.cx, z: b.cz, owner: p.owner });
   g.destroyBuilding(b, true);
 }

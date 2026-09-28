@@ -98,6 +98,9 @@ button { font-family: var(--font); cursor: pointer; }
 .tcell.on span { color: var(--text); }
 .tbtn { display: flex; gap: 3px; }
 .tbtn .mini { padding: 0 7px; line-height: 16px; }
+.mini.on { background: var(--gold); color: #2a1c0c; border-color: var(--gold); }
+.kindseg { display: inline-flex; gap: 3px; }
+
 .gcell { display: flex; flex-direction: column; align-items: center; padding: 3px 0; border-radius: 8px; background: rgba(0, 0, 0, 0.25); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 12px; }
 .gcell.zero { opacity: .35; }
 .kv { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px dashed rgba(214, 176, 104, 0.15); }
@@ -184,7 +187,7 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
 .msg.fade { opacity: 0; transform: translateX(20px); }
 @keyframes slidein { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: none; } }
 .tip { position: fixed; z-index: 50; max-width: 280px; padding: 8px 10px; border-radius: 8px; background: rgba(18, 12, 8, 0.95); border: 1px solid var(--line); font-size: 12px; line-height: 1.5; pointer-events: none; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5); }
-.hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-30%); padding: 8px 16px; border-radius: 20px; background: rgba(18, 12, 8, 0.85); border: 1px solid var(--line); font-size: 12.5px; pointer-events: none; }
+.hint { position: fixed; bottom: 16px; left: 270px; right: 386px; width: fit-content; margin: 0 auto; text-align: center; padding: 8px 16px; border-radius: 20px; background: rgba(18, 12, 8, 0.85); border: 1px solid var(--line); font-size: 12.5px; pointer-events: none; }
 
 /* ------------------------------------------------ overlays & menu */
 .overlay { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.75)); z-index: 40; animation: fadein .6s; }

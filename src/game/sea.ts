@@ -4,21 +4,27 @@
 // harbours gather what another landmass lacks, ships carry the goods and settlers over, and the
 // receiving harbour hands them to that island's carriers like any storehouse would.
 import {
-  BUILDINGS, GOODS, Good, JOB_TOOL, MAX_SHIPS, SHIP_BOARDS, SHIP_CARGO, SHIP_PASSENGERS, emptyStock,
+  BUILDINGS, GOODS, Good, JOB_TOOL, MAX_SHIPS, MAX_WARSHIPS, SHIP_BOARDS, SHIP_CARGO, SHIP_PASSENGERS, WARSHIP_BOARDS, emptyStock,
 } from './defs';
 import type { Game } from './game';
 import { A, abortPlan, claim, enter, plan } from './settlers';
-import type { Building, Expedition, SeaOrder, Settler, Ship } from './types';
+import type { Building, Expedition, SeaOrder, Settler, Ship, ShipKind } from './types';
 import { WATER_LEVEL } from './world';
 import { isSoldier } from './military';
 import { Need, availableAt, needsOf } from './economy';
+import { afloat, mendShip, shipFields, sinkStep, tradeShipsOf, warshipStep, warshipsOf } from './naval';
 
 const SHIP_SPEED = 2.7; // nodes per second at full sail
+const WARSHIP_SPEED = 3.1; // sail and oars
 /** Ship models are drawn at this scale; deck positions of passengers and cargo follow it. */
 export const SHIP_SCALE = 1.25;
 const SHIP_NAMES = [
   'Seagull', 'Fortuna', 'Albatross', 'Wavecrest', 'Northwind', 'Mermaid', 'Swift', 'Morning Star', 'Pelican', 'Tern',
   'Sea Rose', 'Bold Heart', 'Kingfisher', 'Dolphin', 'Gale', 'Osprey', 'Harvest Moon', 'Cormorant', 'Silver Fin', 'Brave Oak',
+];
+const WARSHIP_NAMES = [
+  'Lion', 'Thunderer', 'Vengeance', 'Griffin', 'Iron Wolf', 'Defiance', 'Warden', 'Tempest', 'Dragon', 'Valiant',
+  'Resolute', 'Hammer', 'Sea Hawk', 'Invincible', 'Black Boar', 'Trident', 'Stormbringer', 'Bulwark',
 ];
 
 export function regionOf(g: Game, b: Building) {
@@ -67,7 +73,7 @@ export function berthPos(g: Game, b: Building, k: number): { x: number; z: numbe
 }
 
 // ------------------------------------------------------------------ routes
-function nearestNavigable(g: Game, x: number, z: number, sea = 0): number {
+export function nearestNavigable(g: Game, x: number, z: number, sea = 0): number {
   const w = g.world;
   const i0 = w.idx(Math.max(0, Math.min(w.W - 1, Math.round(x))), Math.max(0, Math.min(w.H - 1, Math.round(z))));
   if (w.navigable(i0) && (!sea || w.sea[i0] === sea)) return i0;
@@ -158,7 +164,7 @@ function routeAt(r: number[], s: number): { x: number; z: number; tx: number; tz
   return { x: r[r.length - 2], z: r[r.length - 1], tx: 0, tz: 1 };
 }
 
-function sailTo(g: Game, sh: Ship, x: number, z: number): boolean {
+export function sailTo(g: Game, sh: Ship, x: number, z: number): boolean {
   const r = seaRoute(g, sh.x, sh.z, x, z);
   if (!r) return false;
   sh.route = r;
@@ -177,19 +183,35 @@ function sailToBuilding(g: Game, sh: Ship, b: Building): boolean {
 }
 
 // ------------------------------------------------------------------ ships
-export function launchShip(g: Game, owner: number, yard: Building): Ship {
+export function launchShip(g: Game, owner: number, yard: Building, kind: ShipKind = 'trade'): Ship {
   const w = g.world;
   let n = 0;
-  for (const s of g.ships.values()) if (s.owner === owner) n++;
+  for (const s of g.ships.values()) if (s.owner === owner && (s.kind === 'war') === (kind === 'war')) n++;
   const ang = Math.atan2(w.nx(yard.dock) - yard.cx, w.ny(yard.dock) - yard.cz);
+  const names = kind === 'war' ? WARSHIP_NAMES : SHIP_NAMES;
   const sh: Ship = {
-    id: g.id(), owner, name: SHIP_NAMES[(n * 7 + owner * 3 + g.ships.size) % SHIP_NAMES.length],
+    id: g.id(), owner, name: names[(n * 7 + owner * 3 + g.ships.size) % names.length],
     x: w.nx(yard.dock), z: w.ny(yard.dock), heading: ang, speed: 0,
-    route: null, routeS: 0, routeLen: 0, state: 'idle', at: yard.id, from: 0, to: 0, timer: 0,
+    route: null, routeS: 0, routeLen: 0, state: kind === 'war' ? 'guard' : 'idle', at: yard.id, from: 0, to: 0, timer: 0,
     cargo: emptyStock(), lots: [], passengers: [], expedition: 0, berth: 0, born: g.time, wait: 0,
+    ...shipFields(kind),
   };
   g.ships.set(sh.id, sh);
   g.emit({ type: 'launch', x: sh.x, z: sh.z, owner, s: sh.id });
+  if (kind === 'war') {
+    g.emit({ type: 'warship', x: sh.x, z: sh.z, owner, s: sh.id });
+    // it stands guard a little way out from the slipway
+    const dx = w.nx(yard.dock) - yard.cx, dz = w.ny(yard.dock) - yard.cz, l = Math.hypot(dx, dz) || 1;
+    const px = sh.x + (dx / l) * 2.5, pz = sh.z + (dz / l) * 2.5;
+    const i = nearestNavigable(g, px, pz, w.sea[yard.dock]);
+    sh.postX = i >= 0 ? w.nx(i) : sh.x;
+    sh.postZ = i >= 0 ? w.ny(i) : sh.z;
+    sh.routeT = 1;
+    g.message(owner, warshipsOf(g, owner) === 1
+      ? `The warship “${sh.name}” has been launched — select it and right-click an enemy ship or a stronghold by the sea`
+      : `The warship “${sh.name}” has been launched`, sh.x, sh.z, 'good');
+    return sh;
+  }
   g.message(owner, `The ship “${sh.name}” has been launched`, sh.x, sh.z, 'good');
   // sail to the nearest harbour to await orders
   const hb = nearestHarbourBySea(g, owner, sh);
@@ -197,7 +219,7 @@ export function launchShip(g: Game, owner: number, yard: Building): Ship {
   return sh;
 }
 
-function nearestHarbourBySea(g: Game, owner: number, sh: Ship): Building | null {
+export function nearestHarbourBySea(g: Game, owner: number, sh: Ship): Building | null {
   const w = g.world;
   const i = nearestNavigable(g, sh.x, sh.z);
   const sea = i >= 0 ? w.sea[i] : 0;
@@ -222,7 +244,7 @@ function moveShip(g: Game, sh: Ship, dt: number) {
     return false;
   }
   const remaining = sh.routeLen - sh.routeS;
-  const target = Math.min(SHIP_SPEED, 0.35 + remaining * 0.55);
+  const target = Math.min(sh.kind === 'war' ? WARSHIP_SPEED : SHIP_SPEED, 0.35 + remaining * 0.55);
   sh.speed += (target - sh.speed) * Math.min(1, dt * (target > sh.speed ? 0.6 : 2));
   sh.routeS = Math.min(sh.routeLen, sh.routeS + sh.speed * dt);
   const p = routeAt(sh.route, sh.routeS);
@@ -291,7 +313,10 @@ function goAshore(g: Game, s: Settler, node: number) {
 }
 
 function updateShip(g: Game, sh: Ship, dt: number) {
+  if (sh.state === 'sinking') { sinkStep(g, sh, dt); return; }
   const arrived = moveShip(g, sh, dt);
+  mendShip(g, sh, dt);
+  if (sh.kind === 'war') { warshipStep(g, sh, dt, arrived); return; }
   syncPassengers(g, sh);
   switch (sh.state) {
     case 'idle': {
@@ -467,14 +492,21 @@ function unloadStep(g: Game, sh: Ship, dt: number) {
 }
 
 // ------------------------------------------------------------------ shipyard
+/** Does the next plank of a warship on the slipway want an iron fitting too? (every fourth does) */
+export function warshipWantsIron(b: Building) {
+  return b.shipKind === 'war' && Math.round(b.shipProgress * WARSHIP_BOARDS) % 4 === 3;
+}
+
 export function shipwrightThink(g: Game, s: Settler, b: Building) {
   const w = g.world;
-  let fleet = 0;
-  for (const sh of g.ships.values()) if (sh.owner === b.owner) fleet++;
-  if (fleet >= MAX_SHIPS) { b.status = 'The fleet is complete'; b.working = false; plan(s, [A.wait(5)]); return; }
-  if (b.stock.board <= 0 && b.shipProgress <= 0) { b.status = 'Waiting for boards'; b.working = false; plan(s, [A.wait(3)]); return; }
+  const war = b.shipKind === 'war';
+  if (war ? warshipsOf(g, b.owner) >= MAX_WARSHIPS : tradeShipsOf(g, b.owner) >= MAX_SHIPS) {
+    b.status = war ? 'The navy is complete' : 'The fleet is complete'; b.working = false; plan(s, [A.wait(5)]); return;
+  }
   if (b.stock.board <= 0) { b.status = 'Waiting for boards'; b.working = false; plan(s, [A.wait(3)]); return; }
-  b.status = `Building a ship (${Math.round(b.shipProgress * 100)}%)`;
+  const iron = warshipWantsIron(b);
+  if (iron && b.stock.iron <= 0) { b.status = 'Waiting for iron'; b.working = false; plan(s, [A.wait(3)]); return; }
+  b.status = `Building a ${war ? 'warship' : 'ship'} (${Math.round(b.shipProgress * 100)}%)`;
   b.working = true;
   // work from the footprint edge closest to the slipway
   const dx = w.nx(b.dock), dz = w.ny(b.dock);
@@ -487,11 +519,12 @@ export function shipwrightThink(g: Game, s: Settler, b: Building) {
       const d = (xx - dx) ** 2 + (yy - dz) ** 2;
       if (d < bd) { bd = d; spot = i; }
     }
-  let took = false;
+  let took = false, tookIron = false;
   plan(s, [
     A.do(() => {
-      if (!g.buildings.has(b.id) || b.stock.board <= 0) return false;
+      if (!g.buildings.has(b.id) || b.stock.board <= 0 || (iron && b.stock.iron <= 0)) return false;
       b.stock.board--;
+      if (iron) { b.stock.iron--; tookIron = true; }
       took = true;
       s.inside = 0;
       s.hidden = false;
@@ -502,13 +535,13 @@ export function shipwrightThink(g: Game, s: Settler, b: Building) {
     A.anim('hammer', 5.2, b.dock, (t) => { if (Math.floor(t * 2.2) !== Math.floor((t - 0.05) * 2.2)) g.emit({ type: 'hammer', x: s.x, z: s.z }); }),
     A.do(() => {
       if (!g.buildings.has(b.id) || b.state !== 'done') return false;
-      took = false;
-      b.shipProgress = Math.min(1, b.shipProgress + 1 / SHIP_BOARDS);
+      took = tookIron = false;
+      b.shipProgress = Math.min(1, b.shipProgress + 1 / (b.shipKind === 'war' ? WARSHIP_BOARDS : SHIP_BOARDS));
       b.prodCount++;
       b.lastProd = g.time;
       if (b.shipProgress >= 1 - 1e-6) {
         b.shipProgress = 0;
-        launchShip(g, b.owner, b);
+        launchShip(g, b.owner, b, b.shipKind);
       }
     }),
     A.walk(b.door),
@@ -516,6 +549,7 @@ export function shipwrightThink(g: Game, s: Settler, b: Building) {
     A.wait(1.5),
   ], () => {
     if (took && g.buildings.has(b.id)) b.stock.board++;
+    if (tookIron && g.buildings.has(b.id)) b.stock.iron++;
     s.carrying = null;
   });
 }
@@ -662,7 +696,7 @@ export function scoutSeas(g: Game, owner: number, from: Building): string | null
   const w = g.world;
   let sh: Ship | null = null, bd = Infinity;
   for (const s of g.ships.values()) {
-    if (s.owner !== owner || s.state !== 'idle' || cargoCount(s) || s.passengers.length) continue;
+    if (s.owner !== owner || s.kind === 'war' || s.state !== 'idle' || cargoCount(s) || s.passengers.length) continue;
     const d = (s.x - from.cx) ** 2 + (s.z - from.cz) ** 2;
     if (d < bd) { bd = d; sh = s; }
   }
@@ -999,7 +1033,7 @@ function readyCount(g: Game, from: Building, to: number) {
 
 function dispatchShips(g: Game, owner: number) {
   const idle: Ship[] = [];
-  for (const sh of g.ships.values()) if (sh.owner === owner && sh.state === 'idle' && !sh.route && !cargoCount(sh) && !sh.passengers.length) idle.push(sh);
+  for (const sh of g.ships.values()) if (sh.owner === owner && sh.kind !== 'war' && sh.state === 'idle' && !sh.route && !cargoCount(sh) && !sh.passengers.length) idle.push(sh);
   if (!idle.length) return;
   const takeNearest = (x: number, z: number, sea: number): Ship | null => {
     let bi = -1, bd = Infinity;
@@ -1096,7 +1130,7 @@ export function sinkFleet(g: Game, owner: number) {
 export function harbourTraffic(g: Game, hb: Building) {
   let docked = 0, inbound = 0;
   for (const sh of g.ships.values()) {
-    if (sh.owner !== hb.owner) continue;
+    if (sh.owner !== hb.owner || !afloat(sh)) continue;
     if (sh.at === hb.id && !sh.route) docked++;
     else if ((sh.state === 'toLoad' && sh.from === hb.id) || (sh.state === 'toUnload' && sh.to === hb.id)) inbound++;
   }

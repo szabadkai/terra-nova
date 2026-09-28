@@ -1,6 +1,6 @@
 // Economy: logistics dispatch, construction, worker recruitment, production.
 import {
-  BUILDINGS, FOODS, GOODS, GOOD_NAMES, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WEAPONS,
+  BUILDINGS, FOODS, GOODS, GOOD_NAMES, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WARSHIP_IRON, WEAPONS,
 } from './defs';
 import type { Game } from './game';
 import { OUT_CAP, canPrioritise } from './game';
@@ -319,6 +319,11 @@ export function needsOf(g: Game, b: Building, out: Need[]) {
     for (const gd of inp.goods) have += b.stock[gd] + b.incoming[gd];
     const n = inp.cap - have;
     if (n > 0) out.push({ b, goods: inp.goods, n, prio: first ? -1 + have * 0.01 : 200 + have * 10 });
+  }
+  // a shipyard building warships wants iron for the fittings as well
+  if (b.type === 'shipyard' && b.shipKind === 'war') {
+    const have = b.stock.iron + b.incoming.iron;
+    if (have < WARSHIP_IRON) out.push({ b, goods: ['iron'], n: WARSHIP_IRON - have, prio: first ? -1 + have * 0.01 : 200 + have * 10 });
   }
 }
 

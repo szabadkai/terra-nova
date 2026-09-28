@@ -12,6 +12,7 @@ import { CursorSetter, type CursorKind } from './ui/cursors';
 import { JOB_NAMES } from './game/defs';
 import { isCombatant } from './game/military';
 import { commandable } from './game/orders';
+import { afloat, canBombard } from './game/naval';
 import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
@@ -365,6 +366,7 @@ function setupGlobalInput() {
     if (k === 'Escape') {
       if (hud.cancelMode()) { /* left the targeting mode */ }
       else if (gr.orders.chosen.length) hud.selectSoldiers([]);
+      else if (gr.orders.ships.length) hud.selectShips([]);
       else if (gr.selected) hud.select(null);
       else openGameMenu();
       return;
@@ -376,6 +378,7 @@ function setupGlobalInput() {
     else if (k === '3') speed = pausedSpeed = 3;
     else if (k === '4') speed = pausedSpeed = 4;
     else if ((k === 'r' || k === 'R') && gr.orders.chosen.length) hud.returnToDuty();
+    else if ((k === 'r' || k === 'R') && gr.orders.ships.length) hud.shipsHome();
     else if (k === 'n' || k === 'N') {
       const n = audio.skipTrack(e.shiftKey ? -1 : 1);
       if (n) hud.message(`Music: track ${n} of ${audio.trackCount}`);
@@ -433,7 +436,7 @@ function refreshHover() {
   const s = gr.pickSettler(pointer.x, pointer.y, b ? 12 : 22);
   const shipId = s ? 0 : gr.pickShip(pointer.x, pointer.y);
   const sh = shipId ? g.ships.get(shipId) : undefined;
-  o.hover = s ? { kind: 'settler', id: s.id, foe: s.owner !== me } : b && !sh ? { kind: 'building', id: b.id, foe: b.owner !== me } : null;
+  o.hover = s ? { kind: 'settler', id: s.id, foe: s.owner !== me } : sh ? { kind: 'ship', id: sh.id, foe: sh.owner !== me } : b ? { kind: 'building', id: b.id, foe: b.owner !== me } : null;
 
   // with soldiers picked, the cursor tells what a right-click (or the pending order's click) would do
   const chosen = o.chosen.map((id) => g.settlers.get(id)).filter((x): x is Settler => !!x);
@@ -454,9 +457,24 @@ function refreshHover() {
     }
   }
 
+  // with warships picked: hunt a ship, bombard a stronghold by the sea, moor at a harbour, sail on open water
+  const fleet = o.ships.map((id) => g.ships.get(id)).filter((x): x is NonNullable<typeof x> => !!x && afloat(x));
+  if (fleet.length) {
+    const foeShip = sh && sh.owner !== me && afloat(sh);
+    const fort = b && b.def.military && b.state === 'done' ? b : null;
+    const node = gr.hoverNode;
+    if (cmd === 'attack') hoverCursor = foeShip || (fort && fort.owner !== me && fleet.some((x) => canBombard(g, x, fort))) ? 'attack' : 'nogo';
+    else if (foeShip && !cmd) hoverCursor = 'attack';
+    else if (fort && fort.owner !== me && !cmd) hoverCursor = fleet.some((x) => canBombard(g, x, fort)) ? 'attack' : 'nogo';
+    else if (b && b.owner === me && b.type === 'harbour' && b.state === 'done' && !cmd) hoverCursor = 'garrison';
+    else if (node < 0 || !w.isWater(node)) hoverCursor = 'nogo';
+  }
+
   // tooltips
   if (sh) {
-    hud.showTip(ev, `<b>⛵ ${sh.name}</b><br><span class="muted">${g.players[sh.owner].name}</span>`);
+    const hp = Math.max(0, Math.round((sh.hp / sh.maxHp) * 100));
+    const act = fleet.length && sh.owner !== me && afloat(sh) ? '<br><b class="bad">Right-click: hunt her</b>' : '';
+    hud.showTip(ev, `<b>${sh.kind === 'war' ? '⚓' : '⛵'} ${sh.name}</b><br><span class="muted">${sh.kind === 'war' ? 'Warship · ' : ''}${g.players[sh.owner].name}</span>${hp < 100 ? `<br>Hull ${hp}%` : ''}${act}`);
   } else if (s && isCombatant(s)) {
     const act = chosen.length && s.owner !== me ? '<br><b class="bad">Right-click: march on him</b>' : '';
     hud.showTip(ev, `<b>${JOB_NAMES[s.job]}</b><br><span class="muted">${g.players[s.owner].name}</span><br>Health ${Math.ceil(s.hp)} / ${s.maxHp}${act}`);
@@ -465,7 +483,11 @@ function refreshHover() {
     const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
     // with soldiers picked: what a right-click would have them do
     const n = chosen.length;
-    const act = n && b.def.military && b.state === 'done' ? (b.owner !== me ? `<br><b class="bad">Right-click: storm it with ${n}</b>` : '<br><b>Right-click: man it</b>') : '';
+    let act = n && b.def.military && b.state === 'done' ? (b.owner !== me ? `<br><b class="bad">Right-click: storm it with ${n}</b>` : '<br><b>Right-click: man it</b>') : '';
+    if (fleet.length && b.state === 'done') {
+      if (b.def.military && b.owner !== me) act = fleet.some((x) => canBombard(g, x, b!)) ? '<br><b class="bad">Right-click: bombard it</b>' : '<br><span class="muted">Out of the warships\' reach</span>';
+      else if (b.type === 'harbour' && b.owner === me) act = '<br><b>Right-click: moor here and mend</b>';
+    }
     hud.showTip(ev, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}${act}`);
   } else hud.hideTip();
 }
@@ -483,7 +505,7 @@ function bindCanvas(c: HTMLCanvasElement) {
   cursor = new CursorSetter(c);
   hoverCursor = 'default';
   // left-drag with the mouse draws a box around soldiers to pick
-  const boxEnd = () => { box?.remove(); box = null; gr.orders.preview = []; };
+  const boxEnd = () => { box?.remove(); box = null; gr.orders.preview = []; gr.orders.shipPreview = []; };
   c.addEventListener('pointerdown', (e) => {
     boxEnd();
     active.add(e.pointerId);
@@ -509,8 +531,9 @@ function bindCanvas(c: HTMLCanvasElement) {
       box.style.top = `${y0}px`;
       box.style.width = `${x1 - x0}px`;
       box.style.height = `${y1 - y0}px`;
-      // the men the box would take get a faint ring as it is drawn
+      // the men the box would take get a faint ring as it is drawn (or the warships, if it holds no men)
       gr.orders.preview = gr.orders.inRect(gr.cam.camera, c, x0, y0, x1, y1);
+      gr.orders.shipPreview = gr.orders.preview.length ? [] : gr.orders.shipsInRect(gr.cam.camera, c, x0, y0, x1, y1);
       hud.hideTip();
       return;
     }
@@ -528,7 +551,12 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (box) {
       const r = box.getBoundingClientRect();
       boxEnd();
-      if (hud && state === 'play') hud.selectSoldiers(gr.orders.inRect(gr.cam.camera, c, r.left, r.top, r.right, r.bottom), e.shiftKey);
+      if (hud && state === 'play') {
+        const men = gr.orders.inRect(gr.cam.camera, c, r.left, r.top, r.right, r.bottom);
+        const ships = men.length ? [] : gr.orders.shipsInRect(gr.cam.camera, c, r.left, r.top, r.right, r.bottom);
+        if (ships.length) hud.selectShips(ships, e.shiftKey);
+        else hud.selectSoldiers(men, e.shiftKey);
+      }
       return;
     }
     if (state !== 'play' || !hud) return;
@@ -539,7 +567,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     else if (e.button === 2 && !e.altKey) {
       if (hud.cancelMode()) return;
       // with soldiers picked, a right-click gives them their orders
-      if (gr.orders.chosen.length) hud.commandAt(e.clientX, e.clientY);
+      if (gr.orders.chosen.length || gr.orders.ships.length) hud.commandAt(e.clientX, e.clientY);
       else hud.select(null);
     }
     refreshHover();
@@ -605,7 +633,7 @@ function onClick(e: PointerEvent) {
   // Ctrl/Cmd + click one of your soldiers: all of his kind on screen
   if (s && (e.ctrlKey || e.metaKey) && commandable(game, game.local, s) && !s.inside) selectKindInView(s, e.shiftKey);
   else if (s) hud.select({ kind: 'settler', id: s.id }, e.shiftKey);
-  else if (ship) hud.select({ kind: 'ship', id: ship });
+  else if (ship) hud.select({ kind: 'ship', id: ship }, e.shiftKey);
   else if (b) hud.select({ kind: 'building', id: b.id });
   else hud.select(null);
 }

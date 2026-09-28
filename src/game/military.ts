@@ -5,6 +5,7 @@ import type { Building, Settler } from './types';
 import { GUARD_RANGE, LEASH } from './orders';
 import { CATAPULT_RANGE } from './defs';
 import { siegeHit } from './siege';
+import { shipArrowLands, shipStoneLands, towerShootShip } from './naval';
 
 export function isSoldier(s: Settler) {
   return s.job === 'swordsman' || s.job === 'bowman';
@@ -593,7 +594,8 @@ export function updateProjectiles(g: Game, dt: number) {
     p.t += dt;
     if (p.t >= p.dur) {
       g.projectiles.splice(i, 1);
-      if (p.kind === 'stone') { siegeHit(g, p); continue; }
+      if (p.kind === 'stone') { if (p.ship) shipStoneLands(g, p); else siegeHit(g, p); continue; }
+      if (p.ship) { shipArrowLands(g, p); continue; }
       if (p.target < 0) continue; // animal (handled by hunter plan)
       const v = g.settlers.get(p.target);
       if (!v || v.dead) continue;
@@ -625,10 +627,14 @@ export function updateProjectiles(g: Game, dt: number) {
       const d = (o.x - b.cx) ** 2 + (o.z - b.cz) ** 2;
       if (d < bd) { bd = d; best = o; }
     }
-    if (!best) continue;
-    b.shootT = 2.4 / archers;
     const w = g.world;
     const top = w.heightAt(b.cx, b.cz) + (b.type === 'tower_s' ? 2.6 : b.type === 'castle' || b.type === 'hq' ? 3.4 : 3.2);
+    if (!best) {
+      // nobody on land: an enemy ship close under the walls, then
+      if (g.ships.size && towerShootShip(g, b, top)) b.shootT = 2.4 / archers;
+      continue;
+    }
+    b.shootT = 2.4 / archers;
     const ty = w.heightAt(best.x, best.z) + 0.35;
     const d = Math.sqrt(bd);
     g.projectiles.push({

@@ -43,6 +43,9 @@ export const OBJECTIVES: Objective[] = [
   { id: 'sea', text: 'Take to the sea', hint: 'Build a Harbour and a Shipyard on the coast. Ships carry goods to your other harbours — and a harbour can send an expedition to found a colony on an island.',
     done: (g) => has(g, 'harbour') && [...g.ships.values()].some((s) => s.owner === g.local),
     progress: (g) => `${[has(g, 'harbour'), has(g, 'shipyard'), [...g.ships.values()].some((s) => s.owner === g.local)].filter(Boolean).length}/3` },
+  { id: 'navy', text: 'Launch a warship', hint: 'Select your Shipyard and set it to build a Warship: boards, and iron for the fittings. Select the warship and right-click an enemy ship to hunt it, or a stronghold by the water to bombard it.',
+    done: (g) => (g as any).__warship === true || [...g.ships.values()].some((s) => s.owner === g.local && s.kind === 'war'),
+    progress: (g) => `${[[...g.buildings.values()].some((b) => b.owner === g.local && b.type === 'shipyard' && b.shipKind === 'war'), [...g.ships.values()].some((s) => s.owner === g.local && s.kind === 'war')].filter(Boolean).length}/2` },
   { id: 'capture', text: 'Capture an enemy military building', hint: 'Select an enemy tower within reach and press Attack.', done: (g) => (g as any).__captured === true },
   { id: 'win', text: 'Conquer every rival kingdom', hint: 'Destroy or capture all enemy military buildings.', done: (g) => g.over && g.winner === g.local },
 ];
@@ -62,6 +65,7 @@ export class Objectives {
 
   noteEvent(type: string, owner?: number) {
     if (type === 'captured' && owner === this.game.local) (this.game as any).__captured = true;
+    if (type === 'warship' && owner === this.game.local) (this.game as any).__warship = true;
   }
 
   update(dt: number) {

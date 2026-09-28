@@ -687,7 +687,9 @@ export class GameRenderer {
         case 'donkey': P.sparkle(x, y + 0.6, z, 10, [1.3, 1.2, 0.9]); P.dust(x, y, z, 4); snd('pop', 0.5); break;
         case 'machine': P.sparkle(x, y + 0.9, z, 24, [1.6, 1.3, 0.7]); P.dust(x, y, z, 8); snd('built', 0.7); snd('creak', 0.7); break;
         case 'catapult': P.dust(x, y + 0.3, z, 3, [0.6, 0.55, 0.45]); snd('thump'); break;
-        case 'stonefall': P.dust(x, y, z, 10, [0.5, 0.45, 0.38]); snd('crash', 0.55); break;
+        case 'stonefall':
+          if (y < WATER_LEVEL) { this.waterColumn(x, z, 0.8); snd('splash', 0.8); break; }
+          P.dust(x, y, z, 10, [0.5, 0.45, 0.38]); snd('crash', 0.55); break;
         case 'siegehit': P.dust(x, y + 0.6, z, 18, [0.58, 0.54, 0.48]); P.sparks(x, y + 0.7, z, 8); P.smoke(x, y + 1, z, 0.4, 0.8); snd('crash'); this.cam.shake = Math.max(this.cam.shake, 0.35); break;
         case 'razed': P.dust(x, y + 0.5, z, 30, [0.55, 0.5, 0.45]); P.sparks(x, y + 1, z, 12); snd('crash'); snd('horn', 0.5); this.cam.shake = Math.max(this.cam.shake, 0.6); break;
         case 'caravan': P.dust(x, y, z, 3, [0.6, 0.55, 0.45]); snd('pop', 0.35); break;
@@ -707,8 +709,37 @@ export class GameRenderer {
           break;
         }
         case 'sink': for (let k = 0; k < 4; k++) P.splash(x + (Math.random() - 0.5), WATER_LEVEL, z + (Math.random() - 0.5)); snd('splash'); break;
+        // ---- naval warfare
+        case 'broadside': P.dust(x, WATER_LEVEL + 0.9, z, 3, [0.62, 0.58, 0.5]); snd('thump'); snd('creak', 0.5); break;
+        case 'shiphit':
+          if (e.kind === 'arrow') { P.hit(x, WATER_LEVEL + 0.6, z); snd('hit', 0.35); break; }
+          P.chips(x, WATER_LEVEL + 0.1, z); P.chips(x + 0.2, WATER_LEVEL + 0.2, z - 0.2);
+          P.sparks(x, WATER_LEVEL + 0.5, z, 5); P.smoke(x, WATER_LEVEL + 0.5, z, 0.5, 0.6); P.splash(x + 0.4, WATER_LEVEL, z + 0.3);
+          snd('crash', 0.8); snd('creak', 0.6);
+          this.cam.shake = Math.max(this.cam.shake, 0.15);
+          break;
+        case 'seamiss': this.waterColumn(x, z, 1); snd('splash', 0.9); break;
+        case 'arrowsplash': P.emit({ x, y: WATER_LEVEL + 0.02, z, vy: 0.9, spread: 0.3, life: 0.4, size: 0.04, color: [0.85, 0.92, 1], alpha: 0.8, gravity: 6, count: 4, kind: 1 }); break;
+        case 'sinking':
+          this.waterColumn(x, z, 0.8); P.smoke(x, WATER_LEVEL + 0.8, z, 0.8, 1.2); P.sparks(x, WATER_LEVEL + 0.8, z, 12);
+          snd('crash'); snd('creak'); snd('splash');
+          this.cam.shake = Math.max(this.cam.shake, 0.3);
+          break;
+        case 'wreck':
+          for (let k = 0; k < 6; k++) P.splash(x + (Math.random() - 0.5) * 2, WATER_LEVEL, z + (Math.random() - 0.5) * 2);
+          P.emit({ x, y: WATER_LEVEL + 0.02, z, spread: 1.6, life: 6, size: 0.09, color: [0.4, 0.3, 0.2], alpha: 0.9, drag: 3, count: 14, kind: 1 });
+          snd('splash', 0.7);
+          break;
       }
     }
+  }
+
+  /** A stone plunging into the sea throws up a column of spray. */
+  private waterColumn(x: number, z: number, s: number) {
+    const P = this.particles;
+    P.emit({ x, y: WATER_LEVEL + 0.05, z, vy: 3.6 * s, spread: 0.25, vspread: 1.2, life: 1.1, size: 0.09, color: [0.9, 0.95, 1], alpha: 0.9, gravity: 7, drag: 0.3, count: 22, kind: 1 });
+    P.emit({ x, y: WATER_LEVEL + 0.4, z, vy: 1.4 * s, spread: 0.2, life: 1.4, size: 0.35, grow: 2.2, color: [0.92, 0.96, 1], alpha: 0.4, gravity: 1.5, drag: 1.5, count: 4 });
+    P.splash(x, WATER_LEVEL, z);
   }
 
   private continuousEffects(dt: number) {
@@ -921,7 +952,11 @@ export class GameRenderer {
     this.piles.begin();
     this.buildings.update(dt, this.time);
     this.lanterns.update(dt);
-    this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z);
+    const hl = this.ships.highlight;
+    hl.clear();
+    for (const id of this.orders.ships) hl.add(id);
+    if (this.selected?.kind === 'ship') hl.add(this.selected.id);
+    this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z, this.cam.camera);
     this.signs.update(this.time);
     this.piles.end();
     const WU = this.water.uniforms;
