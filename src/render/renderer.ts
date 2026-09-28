@@ -251,6 +251,7 @@ export class GameRenderer {
     this.scene.add(this.pigs.group);
     this.particles = new Particles();
     this.scene.add(this.particles.group);
+    this.settlers.idle.fx = this.particles;
     this.ships = new ShipsRenderer(game, this.piles, this.particles);
     this.scene.add(this.ships.group);
     this.signs = new SignsRenderer(game);
@@ -353,6 +354,7 @@ export class GameRenderer {
     this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
     const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
     this.particles.setScale(pxScale);
+    this.settlers.idle.setScale(pxScale);
     this.rain.setScale(w * pr, h * pr, pxScale, pr);
   }
 
@@ -925,6 +927,7 @@ export class GameRenderer {
     const WU = this.water.uniforms;
     WU.uWakeN.value = this.ships.wakeCount;
     for (let k = 0; k < this.ships.wakeCount; k++) (WU.uWakes.value as THREE.Vector4[])[k].copy(this.ships.wakes[k]);
+    this.settlers.idle.rain = this.precip === 'rain' ? this.rainAmount : 0;
     this.settlers.update(dt, this.time, this.cam.camera);
     this.donkeys.update(dt, this.time, this.cam.camera);
     this.catapults.update(dt, this.time, this.cam.camera);
