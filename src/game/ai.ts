@@ -7,6 +7,7 @@ import { colonySite, startExpedition } from './sea';
 import { PROBE_RADIUS, geologistsAtWork, prospectError, sendGeologist } from './geology';
 import { pioneerError, pioneersAtWork, sendPioneer } from './pioneers';
 import { orderAttack } from './orders';
+import { afloat, bombardSpot, orderShipBombard, orderShipHome, tradeShipsOf, warshipsOf } from './naval';
 import { DX8, DY8 } from './world';
 import type { Building } from './types';
 
@@ -29,6 +30,7 @@ export class AIController {
   private garrisonT = 5;
   private castT = 8;
   private seaT = 60;
+  private navalT = 45;
   private geoT = 30;
   private pioneerT = 240;
   private unmannedSince = new Map<number, number>();
@@ -53,6 +55,11 @@ export class AIController {
     if (this.seaT <= 0) {
       this.seaT = 20;
       this.seaStep();
+    }
+    this.navalT -= dt;
+    if (this.navalT <= 0) {
+      this.navalT = 15;
+      this.navalStep();
     }
     this.geoT -= dt;
     if (this.geoT <= 0) {
@@ -210,13 +217,12 @@ export class AIController {
       return;
     }
     const yard = mine.find((b) => b.type === 'shipyard');
-    let ships = 0;
-    for (const sh of g.ships.values()) if (sh.owner === this.p) ships++;
+    const ships = tradeShipsOf(g, this.p);
     if (!yard) {
       if (harbour.state === 'done' && sites < 3 && stock.board >= 10) this.tryPlace('shipyard');
       return;
     }
-    yard.paused = ships >= 2;
+    yard.paused = yard.shipKind !== 'war' && ships >= 2;
     if (!ships || harbour.state !== 'done' || g.expeditions.some((e) => e.owner === this.p)) return;
     // nearest free island coast
     let best: { x: number; y: number; landing: number; shore: number } | null = null, bd = Infinity;
@@ -233,6 +239,42 @@ export class AIController {
       }
     }
     if (best && stock.board >= 10 && stock.stone >= 8) startExpedition(g, this.p, harbour, best);
+  }
+
+  /** A navy once a rival takes to the sea: warships from the yard stand guard off the harbour, go for
+   *  enemy ships that come near and, late in the game, shell enemy strongholds by the water. */
+  private navalStep() {
+    const g = this.g;
+    if (this.level === 0) return;
+    const yard = [...g.buildings.values()].find((b) => b.owner === this.p && b.type === 'shipyard' && b.state === 'done');
+    const navy = [...g.ships.values()].filter((sh) => sh.owner === this.p && sh.kind === 'war' && afloat(sh));
+    if (yard) {
+      let rivals = false;
+      for (const sh of g.ships.values()) if (sh.owner !== this.p && afloat(sh) && g.players[sh.owner]?.alive) { rivals = true; break; }
+      if (!rivals) for (const b of g.buildings.values()) if (b.owner !== this.p && b.type === 'harbour' && g.players[b.owner]?.alive) { rivals = true; break; }
+      const want = rivals ? this.level : 0;
+      const stock = g.totalStock(this.p);
+      if (warshipsOf(g, this.p) < want && stock.iron >= 2 && stock.board >= 8) { yard.shipKind = 'war'; yard.paused = false; }
+      else if (yard.shipKind === 'war' && yard.shipProgress <= 0) yard.shipKind = 'trade';
+    }
+    if (!navy.length) return;
+    // battered ships go home to mend
+    for (const sh of navy) if (sh.hp < sh.maxHp * 0.4 && sh.state !== 'guard') orderShipHome(g, this.p, [sh.id]);
+    if (g.time < 1800) return;
+    const idle = navy.filter((sh) => sh.state === 'guard' && !sh.target && sh.hp > sh.maxHp * 0.75);
+    if (!idle.length || navy.some((sh) => sh.state === 'bombard')) return;
+    // the weakest enemy stronghold by the water, nearest first
+    let best: Building | null = null, bs = Infinity;
+    for (const b of g.buildings.values()) {
+      if (b.owner === this.p || !b.def.military || b.state !== 'done' || !g.players[b.owner]?.alive) continue;
+      const d = Math.hypot(b.cx - idle[0].x, b.cz - idle[0].z);
+      if (d > 70) continue;
+      const score = d + b.garrison.length * 6 + (b.type === 'hq' ? 30 : 0);
+      if (score >= bs || !bombardSpot(g, idle[0], b)) continue;
+      bs = score;
+      best = b;
+    }
+    if (best) orderShipBombard(g, this.p, (this.level >= 2 ? idle : idle.slice(0, 1)).map((sh) => sh.id), best);
   }
 
   private territoryNodes(): number[] {

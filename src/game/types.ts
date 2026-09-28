@@ -159,6 +159,10 @@ export interface Building {
   priority: boolean;
   /** stronghold: catapult stones taken while empty (heals slowly in peace); the walls fall at `def.military.siege` */
   damage: number;
+  /** shipyard: what goes on the slipway next */
+  shipKind: ShipKind;
+  /** harbour: ships keep this landmass supplied from, and bring what it lacks from, the other harbours by themselves */
+  seaAuto: boolean;
 }
 
 export interface Animal {
@@ -180,7 +184,11 @@ export interface Animal {
   herd: number;
 }
 
-export type ShipState = 'idle' | 'toLoad' | 'loading' | 'toUnload' | 'unloading' | 'expedition' | 'scouting';
+export type ShipState =
+  | 'idle' | 'toLoad' | 'loading' | 'toUnload' | 'unloading' | 'expedition' | 'scouting'
+  // warships: stand guard at `post`, chase ship `target`, shell stronghold `target`; any ship can sink
+  | 'guard' | 'hunt' | 'bombard' | 'sinking';
+export type ShipKind = 'trade' | 'war';
 
 export interface Ship {
   id: number;
@@ -207,6 +215,27 @@ export interface Ship {
   berth: number; // slot offset when several ships share a dock
   born: number;
   wait: number; // loading: steps without anything to take on board
+  // naval combat
+  kind: ShipKind;
+  hp: number;
+  maxHp: number;
+  /** warship: the ship it hunts or the stronghold it shells (by state) */
+  target: number;
+  /** warship: where it stands guard (-1 none) */
+  postX: number;
+  postZ: number;
+  /** seconds until the deck catapult is wound again */
+  reload: number;
+  /** game time of the last shot, and its bearing (world angle), for the catapult's swing */
+  fired: number;
+  aim: number;
+  /** game time it last took damage (it mends once the fighting has stopped) */
+  hitT: number;
+  /** seconds since it started going down */
+  sinkT: number;
+  /** warship: seconds until it looks around again / may plot a new course */
+  scanT: number;
+  routeT: number;
 }
 
 /** A lot of goods to move from one harbour to another by ship, or between two markets by donkey. */
@@ -220,6 +249,8 @@ export interface SeaOrder {
   loaded: number; // in transit
   delivered: number;
   t: number; // last progress
+  /** placed by the player in the harbour panel: the sea planner never trims or forgets it */
+  manual?: boolean;
 }
 export type TradeOrder = SeaOrder;
 
@@ -259,6 +290,8 @@ export interface Projectile {
   damage: number; // a stone: 1 when it will land on the building, 0 when it falls short or wide
   kind: 'arrow' | 'stone';
   building?: number; // the stronghold a catapult stone is aimed at
+  ship?: number; // the ship an arrow or stone is aimed at
+  by?: number; // the warship that loosed a stone
 }
 
 export interface GameEvent {

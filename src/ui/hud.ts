@@ -9,9 +9,16 @@ import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import { attackableSoldiers, launchAttack } from '../game/military';
 import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
-import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition } from '../game/sea';
+import {
+  SHIP_ORDER_STEP, bookPassengers, bookedPassengers, cancelExpedition, cancelShipOrder, cargoCount, colonySite, expectedBySea,
+  harbourDestinations, harbourLabel, harbourTraffic, openShipOrder, placeShipOrder, scoutSeas, shipOrders, startExpedition, warshipWantsIron,
+  type PassengerRole,
+} from '../game/sea';
 import type { Ship } from '../game/types';
-import { MAX_SHIPS } from '../game/defs';
+import { MAX_SHIPS, MAX_WARSHIPS, WARSHIP_IRON } from '../game/defs';
+import {
+  afloat, orderShipAttack, orderShipBombard, orderShipHome, orderShipMove, tradeShipsOf, warshipDoing, warshipsOf,
+} from '../game/naval';
 import { catapultCap, catapultsOf, siegeHits } from '../game/siege';
 import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
@@ -169,7 +176,7 @@ export class HUD {
     this.left.appendChild(mmWrap);
     this.minimap = new Minimap(this.game, this.gr.cam, mmWrap);
     // a right-click on the minimap sends the picked soldiers there, as does a left-click that picks a Move or Attack target
-    this.minimap.onCommand = (x, z, left) => (left ? !!this.gr.commanding : this.gr.orders.chosen.length > 0) && this.commandAtWorld(x, z, left ? this.gr.commanding : null);
+    this.minimap.onCommand = (x, z, left) => (left ? !!this.gr.commanding : this.gr.orders.chosen.length > 0 || this.gr.orders.ships.length > 0) && this.commandAtWorld(x, z, left ? this.gr.commanding : null);
     const tabs = h('div', 'tabs');
     const defs: [Tab, string, string][] = [['build', '⚒', 'Build'], ['goods', '⚖', 'Economy'], ['military', '⚔', 'Military'], ['faith', '✦', 'Faith'], ['stats', '📈', 'Statistics']];
     for (const [id, ic, label] of defs) {
@@ -295,7 +302,7 @@ export class HUD {
       inp.oninput = () => { p.toolPrio[t] = Number(inp.value); row.querySelector('span')!.textContent = inp.value; };
       c.appendChild(row);
     }
-    const fleet = [...g.ships.values()].filter((sh) => sh.owner === g.local);
+    const fleet = [...g.ships.values()].filter((sh) => sh.owner === g.local && sh.kind !== 'war' && afloat(sh));
     if (fleet.length || g.countBuildings(g.local, 'harbour') || g.countBuildings(g.local, 'shipyard')) {
       c.appendChild(h('h3', '', `Fleet <small class="muted">${fleet.length}/${MAX_SHIPS}</small>`));
       const list = h('div', 'list');
@@ -306,6 +313,19 @@ export class HUD {
       }
       if (!fleet.length) list.appendChild(h('p', 'note', 'Build a Shipyard on the coast: its shipwright turns boards into ships.'));
       c.appendChild(list);
+      const sos = shipOrders(g, g.local);
+      if (sos.length) {
+        const ol = h('div', 'list');
+        for (const o of sos) {
+          const from = g.buildings.get(o.from), to = g.buildings.get(o.to);
+          if (!from || !to) continue;
+          const row = h('button', 'lrow', `${this.icon(o.good)}<span>${GOOD_NAMES[o.good]} → ${harbourLabel(to, from.cx, from.cz).replace('Harbour ', '')}</span><b>${o.delivered}/${o.n}${o.loaded ? ` <small>· ${o.loaded} aboard</small>` : ''}</b>`);
+          row.onclick = () => { this.gr.cam.jumpTo(from.cx, from.cz + 2); this.select({ kind: 'building', id: from.id }); };
+          ol.appendChild(row);
+        }
+        c.appendChild(h('h3', '', 'Shipping orders'));
+        c.appendChild(ol);
+      }
     }
     const markets = [...g.buildings.values()].filter((b) => b.owner === g.local && b.type === 'market' && b.state === 'done');
     if (markets.length || g.countBuildings(g.local, 'donkeyfarm')) {
@@ -347,6 +367,23 @@ export class HUD {
     c.appendChild(h('div', 'kv', `<span>Garrisoned / in the field</span><b>${inTowers} / ${idle}</b>`));
     c.appendChild(h('div', 'kv', `<span>Morale (gold)</span><b>${Math.round(p.morale * 100)}%</b>`));
     if (pop.catapults || g.countBuildings(g.local, 'siegeworks')) c.appendChild(h('div', 'kv', `<span>Catapults</span><b>⚙ ${pop.catapults} / ${catapultCap(g, g.local)}</b>`));
+    const navy = [...g.ships.values()].filter((sh) => sh.owner === g.local && sh.kind === 'war' && afloat(sh));
+    if (navy.length || g.countBuildings(g.local, 'shipyard')) {
+      c.appendChild(h('h3', '', `Navy <small class="muted">${navy.length}/${MAX_WARSHIPS}</small>`));
+      const list = h('div', 'list');
+      for (const sh of navy) {
+        const row = h('button', 'lrow', `<span class="emo">⚓</span><span>${sh.name}</span><b>${Math.round((sh.hp / sh.maxHp) * 100)}% · ${warshipDoing(g, sh).replace(/ the “.*”$/, '').replace(/ the enemy .*$/, '')}</b>`);
+        row.onclick = () => { this.gr.cam.jumpTo(sh.x, sh.z + 2); this.selectShips([sh.id]); };
+        list.appendChild(row);
+      }
+      if (!navy.length) list.appendChild(h('p', 'note', 'Set a Shipyard to build warships: boards, and iron for the fittings.'));
+      c.appendChild(list);
+      if (navy.length > 1) {
+        const allShips = h('button', 'wide', `⚓ Select all ${navy.length} warships`);
+        allShips.onclick = () => { this.selectShips(navy.map((sh) => sh.id)); this.gr.cam.jumpTo(navy[0].x, navy[0].z + 2); };
+        c.appendChild(allShips);
+      }
+    }
     const field = fieldSoldiers(g, g.local);
     const all = h('button', 'wide', field.length ? `⚔ Select the ${field.length} in the field` : 'No soldiers in the field');
     (all as HTMLButtonElement).disabled = !field.length;
@@ -565,6 +602,16 @@ export class HUD {
 
   // ------------------------------------------------------------ selection panel
   select(sel: { kind: 'building' | 'settler' | 'ship'; id: number } | null, add = false) {
+    // one of our warships: it joins (or starts) the fleet that takes orders
+    if (sel?.kind === 'ship') {
+      const sh = this.game.ships.get(sel.id);
+      if (sh && sh.owner === this.game.local && sh.kind === 'war' && afloat(sh)) {
+        const cur = this.gr.orders.ships;
+        if (add) this.selectShips(cur.includes(sh.id) ? cur.filter((id) => id !== sh.id) : [...cur, sh.id]);
+        else this.selectShips([sh.id]);
+        return;
+      }
+    }
     // one of our soldiers: he joins (or starts) the group that takes orders
     if (sel?.kind === 'settler') {
       const s = this.game.settlers.get(sel.id);
@@ -575,8 +622,9 @@ export class HUD {
         return;
       }
     }
-    if (this.gr.orders.chosen.length && !this.modeOn()) this.hint.classList.add('hidden');
+    if ((this.gr.orders.chosen.length || this.gr.orders.ships.length) && !this.modeOn()) this.hint.classList.add('hidden');
     this.gr.orders.chosen = [];
+    this.gr.orders.ships = [];
     this.gr.commanding = null;
     this.gr.selected = sel;
     this.lastInfoKey = '';
@@ -589,6 +637,7 @@ export class HUD {
   selectSoldiers(ids: number[], add = false) {
     const o = this.gr.orders;
     o.chosen = add ? [...new Set([...o.chosen, ...ids])] : [...new Set(ids)];
+    o.ships = [];
     o.prune();
     this.gr.selected = null;
     this.gr.commanding = null;
@@ -602,6 +651,24 @@ export class HUD {
     } else if (!this.modeOn()) this.hint.classList.add('hidden');
   }
 
+  /** Pick warships to give orders to (an empty list lets them go). */
+  selectShips(ids: number[], add = false) {
+    const o = this.gr.orders;
+    o.ships = add ? [...new Set([...o.ships, ...ids])] : [...new Set(ids)];
+    o.chosen = [];
+    o.prune();
+    this.gr.selected = null;
+    this.gr.commanding = null;
+    this.lastInfoKey = '';
+    this.infoT = 0;
+    if (o.ships.length) this.audio.play('click');
+    this.refreshInfo();
+    if (o.ships.length) {
+      this.hint.innerHTML = `<b>Right-click</b> the sea: stand guard there · an enemy ship: hunt · a stronghold by the water: bombard · your harbour: mend · <b>R</b> home · <b>Esc</b> lets go`;
+      this.hint.classList.remove('hidden');
+    } else if (!this.modeOn()) this.hint.classList.add('hidden');
+  }
+
   private modeOn() {
     const gr = this.gr;
     return !!(gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering || gr.commanding);
@@ -609,6 +676,11 @@ export class HUD {
 
   /** Give the chosen soldiers an order at a screen point: storm, man or march there. */
   commandAt(clientX: number, clientY: number, kind: 'move' | 'attack' | null = null) {
+    if (this.gr.orders.ships.length) {
+      const p = this.gr.pickGround(clientX, clientY);
+      const sid = this.gr.pickShip(clientX, clientY);
+      return this.commandFleet(sid ? this.game.ships.get(sid) ?? null : null, this.gr.pickBuilding(clientX, clientY), p?.x, p?.z, kind);
+    }
     if (!this.gr.orders.chosen.length) return false;
     const p = this.gr.pickGround(clientX, clientY);
     return this.command(this.gr.pickBuilding(clientX, clientY), p?.x, p?.z, kind);
@@ -620,7 +692,19 @@ export class HUD {
     const xi = Math.round(x), zi = Math.round(z);
     if (!w.inBounds(xi, zi)) return false;
     const id = w.building[w.idx(xi, zi)];
-    const done = this.command(id ? this.game.buildings.get(id) ?? null : null, x, z, kind);
+    const bb = id ? this.game.buildings.get(id) ?? null : null;
+    if (this.gr.orders.ships.length) {
+      // the nearest enemy ship close to the spot
+      let ship: Ship | null = null, sd = 4;
+      for (const o of this.game.ships.values()) {
+        const d = Math.hypot(o.x - x, o.z - z);
+        if (o.owner !== this.game.local && afloat(o) && d < sd) { sd = d; ship = o; }
+      }
+      const ok = this.commandFleet(ship, bb, x, z, kind);
+      if (ok && kind) this.startCommanding(null);
+      return ok;
+    }
+    const done = this.command(bb, x, z, kind);
     if (done && kind) this.startCommanding(null);
     return done;
   }
@@ -652,6 +736,47 @@ export class HUD {
     return true;
   }
 
+  /** Give the chosen warships an order: hunt a ship, bombard a stronghold, moor at a harbour or sail to a spot. */
+  private commandFleet(ship: Ship | null, b: Building | null, x: number | undefined, z: number | undefined, kind: 'move' | 'attack' | null) {
+    const g = this.game, ids = this.gr.orders.ships;
+    if (!ids.length) return false;
+    const w = g.world;
+    const seenAt = (px: number, pz: number) => !!w.explored[w.idx(Math.max(0, Math.min(w.W - 1, Math.round(px))), Math.max(0, Math.min(w.H - 1, Math.round(pz))))];
+    if (ship && ship.owner !== g.local && afloat(ship) && seenAt(ship.x, ship.z) && kind !== 'move') {
+      const n = orderShipAttack(g, g.local, ids, ship);
+      if (!n) { this.message('None of them can reach it', ship.x, ship.z, 'bad'); this.audio.play('click'); return false; }
+      this.message(`${n > 1 ? `${n} warships` : 'The warship'} hunt${n > 1 ? '' : 's'} the enemy “${ship.name}”!`, ship.x, ship.z, 'good');
+      this.audio.play('horn');
+      return true;
+    }
+    if (b && seenAt(b.cx, b.cz) && b.def.military && b.state === 'done' && b.owner !== g.local && kind !== 'move') {
+      const n = orderShipBombard(g, g.local, ids, b);
+      if (!n) { this.message(`Warships cannot get within range of that ${b.def.name}`, b.cx, b.cz, 'bad'); this.audio.play('click'); return false; }
+      this.message(`${n > 1 ? `${n} warships sail` : 'The warship sails'} to bombard the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
+      this.audio.play('horn');
+      return true;
+    }
+    if (kind === 'attack') { this.message('Pick an enemy ship, or a stronghold by the water', undefined, undefined, 'bad'); this.audio.play('click'); return false; }
+    if (b && b.owner === g.local && b.type === 'harbour' && b.state === 'done' && kind !== 'move') {
+      const n = orderShipHome(g, g.local, ids, b);
+      this.message(n ? `${n > 1 ? `${n} warships make` : 'The warship makes'} for the harbour to mend` : 'None of them can reach that harbour', b.cx, b.cz, n ? 'good' : 'bad');
+      this.audio.play(n ? 'place' : 'click');
+      return n > 0;
+    }
+    if (x === undefined || z === undefined) return false;
+    const n = orderShipMove(g, g.local, ids, x, z);
+    if (!n) { this.message('Ships cannot sail there', x, z, 'bad'); this.audio.play('click'); return false; }
+    this.audio.play('place');
+    return true;
+  }
+
+  /** The chosen warships make for the nearest harbour. */
+  shipsHome() {
+    const n = orderShipHome(this.game, this.game.local, this.gr.orders.ships);
+    this.message(n ? `${n > 1 ? `${n} warships make` : 'The warship makes'} for the harbour` : 'There is no harbour of yours on their sea', undefined, undefined, n ? 'good' : 'bad');
+    this.selectShips([]);
+  }
+
   /** The chosen soldiers go back to garrison duty. */
   returnToDuty() {
     const n = orderReturn(this.game, this.game.local, this.gr.orders.chosen);
@@ -663,12 +788,54 @@ export class HUD {
   startCommanding(kind: 'move' | 'attack' | null) {
     this.gr.commanding = kind;
     this.audio.play('ui');
+    const fleet = this.gr.orders.ships.length > 0;
     if (kind) {
       this.hint.innerHTML = kind === 'move'
-        ? `Click where they should stand guard · <b>Esc</b>/right-click cancels`
-        : `Click an enemy stronghold to storm · <b>Esc</b>/right-click cancels`;
+        ? `Click where ${fleet ? 'the ships' : 'they'} should stand guard · <b>Esc</b>/right-click cancels`
+        : fleet ? `Click an enemy ship to hunt, or a stronghold by the water to bombard · <b>Esc</b>/right-click cancels`
+          : `Click an enemy stronghold to storm · <b>Esc</b>/right-click cancels`;
       this.hint.classList.remove('hidden');
-    } else this.selectSoldiers(this.gr.orders.chosen);
+    } else if (fleet) this.selectShips(this.gr.orders.ships);
+    else this.selectSoldiers(this.gr.orders.chosen);
+  }
+
+  private renderFleetInfo(ids: number[]) {
+    const g = this.game;
+    let hp = 0, max = 0;
+    const doing: Record<string, number> = {};
+    for (const id of ids) {
+      const sh = g.ships.get(id)!;
+      hp += Math.max(0, sh.hp);
+      max += sh.maxHp;
+      const d = warshipDoing(g, sh).replace(/ the “.*”$/, '').replace(/ the enemy .*$/, '');
+      doing[d] = (doing[d] ?? 0) + 1;
+    }
+    const one = ids.length === 1 ? g.ships.get(ids[0])! : null;
+    let body = one ? `<div class="kv"><span>Doing</span><b>${warshipDoing(g, one)}</b></div>` : `<div class="kv"><span>Orders</span><b>${Object.entries(doing).map(([k, v]) => `${k} ${v}`).join(' · ')}</b></div>`;
+    body += `<div class="kv"><span>Hull</span><b>${Math.round((hp / Math.max(1, max)) * 100)}%</b></div><div class="bar hp"><i style="width:${(hp / Math.max(1, max)) * 100}%"></i></div>`;
+    if (one) {
+      body += `<div class="kv"><span>Catapult</span><b>${one.reload > 0.3 ? `winding (${Math.ceil(one.reload)} s)` : 'loaded'}</b></div>`;
+      body += `<div class="kv"><span>Speed</span><b>${one.speed > 0.1 ? `${(one.speed * 3.6).toFixed(1)} knots` : 'at rest'}</b></div>`;
+    }
+    body += `<p class="note">Its catapult outranges tower archers. Stones sink ships, kill a stronghold's men and bring empty walls down. It mends moored at your harbour.</p>`;
+    const cm = this.gr.commanding;
+    const buttons = `<button class="${cm === 'move' ? 'primary' : ''}" data-act="move">🚩 Move…</button><button class="${cm === 'attack' ? 'primary' : ''}" data-act="attack">⚔ Attack…</button><button data-act="home">⚓ To harbour</button>`;
+    const key = `fleet|${ids.join(',')}|${body}|${cm}`;
+    if (key === this.lastInfoKey) return;
+    this.lastInfoKey = key;
+    const title = one ? one.name : `${ids.length} warships`;
+    this.info.innerHTML = `
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[g.local])}">⚓</div><div><h2>${title}</h2><div class="owner">${one ? 'Warship · ' : ''}${g.players[g.local].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ibody">${body}</div>
+      <div class="ibtns">${buttons}</div>`;
+    this.info.querySelectorAll<HTMLElement>('[data-act]').forEach((el) => {
+      const act = el.dataset.act!;
+      el.onclick = () => {
+        if (act === 'close') this.selectShips([]);
+        else if (act === 'move' || act === 'attack') this.startCommanding(this.gr.commanding === act ? null : act);
+        else if (act === 'home') this.shipsHome();
+      };
+    });
   }
 
   private renderGroupInfo(ids: number[]) {
@@ -715,6 +882,12 @@ export class HUD {
       grp.prune();
       if (grp.chosen.length) { this.renderGroupInfo(grp.chosen); this.info.classList.remove('hidden'); return; }
       this.selectSoldiers([]);
+      return;
+    }
+    if (grp.ships.length) {
+      grp.prune();
+      if (grp.ships.length) { this.renderFleetInfo(grp.ships); this.info.classList.remove('hidden'); return; }
+      this.selectShips([]);
       return;
     }
     if (!sel) { this.info.classList.add('hidden'); return; }
@@ -800,12 +973,14 @@ export class HUD {
           const need = ex.people.builder + ex.people.digger + ex.people.soldier + ex.people.carrier;
           body += `<div class="status">${ex.state === 'gathering' ? `⚓ Expedition gathering: party ${party}/${need} · ${this.icon('board', 'ci')}${Math.min(b.stock.board, ex.goods.board)}/${ex.goods.board} ${this.icon('stone', 'ci')}${Math.min(b.stock.stone, ex.goods.stone)}/${ex.goods.stone}${party >= need && b.stock.board >= ex.goods.board && b.stock.stone >= ex.goods.stone ? ' · waiting for a ship' : ''}` : '⛵ The expedition is at sea'}</div>`;
         }
+        body += this.shippingSection(b);
       }
       if (b.type === 'shipyard' && mine) {
-        let fleet = 0;
-        for (const sh of g.ships.values()) if (sh.owner === b.owner) fleet++;
+        const war = b.shipKind === 'war';
+        body += `<div class="kv"><span>Build</span><b><span class="kindseg"><button class="mini${war ? '' : ' on'}" data-act="kind|trade" title="Trade ships carry goods and settlers between your harbours and sail expeditions">⛵ Trade ship</button><button class="mini${war ? ' on' : ''}" data-act="kind|war" title="Warships carry a catapult: they sink enemy ships and bombard strongholds by the water. Boards and iron.">⚔ Warship</button></span></b></div>`;
         body += `<div class="kv"><span>Hull on the slipway</span><b>${Math.round(b.shipProgress * 100)}%</b></div>${pct(b.shipProgress)}`;
-        body += `<div class="kv"><span>Fleet</span><b>⛵ ${fleet}/${MAX_SHIPS}</b></div>`;
+        if (war) body += `<div class="kv"><span>Iron for the fittings</span><b>${this.icon('iron', 'ci')}${b.stock.iron}<small>/${WARSHIP_IRON}</small>${warshipWantsIron(b) ? ' · needed now' : ''}</b></div>`;
+        body += `<div class="kv"><span>Trade ships · warships</span><b>⛵ ${tradeShipsOf(g, b.owner)}/${MAX_SHIPS} · ⚔ ${warshipsOf(g, b.owner)}/${MAX_WARSHIPS}</b></div>`;
       }
       if (b.type === 'market' && mine) {
         const tr = marketTraffic(g, b);
@@ -869,6 +1044,14 @@ export class HUD {
         (el as HTMLSelectElement).onchange = () => { b.tradeTo = Number((el as HTMLSelectElement).value) || 0; this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo(); };
         return;
       }
+      if (act === 'auto') {
+        (el as HTMLInputElement).onchange = () => {
+          b.seaAuto = (el as HTMLInputElement).checked;
+          this.message(b.seaAuto ? 'Ships keep this land supplied by themselves again' : 'Ships now carry only what you order from and to this land', b.cx, b.cz, 'good');
+          this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo();
+        };
+        return;
+      }
       el.onclick = () => {
         this.audio.play('ui');
         if (act === 'close') this.select(null);
@@ -891,6 +1074,28 @@ export class HUD {
           const err = scoutSeas(g, g.local, b);
           this.message(err ?? 'A ship sets out to explore the seas', b.cx, b.cz, err ? 'bad' : 'good');
         }
+        else if (act.startsWith('sord')) {
+          const gd = act.slice(6) as Good;
+          const err = placeShipOrder(g, b, b.tradeTo, gd, act[4] === '+' ? SHIP_ORDER_STEP : -SHIP_ORDER_STEP);
+          if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); }
+        }
+        else if (act.startsWith('pax')) {
+          const role = act.slice(5) as PassengerRole;
+          const r = bookPassengers(g, b, b.tradeTo, role, act[3] === '+' ? 1 : -1);
+          if (typeof r === 'string') { this.message(r, undefined, undefined, 'bad'); this.audio.play('click'); }
+          else if (!r && act[3] === '+') {
+            this.message(role === 'soldier' ? 'No soldier to spare on this land — lower a stronghold\'s desired soldiers to free some' : `No idle ${role} on this land to send`, b.cx, b.cz, 'bad');
+            this.audio.play('click');
+          }
+        }
+        else if (act.startsWith('scancel|')) {
+          const o = g.seaOrders.find((x) => x.id === Number(act.slice(8)));
+          if (o) cancelShipOrder(o);
+        }
+        else if (act.startsWith('kind|')) {
+          b.shipKind = act.slice(5) === 'war' ? 'war' : 'trade';
+          this.message(b.shipKind === 'war' ? 'The shipwright lays down a warship: boards, and iron for the fittings' : 'The shipwright builds trade ships', b.cx, b.cz, 'good');
+        }
         else if (act.startsWith('ord')) {
           const gd = act.slice(5) as Good;
           const err = placeOrder(g, b, b.tradeTo, gd, act[3] === '+' ? ORDER_STEP : -ORDER_STEP);
@@ -907,6 +1112,41 @@ export class HUD {
     });
   }
 
+  /** The harbour panel's shipping orders: a harbour overseas, goods and passengers for it, automatic supply. */
+  private shippingSection(b: Building): string {
+    const g = this.game;
+    const dests = harbourDestinations(g, b);
+    if (b.tradeTo && !dests.some((d) => d.id === b.tradeTo)) b.tradeTo = 0;
+    let out = '<div class="subh">Shipping</div>';
+    const inc = expectedBySea(g, b);
+    if (inc) out += `<div class="kv"><span>Expected by sea</span><b>${inc}</b></div>`;
+    const opts = dests.map((d) => `<option value="${d.id}"${b.tradeTo === d.id ? ' selected' : ''}>${harbourLabel(d, b.cx, b.cz)}</option>`).join('');
+    out += `<div class="kv"><span>Ship to</span><b><select data-act="dest"><option value="0">${dests.length ? '— choose a harbour —' : 'no harbour of yours overseas'}</option>${opts}</select></b></div>`;
+    if (b.tradeTo) {
+      out += `<div class="tgrid">${GOODS.map((gd) => {
+        const o = openShipOrder(g, b, b.tradeTo, gd);
+        const here = b.stock[gd];
+        return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${here} here${o ? `, ${o.delivered} of ${o.n} delivered${o.loaded ? `, ${o.loaded} aboard` : ''}` : ''}">${this.icon(gd, 'ci')}<span>${o ? `${o.delivered}/${o.n}` : here || ''}</span><div class="tbtn"><button class="mini" data-act="sord-|${gd}" title="Ship ${SHIP_ORDER_STEP} fewer">−</button><button class="mini" data-act="sord+|${gd}" title="Ship ${SHIP_ORDER_STEP} more">+</button></div></div>`;
+      }).join('')}</div>`;
+      const roles: [PassengerRole, string, string][] = [['carrier', '👤', 'Carriers'], ['soldier', '⚔', 'Soldiers'], ['builder', '🔨', 'Builders']];
+      out += `<div class="prow">${roles.map(([role, emo, name]) => {
+        const n = bookedPassengers(g, b, b.tradeTo, role).length;
+        return `<div class="pcell${n ? ' on' : ''}" title="${name} booked to sail: they wait in this harbour for a ship"><span>${emo} ${name}</span><b>${n}</b><div class="tbtn"><button class="mini" data-act="pax-|${role}" title="Call one back">−</button><button class="mini" data-act="pax+|${role}" title="Send one more">+</button></div></div>`;
+      }).join('')}</div>`;
+      out += `<p class="note">Each <b>+</b> ships ${SHIP_ORDER_STEP} more of a good, or books one more passenger. Carriers bring the goods here; the next free ship takes them over.</p>`;
+    } else if (dests.length) out += `<div class="status">Choose a harbour overseas to send goods and settlers to</div>`;
+    else out += `<div class="status">Found a colony overseas (or build a harbour on another island) to ship to</div>`;
+    out += `<label class="check"><input type="checkbox" data-act="auto"${b.seaAuto ? ' checked' : ''}> Ships keep this land supplied by themselves</label>`;
+    const orders = shipOrders(g, g.local, b.id);
+    if (orders.length) {
+      out += `<div class="list">${orders.map((o) => {
+        const to = g.buildings.get(o.to);
+        return `<div class="lrow orow">${this.icon(o.good, 'ci')}<span>${GOOD_NAMES[o.good]} → ${to ? harbourLabel(to, b.cx, b.cz).replace('Harbour ', '') : '?'}</span><b>${o.delivered}/${o.n}${o.loaded ? ` <small>· ${o.loaded} aboard</small>` : ''} <button class="mini" data-act="scancel|${o.id}" title="Call off what is not yet aboard">✕</button></b></div>`;
+      }).join('')}</div>`;
+    }
+    return out;
+  }
+
   /** Make the building the one that gets everything first, or take that off it again (the P key does the same). */
   togglePriority(b: Building) {
     const g = this.game;
@@ -921,9 +1161,12 @@ export class HUD {
 
   private renderShipInfo(sh: Ship) {
     const g = this.game;
-    let body = `<div class="kv"><span>Doing</span><b>${shipDoing(g, sh)}</b></div>`;
+    const mine = sh.owner === g.local;
+    let body = `<div class="kv"><span>Doing</span><b>${mine || sh.state === 'sinking' ? shipDoing(g, sh) : sh.route ? 'Under sail' : 'At anchor'}</b></div>`;
+    body += `<div class="kv"><span>Hull</span><b>${Math.max(0, Math.round((sh.hp / sh.maxHp) * 100))}%</b></div><div class="bar hp"><i style="width:${Math.max(0, (sh.hp / sh.maxHp) * 100)}%"></i></div>`;
     const n = cargoCount(sh);
-    body += `<div class="kv"><span>Cargo</span><b>${n ? GOODS.filter((gd) => sh.cargo[gd] > 0).map((gd) => `${this.icon(gd, 'ci')}${sh.cargo[gd]}`).join(' ') : '<span class="muted">empty</span>'}</b></div>`;
+    if (sh.kind !== 'war') body += `<div class="kv"><span>Cargo</span><b>${n ? GOODS.filter((gd) => sh.cargo[gd] > 0).map((gd) => `${this.icon(gd, 'ci')}${sh.cargo[gd]}`).join(' ') : '<span class="muted">empty</span>'}</b></div>`;
+    if (!mine && this.gr.orders.ships.length === 0 && warshipsOf(g, g.local) && afloat(sh)) body += `<p class="note">Select one of your warships and right-click this ship to hunt it.</p>`;
     if (sh.passengers.length) {
       const jobs: Record<string, number> = {};
       for (const id of sh.passengers) { const s = g.settlers.get(id); if (s) jobs[JOB_NAMES[s.job]] = (jobs[JOB_NAMES[s.job]] ?? 0) + 1; }
@@ -934,7 +1177,7 @@ export class HUD {
     if (key === this.lastInfoKey) return;
     this.lastInfoKey = key;
     this.info.innerHTML = `
-      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[sh.owner])}">⛵</div><div><h2>${sh.name}</h2><div class="owner">${g.players[sh.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[sh.owner])}">${sh.kind === 'war' ? '⚓' : '⛵'}</div><div><h2>${sh.name}</h2><div class="owner">${sh.kind === 'war' ? 'Warship · ' : ''}${g.players[sh.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
       <div class="ibody">${body}</div>`;
     this.info.querySelector<HTMLElement>('[data-act=close]')!.onclick = () => this.select(null);
   }
@@ -1067,6 +1310,7 @@ export class HUD {
 /** Short description of what a ship is doing, for panels and lists. */
 function shipDoing(g: Game, sh: Ship): string {
   const name = (id: number) => { const b = g.buildings.get(id); return b ? b.def.name.toLowerCase() : 'harbour'; };
+  if (sh.kind === 'war' || sh.state === 'sinking') return warshipDoing(g, sh);
   switch (sh.state) {
     case 'idle': return sh.at ? `Moored at the ${name(sh.at)}` : 'At anchor';
     case 'toLoad': return 'Sailing to take on cargo';

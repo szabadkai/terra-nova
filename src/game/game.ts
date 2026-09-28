@@ -8,7 +8,7 @@ import { generateMap } from './mapgen';
 import { PathFinder } from './path';
 import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, TradeOrder, Tree } from './types';
 import { WATER_LEVEL, World } from './world';
-import { abortPlan, updateSettler } from './settlers';
+import { abortPlan, markSpots, Spots, updateSettler } from './settlers';
 import { updateEconomy, updateBuilding, onBuildingComplete } from './economy';
 import { updateMilitary, recomputeTerritory, updateProjectiles } from './military';
 import { AIController } from './ai';
@@ -57,6 +57,8 @@ export function canPrioritise(b: Building): boolean {
 export class Game {
   world: World;
   path: PathFinder;
+  /** who stands where, so idle settlers each find a spot of their own; rebuilt every step */
+  spots: Spots;
   rng: RNG;
   opts: GameOptions;
   players: PlayerState[] = [];
@@ -104,6 +106,7 @@ export class Game {
     this.rng = new RNG(opts.seed ^ 0x5bd1e995);
     this.world = new World(opts.size, opts.size);
     this.path = new PathFinder(this.world);
+    this.spots = new Spots(this.world.N);
     if (!generate) return;
     const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands });
     this.starts = gen.starts;
@@ -186,7 +189,8 @@ export class Game {
       hq.garrison.push(s.id);
     }
     hq.occupied = true;
-    // scatter carriers around hq
+    // scatter carriers around hq, each on a spot of his own
+    const used = new Set<number>();
     for (const s of this.settlers.values()) {
       if (s.owner !== p || s.hidden) continue;
       const tries = 20;
@@ -194,8 +198,9 @@ export class Game {
         const nx = sx + this.rng.int(-5, 7), ny = sy + this.rng.int(-3, 8);
         if (!w.inBounds(nx, ny)) continue;
         const i = w.idx(nx, ny);
-        if (w.walkable(i)) {
+        if (w.walkable(i) && !w.reserve[i] && !w.tree[i] && !used.has(i)) {
           s.node = i;
+          used.add(i);
           break;
         }
       }
@@ -425,7 +430,7 @@ export class Game {
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,
       dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null, tradeTo: 0,
-      priority: false, damage: 0,
+      priority: false, damage: 0, shipKind: 'trade', seaAuto: true,
     };
   }
 
@@ -642,6 +647,7 @@ export class Game {
     // buildings
     for (const b of this.buildings.values()) updateBuilding(this, b, dt);
     // settlers
+    markSpots(this);
     for (const s of this.settlers.values()) updateSettler(this, s, dt);
     // animals
     this.updateAnimals(dt);

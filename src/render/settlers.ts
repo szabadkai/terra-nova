@@ -1,5 +1,6 @@
 // Instanced settler renderer: chibi-proportioned people assembled from posed parts,
-// with per-settler looks (hair, skin, clothes), job hats and aprons, blinking and idle fidgets.
+// with per-settler looks (hair, skin, clothes), job hats and aprons, blinking and idle fidgets;
+// settlers with nothing to do take up a pastime (idle.ts).
 import * as THREE from 'three';
 import { GOODS, Good, Job } from '../game/defs';
 import type { Game } from '../game/game';
@@ -10,6 +11,8 @@ import { patchMaterial } from './shaderPatch';
 import { BANNER_COLORS } from './materials';
 import { HAIR_STYLES, HATS, HairStyle, Hat, RIG, buildSettlerGeos } from './settlerModels';
 import { LOD_PIXELS, LodPair, lodView, simplify } from './lod';
+import { commitInstances } from './instancing';
+import { IdleDirector, Pose, resetPose } from './idle';
 
 /** Settlers are drawn a little larger than life (as in the original) so they read well. */
 const SCALE = 1.3;
@@ -71,6 +74,44 @@ class Batch {
   }
   finish() {
     this.pair.finish();
+  }
+}
+
+/** A single-level instanced part (the pastimes' props). */
+class PropBatch {
+  mesh: THREE.InstancedMesh;
+  n = 0;
+  private c2: THREE.InstancedBufferAttribute | null = null;
+  constructor(geo: THREE.BufferGeometry, mat: THREE.Material, readonly cap: number, tinted = true) {
+    if (tinted) {
+      geo = geo.clone();
+      this.c2 = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+      this.c2.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('instanceColor2', this.c2);
+    }
+    const m = new THREE.InstancedMesh(geo, mat, cap);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (tinted) {
+      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3);
+      m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    }
+    m.count = 0;
+    m.visible = false;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.frustumCulled = false;
+    this.mesh = m;
+  }
+  add(mat: THREE.Matrix4, c1?: THREE.Color, c2?: THREE.Color) {
+    if (this.n >= this.cap) return;
+    const i = this.n++;
+    this.mesh.setMatrixAt(i, mat);
+    if (c1 && this.mesh.instanceColor) this.mesh.setColorAt(i, c1);
+    if (c2 && this.c2) this.c2.setXYZ(i, c2.r, c2.g, c2.b);
+  }
+  finish() {
+    commitInstances(this.mesh, this.n, this.c2);
+    this.n = 0;
   }
 }
 
@@ -168,20 +209,8 @@ function makeLook(s: Settler): Look {
 }
 
 // ------------------------------------------------------------------ poses
-interface Pose {
-  legL: number; legR: number;
-  armL: number; armR: number; splayL: number; splayR: number;
-  lean: number; roll: number; twist: number; bob: number; squash: number; lie: number;
-  nod: number; yaw: number; tilt: number;
-  toolRot: number;
-}
-
 function pose(s: Settler, ph: number, moving: boolean, time: number, p: Pose): Pose {
-  p.legL = p.legR = p.armL = p.armR = 0;
-  p.splayL = p.splayR = 0.2;
-  p.lean = p.roll = p.twist = p.bob = p.squash = p.lie = 0;
-  p.nod = p.yaw = p.tilt = 0;
-  p.toolRot = 0;
+  resetPose(p);
   const t = s.animT;
   const sd = s.seed;
   // goods ride on the right shoulder, steadied by the raised right hand, like in the original
@@ -337,7 +366,9 @@ export class SettlersRenderer {
   private carried = new Map<Good, Batch>();
   private phase = new Map<number, number>();
   private looks = new Map<number, Look>();
-  private P: Pose = {} as Pose;
+  private P: Pose = resetPose({} as Pose);
+  /** pastimes for settlers with nothing to do */
+  idle: IdleDirector;
   // scratch
   private mBase = new THREE.Matrix4();
   private mBody = new THREE.Matrix4();
@@ -379,6 +410,9 @@ export class SettlersRenderer {
     const goodMat = simpleMat(0.7, 0, 'good');
     for (const gd of GOODS) this.carried.set(gd, new Batch(goodGeos[gd], goodMat, 800, false));
     for (const b of this.all()) this.group.add(...b.pair.meshes);
+    // the pastimes' props (fiddles, balls) are few and small: one level of detail
+    this.idle = new IdleDirector(game, SCALE, (geo, cap, tinted) => new PropBatch(geo, mat, cap, tinted));
+    this.group.add(this.idle.group);
   }
 
   private all(): Batch[] {
@@ -410,6 +444,7 @@ export class SettlersRenderer {
     this.visibleList.length = 0;
     if (this.playerCols.length !== g.players.length) this.playerCols = g.players.map((p) => new THREE.Color(BANNER_COLORS[p.id] ?? p.color));
     const P = this.P;
+    this.idle.begin(camera);
     let count = 0;
     for (const s of g.settlers.values()) {
       if ((s.hidden && !s.aboard) || s.job === 'donkey' || s.job === 'catapult') continue;
@@ -430,12 +465,16 @@ export class SettlersRenderer {
       if (moving) ph += dt * Math.PI * 2 * 1.6 / Math.max(0.3, s.stepDur * 1.1);
       this.phase.set(s.id, ph);
       pose(s, ph, moving, time, P);
+      const heading = this.idle.apply(s, P, moving, y0);
 
       // --- skeleton
       const sink = s.dead ? Math.max(0, s.deadT - 3) * 0.15 : 0;
-      this.q.setFromEuler(this.e.set(0, s.heading, 0));
+      this.q.setFromEuler(this.e.set(0, heading + P.spin, 0));
       this.mBase.compose(this.v.set(s.x, y0 + P.bob - sink, s.z), this.q, this.sc.set(SCALE * (1 + P.squash * 0.5), SCALE * (1 - P.squash), SCALE * (1 + P.squash * 0.5)));
+      if (P.shiftX) this.mBase.multiply(this.mA.makeTranslation(P.shiftX, 0, 0));
+      if (P.flip || P.wheel) this.rotAbout(this.mBase, 0, P.pivot, 0, P.flip, 0, P.wheel);
       if (P.lie > 0) this.mBase.multiply(this.mA.makeRotationX(-P.lie * Math.PI / 2 * 0.95));
+      if (P.prone > 0) this.mBase.multiply(this.mA.makeRotationX(P.prone));
       const body = this.mBody.copy(this.mBase);
       if (P.twist) body.multiply(this.mA.makeRotationY(P.twist));
       if (P.lean || P.roll) this.rotAbout(body, 0, RIG.hipY, 0, P.lean, 0, P.roll);
@@ -451,8 +490,9 @@ export class SettlersRenderer {
       const sleeve = this.cSleeve.copy(tunic);
 
       // --- legs
-      for (const [side, ang] of [[-1, P.legL], [1, P.legR]] as const) {
-        this.mB.copy(this.mBase).multiply(this.mA.makeTranslation(side * RIG.hipX, RIG.hipY, 0)).multiply(this.mA.makeRotationX(ang));
+      for (const [side, ang, spl] of [[-1, P.legL, P.legSpL], [1, P.legR, P.legSpR]] as const) {
+        this.mB.copy(this.mBase).multiply(this.mA.makeTranslation(side * RIG.hipX, RIG.hipY, 0));
+        this.mB.multiply(spl ? this.mA.makeRotationFromEuler(this.e.set(ang, 0, side * spl)) : this.mA.makeRotationX(ang));
         this.legs.add(lv, this.mB, L.trousers);
       }
       // --- torso, apron
@@ -461,7 +501,7 @@ export class SettlersRenderer {
       // --- head, eyes, hat
       this.heads.get(L.hair)!.add(lv, head, L.skin, L.hairCol);
       const tb = (time + L.blinkO) % L.blinkP;
-      const blink = s.dead ? 0.12 : tb < 0.14 ? Math.max(0.12, Math.abs(tb - 0.07) / 0.07) : 1;
+      const blink = Math.min(P.eyes, s.dead ? 0.12 : tb < 0.14 ? Math.max(0.12, Math.abs(tb - 0.07) / 0.07) : 1);
       this.mB.copy(head);
       if (blink < 1) this.mB.multiply(this.mA.makeTranslation(0, RIG.eyeY, 0)).multiply(this.mA.makeScale(1, blink, 1)).multiply(this.mA.makeTranslation(0, -RIG.eyeY, 0));
       this.eyes.add(lv, this.mB);
@@ -472,15 +512,17 @@ export class SettlersRenderer {
         this.hats.get(L.hat)!.add(lv, head, hc, pc);
       }
       // --- arms
-      for (const [side, ang, splay, out] of [[-1, P.armL, P.splayL, this.mArmL], [1, P.armR, P.splayR, this.mArmR]] as const) {
+      for (const [side, ang, splay, reach, out] of [[-1, P.armL, P.splayL, P.reachL, this.mArmL], [1, P.armR, P.splayR, P.reachR, this.mArmR]] as const) {
         out.copy(body).multiply(this.mA.makeTranslation(side * RIG.shoulderX, RIG.shoulderY, 0));
         out.multiply(this.mA.makeRotationFromEuler(this.e.set(ang, 0, side * splay)));
+        if (reach !== 1) out.multiply(this.mA.makeScale(1, reach, 1));
         this.arms.add(lv, out, sleeve, L.skin);
       }
       // --- tool
       let tool = TOOL[s.job];
       if (s.job === 'waterman' && s.carrying !== 'water') tool = undefined;
       if (s.carrying && s.job !== 'waterman') tool = undefined;
+      if (this.idle.hidesTool) tool = undefined;
       if (tool) {
         const hand = tool === 'bow' ? this.mArmL : this.mArmR;
         const m = this.mB.copy(hand).multiply(this.mA.makeTranslation(0, RIG.handY, 0.01));
@@ -493,7 +535,7 @@ export class SettlersRenderer {
         }
         this.tools.get(tool)!.add(lv, m);
       }
-      if (s.job === 'swordsman') {
+      if (s.job === 'swordsman' && !this.idle.hidesShield) {
         const m = this.mB.copy(this.mArmL).multiply(this.mA.makeTranslation(-0.05, -0.11, 0.02));
         m.multiply(this.mA.makeRotationY(-1.05));
         this.shields.add(lv, m, pc);
@@ -505,8 +547,10 @@ export class SettlersRenderer {
         else m.multiply(this.mA.makeTranslation(0, 0.02, 0));
         this.carried.get(s.carrying)!.add(lv, m);
       }
+      this.idle.props(s, body, this.mArmL);
     }
     for (const b of this.all()) b.finish();
+    this.idle.end();
     if (this.phase.size > g.settlers.size + 500) {
       for (const id of this.phase.keys()) if (!g.settlers.has(id)) { this.phase.delete(id); this.looks.delete(id); }
     }

@@ -11,7 +11,7 @@ const seed = Number(seedS), level = Number(levelS), islands = islandsS !== '0';
 const g = new Game({ size: 160, seed, players: 2, aiLevel: level, islands });
 if (mode === 'aivai') g.ai.push(new AIController(g, 0, level));
 const limit = (mode === 'aivai' ? 150 : 90) * 60;
-let firstAttack = -1, attacks = 0, captures = 0, staked = 0;
+let firstAttack = -1, attacks = 0, captures = 0, staked = 0, sunk = 0, warships = 0;
 const t0 = Date.now();
 for (let s = 0; s < limit; s++) {
   g.update(1);
@@ -19,6 +19,8 @@ for (let s = 0; s < limit; s++) {
     if (e.type === 'attack') { attacks++; if (firstAttack < 0 && (mode === 'aivai' || e.owner === 1)) firstAttack = g.time; }
     if (e.type === 'captured') captures++;
     if (e.type === 'staked') staked++;
+    if (e.type === 'sinking') sunk++;
+    if (e.type === 'launch' && g.ships.get(e.s ?? 0)?.kind === 'war') warships++;
   }
   g.events.length = 0;
   if (g.over) break;
@@ -27,7 +29,7 @@ const out = {
   mode, seed, level, islands,
   firstAttackMin: firstAttack < 0 ? null : Math.round(firstAttack / 6) / 10,
   endMin: g.over ? Math.round(g.time / 6) / 10 : null,
-  winner: g.winner, attacks, captures, staked,
+  winner: g.winner, attacks, captures, staked, sunk, warships,
   soldiers: g.players.map((p) => g.population(p.id).soldiers),
   buildings: g.players.map((p) => g.countBuildings(p.id)),
   ms: Date.now() - t0,

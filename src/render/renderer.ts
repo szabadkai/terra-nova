@@ -13,6 +13,7 @@ import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, Projecti
 import { SettlersRenderer } from './settlers';
 import { DonkeysRenderer } from './donkeys';
 import { CatapultsRenderer } from './catapults';
+import { PigsRenderer } from './pigs';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
@@ -31,6 +32,7 @@ import { SignsRenderer } from './signs';
 import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
 import { OrdersFX } from './orders';
+import { Birds } from './birds';
 import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
@@ -67,65 +69,6 @@ const LEAF_FALL: Record<number, [number, number, number][]> = {
   4: [[0.72, 0.16, 0.05], [0.8, 0.4, 0.08], [0.5, 0.2, 0.08]],
 };
 
-class Birds {
-  mesh: THREE.InstancedMesh;
-  birds: { x: number; y: number; z: number; vx: number; vz: number; ph: number; flock: number }[] = [];
-  flocks: { x: number; z: number; tx: number; tz: number }[] = [];
-  constructor(private W: number, private H: number) {
-    const geo = new THREE.BufferGeometry();
-    // simple V bird: body + two wings (wing verts tagged by x for vertex flap)
-    const v = [
-      0, 0, 0.12, -0.26, 0.0, -0.04, 0, 0, -0.06,
-      0, 0, 0.12, 0, 0, -0.06, 0.26, 0.0, -0.04,
-    ];
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
-    geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 0.9, side: THREE.DoubleSide });
-    patchMaterial(mat, {
-      key: 'bird', fog: true,
-      vertexBegin: `
-        #ifdef USE_INSTANCING
-        float ph = instanceMatrix[3][0] * 1.7 + instanceMatrix[3][2] * 1.3;
-        #else
-        float ph = 0.0;
-        #endif
-        transformed.y += abs(transformed.x) * sin(uTime * 11.0 + ph) * 0.9;
-      `,
-    });
-    this.mesh = new THREE.InstancedMesh(geo, mat, 120);
-    this.mesh.frustumCulled = false;
-    this.mesh.castShadow = true;
-    for (let f = 0; f < 4; f++) {
-      const x = Math.random() * W, z = Math.random() * H;
-      this.flocks.push({ x, z, tx: Math.random() * W, tz: Math.random() * H });
-      const n = 8 + Math.floor(Math.random() * 10);
-      for (let i = 0; i < n; i++) this.birds.push({ x: x + Math.random() * 4, y: 9 + Math.random() * 3, z: z + Math.random() * 4, vx: 0, vz: 0, ph: Math.random() * 6, flock: f });
-    }
-  }
-  update(dt: number, night: number) {
-    for (const f of this.flocks) {
-      const dx = f.tx - f.x, dz = f.tz - f.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 5) { f.tx = Math.random() * this.W; f.tz = Math.random() * this.H; }
-      f.x += (dx / d) * dt * 3.2;
-      f.z += (dz / d) * dt * 3.2;
-    }
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
-    let n = 0;
-    for (const b of this.birds) {
-      const f = this.flocks[b.flock];
-      const ox = Math.sin(b.ph + performance.now() * 0.0003) * 2.5, oz = Math.cos(b.ph * 1.3 + performance.now() * 0.00025) * 2.5;
-      const ax = (f.x + ox - b.x) * 1.5 - b.vx, az = (f.z + oz - b.z) * 1.5 - b.vz;
-      b.vx += ax * dt; b.vz += az * dt;
-      b.x += b.vx * dt; b.z += b.vz * dt;
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(b.vx, b.vz));
-      m.compose(p.set(b.x, b.y + Math.sin(b.ph + b.x * 0.3) * 0.3, b.z), q, s);
-      this.mesh.setMatrixAt(n++, m);
-    }
-    commitInstances(this.mesh, night > 0.6 ? 0 : n);
-  }
-}
-
 export class GameRenderer {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
@@ -141,6 +84,8 @@ export class GameRenderer {
   settlers: SettlersRenderer;
   donkeys: DonkeysRenderer;
   catapults: CatapultsRenderer;
+  /** the herds in the pig farms' pens and the pigs waiting at the slaughterhouses */
+  pigs: PigsRenderer;
   animals: AnimalsRenderer;
   arrows: ProjectilesRenderer;
   piles: PilesRenderer;
@@ -257,16 +202,19 @@ export class GameRenderer {
     this.scene.add(this.buildings.group);
     this.lanterns = new LanternsRenderer(game, this.buildings);
     this.scene.add(this.lanterns.group);
+    this.pigs = new PigsRenderer(game, this.buildings, (n, x, z, v) => this.sound?.(n, x, z, v));
+    this.scene.add(this.pigs.group);
     this.particles = new Particles();
     this.scene.add(this.particles.group);
+    this.settlers.idle.fx = this.particles;
     this.ships = new ShipsRenderer(game, this.piles, this.particles);
     this.scene.add(this.ships.group);
     this.signs = new SignsRenderer(game);
     this.scene.add(this.signs.group);
     this.rain = new Rain(game.world.W, game.world.H);
     this.scene.add(this.rain.mesh);
-    this.birds = new Birds(game.world.W, game.world.H);
-    this.scene.add(this.birds.mesh);
+    this.birds = new Birds(game.world);
+    this.scene.add(this.birds.group);
     this.borders = new BordersRenderer(game);
     this.scene.add(this.borders.posts, this.borders.caps);
 
@@ -323,6 +271,8 @@ export class GameRenderer {
         extra.add(mb.build((k) => { let m = clip.get(k); if (!m) { m = getClipMaterial(k); clip.set(k, m); } return m; }));
       }
     }
+    const ships = this.ships.samples(this.game.players.map((p) => p.id));
+    extra.add(ships);
     this.scene.add(extra);
     this.demolition.makePools();
     const hidden: THREE.Object3D[] = [];
@@ -340,6 +290,8 @@ export class GameRenderer {
       for (const o of hidden) o.visible = false;
       this.scene.remove(extra);
       for (const m of clip.values()) m.dispose();
+      // (the sails' own cloth geometry; everything else is shared)
+      ships.traverse((o) => { if ((o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry.userData.sail) (o as THREE.Mesh).geometry.dispose(); });
     }
   }
 
@@ -405,6 +357,7 @@ export class GameRenderer {
     this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
     const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
     this.particles.setScale(pxScale);
+    this.settlers.idle.setScale(pxScale);
     this.rain.setScale(w * pr, h * pr, pxScale, pr);
   }
 
@@ -731,7 +684,9 @@ export class GameRenderer {
         case 'donkey': P.sparkle(x, y + 0.6, z, 10, [1.3, 1.2, 0.9]); P.dust(x, y, z, 4); snd('pop', 0.5); break;
         case 'machine': P.sparkle(x, y + 0.9, z, 24, [1.6, 1.3, 0.7]); P.dust(x, y, z, 8); snd('built', 0.7); snd('creak', 0.7); break;
         case 'catapult': P.dust(x, y + 0.3, z, 3, [0.6, 0.55, 0.45]); snd('thump'); break;
-        case 'stonefall': P.dust(x, y, z, 10, [0.5, 0.45, 0.38]); snd('crash', 0.55); break;
+        case 'stonefall':
+          if (y < WATER_LEVEL) { this.waterColumn(x, z, 0.8); snd('splash', 0.8); break; }
+          P.dust(x, y, z, 10, [0.5, 0.45, 0.38]); snd('crash', 0.55); break;
         case 'siegehit': P.dust(x, y + 0.6, z, 18, [0.58, 0.54, 0.48]); P.sparks(x, y + 0.7, z, 8); P.smoke(x, y + 1, z, 0.4, 0.8); snd('crash'); this.cam.shake = Math.max(this.cam.shake, 0.35); break;
         case 'razed': P.dust(x, y + 0.5, z, 30, [0.55, 0.5, 0.45]); P.sparks(x, y + 1, z, 12); snd('crash'); snd('horn', 0.5); this.cam.shake = Math.max(this.cam.shake, 0.6); break;
         case 'caravan': P.dust(x, y, z, 3, [0.6, 0.55, 0.45]); snd('pop', 0.35); break;
@@ -751,8 +706,37 @@ export class GameRenderer {
           break;
         }
         case 'sink': for (let k = 0; k < 4; k++) P.splash(x + (Math.random() - 0.5), WATER_LEVEL, z + (Math.random() - 0.5)); snd('splash'); break;
+        // ---- naval warfare
+        case 'broadside': P.dust(x, WATER_LEVEL + 0.9, z, 3, [0.62, 0.58, 0.5]); snd('thump'); snd('creak', 0.5); break;
+        case 'shiphit':
+          if (e.kind === 'arrow') { P.hit(x, WATER_LEVEL + 0.6, z); snd('hit', 0.35); break; }
+          P.chips(x, WATER_LEVEL + 0.1, z); P.chips(x + 0.2, WATER_LEVEL + 0.2, z - 0.2);
+          P.sparks(x, WATER_LEVEL + 0.5, z, 5); P.smoke(x, WATER_LEVEL + 0.5, z, 0.5, 0.6); P.splash(x + 0.4, WATER_LEVEL, z + 0.3);
+          snd('crash', 0.8); snd('creak', 0.6);
+          this.cam.shake = Math.max(this.cam.shake, 0.15);
+          break;
+        case 'seamiss': this.waterColumn(x, z, 1); snd('splash', 0.9); break;
+        case 'arrowsplash': P.emit({ x, y: WATER_LEVEL + 0.02, z, vy: 0.9, spread: 0.3, life: 0.4, size: 0.04, color: [0.85, 0.92, 1], alpha: 0.8, gravity: 6, count: 4, kind: 1 }); break;
+        case 'sinking':
+          this.waterColumn(x, z, 0.8); P.smoke(x, WATER_LEVEL + 0.8, z, 0.8, 1.2); P.sparks(x, WATER_LEVEL + 0.8, z, 12);
+          snd('crash'); snd('creak'); snd('splash');
+          this.cam.shake = Math.max(this.cam.shake, 0.3);
+          break;
+        case 'wreck':
+          for (let k = 0; k < 6; k++) P.splash(x + (Math.random() - 0.5) * 2, WATER_LEVEL, z + (Math.random() - 0.5) * 2);
+          P.emit({ x, y: WATER_LEVEL + 0.02, z, spread: 1.6, life: 6, size: 0.09, color: [0.4, 0.3, 0.2], alpha: 0.9, drag: 3, count: 14, kind: 1 });
+          snd('splash', 0.7);
+          break;
       }
     }
+  }
+
+  /** A stone plunging into the sea throws up a column of spray. */
+  private waterColumn(x: number, z: number, s: number) {
+    const P = this.particles;
+    P.emit({ x, y: WATER_LEVEL + 0.05, z, vy: 3.6 * s, spread: 0.25, vspread: 1.2, life: 1.1, size: 0.09, color: [0.9, 0.95, 1], alpha: 0.9, gravity: 7, drag: 0.3, count: 22, kind: 1 });
+    P.emit({ x, y: WATER_LEVEL + 0.4, z, vy: 1.4 * s, spread: 0.2, life: 1.4, size: 0.35, grow: 2.2, color: [0.92, 0.96, 1], alpha: 0.4, gravity: 1.5, drag: 1.5, count: 4 });
+    P.splash(x, WATER_LEVEL, z);
   }
 
   private continuousEffects(dt: number) {
@@ -966,15 +950,21 @@ export class GameRenderer {
     this.piles.begin();
     this.buildings.update(dt, this.time);
     this.lanterns.update(dt);
-    this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z);
+    const hl = this.ships.highlight;
+    hl.clear();
+    for (const id of this.orders.ships) hl.add(id);
+    if (this.selected?.kind === 'ship') hl.add(this.selected.id);
+    this.ships.update(dt, this.time, this.cam.target.x, this.cam.target.z, this.cam.camera);
     this.signs.update(this.time);
     this.piles.end();
     const WU = this.water.uniforms;
     WU.uWakeN.value = this.ships.wakeCount;
     for (let k = 0; k < this.ships.wakeCount; k++) (WU.uWakes.value as THREE.Vector4[])[k].copy(this.ships.wakes[k]);
+    this.settlers.idle.rain = this.precip === 'rain' ? this.rainAmount : 0;
     this.settlers.update(dt, this.time, this.cam.camera);
     this.donkeys.update(dt, this.time, this.cam.camera);
     this.catapults.update(dt, this.time, this.cam.camera);
+    this.pigs.update(dt, this.time, this.cam.camera);
     this.animals.update(dt, this.time);
     this.arrows.update();
     this.birds.update(dt, night);

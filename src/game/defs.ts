@@ -205,6 +205,19 @@ export const SHIP_BOARDS = 10;
 export const SHIP_CARGO = 20;
 export const SHIP_PASSENGERS = 12;
 export const MAX_SHIPS = 8;
+export const SHIP_HP = 60;
+
+/** Warships: boards and iron that go into one (every fourth plank wants an iron fitting), how many a
+ *  realm keeps, and the catapult on the foredeck — its reach, the seconds to wind it and what a stone
+ *  does to a hull. Tower archers reach 9, so a warship shelling a stronghold can stand off. */
+export const WARSHIP_BOARDS = 12;
+export const WARSHIP_IRON = 3;
+export const MAX_WARSHIPS = 6;
+export const WARSHIP_HP = 120;
+export const WARSHIP_RANGE = 10;
+export const WARSHIP_RELOAD = 4.5;
+export const WARSHIP_SIGHT = 14;
+export const SHIP_STONE_DAMAGE = 20;
 
 export const PLAYER_COLORS = [0xc8342a, 0x2f6fd0, 0xe0b020, 0x8a3fd0];
 export const PLAYER_NAMES = ['Red Kingdom', 'Blue Empire', 'Golden Realm', 'Violet Dynasty'];

@@ -46,13 +46,17 @@ function release(g: Game, s: Settler) {
   s.target = 0;
 }
 
-/** Walkable spots around (x, z), nearest first, for a group to stand on. */
-function formation(g: Game, x: number, z: number, n: number, region: number): number[] {
+/** Walkable spots around (x, z), nearest first, for a group to stand on, clear of other guards' posts. */
+function formation(g: Game, x: number, z: number, men: Settler[], region: number): number[] {
   const w = g.world;
+  const n = men.length;
+  const ids = new Set(men.map((s) => s.id));
+  const posts = new Set<number>();
+  for (const o of g.settlers.values()) if (o.sstate === 'hold' && o.order >= 0 && !o.dead && isCombatant(o) && !ids.has(o.id)) posts.add(o.order);
   const out: { i: number; d: number }[] = [];
   const r = Math.ceil(Math.sqrt(n) * 1.3) + 2;
   w.forRadius(x, z, r, (i, _x, _y, d2) => {
-    if (!w.walkable(i) || w.region[i] !== region || w.building[i] || w.reserve[i]) return;
+    if (!w.walkable(i) || w.region[i] !== region || w.building[i] || w.reserve[i] || posts.has(i)) return;
     out.push({ i, d: d2 });
   });
   out.sort((a, b) => a.d - b.d);
@@ -78,7 +82,7 @@ export function orderMove(g: Game, owner: number, ids: Iterable<number>, x: numb
   const men = pick(g, owner, ids).filter((s) => w.region[s.inside ? (g.buildings.get(s.inside)?.door ?? s.node) : s.node] === region)
     .sort((a, b) => rank(a) - rank(b));
   if (!men.length) return 0;
-  const spots = formation(g, x, z, men.length, region);
+  const spots = formation(g, x, z, men, region);
   if (!spots.length) return 0;
   men.forEach((s, k) => {
     release(g, s);

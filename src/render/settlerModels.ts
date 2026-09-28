@@ -3,7 +3,7 @@
 // tint 0 keeps the vertex colour, 1 multiplies by instanceColor, 2 by instanceColor2.
 // Adding METAL or GLOSS switches the surface to shiny metal or glossy (eyes, lamp glass).
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export const RAW = 0, T1 = 1, T2 = 2, METAL = 3, GLOSS = 6;
 
@@ -455,6 +455,110 @@ function buildHat(hat: Hat): THREE.BufferGeometry {
     }
   }
   return merge(parts);
+}
+
+// ------------------------------------------------------------------ pastime props (see idle.ts)
+function box(w: number, h: number, d: number, x: number, y: number, z: number) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  g.translate(x, y, z);
+  return g;
+}
+
+/** A fiddle lying along +y (scroll up), its top facing +z, the body centred on the origin. */
+function buildViolin() {
+  // one side of the outline: lower bout, waist, upper bout
+  const half: [number, number][] = [
+    [0, -0.066], [0.026, -0.062], [0.041, -0.044], [0.04, -0.02], [0.027, -0.004], [0.025, 0.01],
+    [0.033, 0.029], [0.03, 0.047], [0.013, 0.056], [0, 0.058],
+  ];
+  const pts = [...half, ...half.slice(1, -1).reverse().map(([x, y]) => [-x, y] as [number, number])];
+  const shape = new THREE.Shape();
+  shape.moveTo(pts[0][0], pts[0][1]);
+  shape.splineThru(pts.slice(1).concat([pts[0]]).map(([x, y]) => new THREE.Vector2(x, y)));
+  const body = new THREE.ExtrudeGeometry(shape, { depth: 0.016, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.003, bevelSegments: 2, curveSegments: 6 });
+  body.translate(0, 0, -0.008);
+  const varnish = lin(0xb4561a), edge = lin(0x6a2a0c);
+  part(body, RAW + GLOSS, (x, y, z) => {
+    const k = Math.abs(z) > 0.009 ? 1 : 0.7; // ribs a shade darker than the plates
+    const r = Math.min(1, Math.hypot(x / 0.042, y / 0.066));
+    const c = r > 0.86 ? edge : varnish;
+    return [c[0] * k, c[1] * k, c[2] * k];
+  });
+  body.clearGroups();
+  const plates = mergeVertices(body); // extrusions come unindexed; the other parts are indexed
+  const ebony = lin(0x1c1410), wood = lin(0x8a4a1c);
+  const neck = part(box(0.012, 0.068, 0.011, 0, 0.09, 0.002), RAW, wood);
+  const board = part(box(0.014, 0.1, 0.005, 0, 0.056, 0.0148), RAW + GLOSS, ebony);
+  const pegbox = part(box(0.011, 0.024, 0.012, 0, 0.135, 0.001), RAW, wood);
+  const scroll = part(ell(0.009, 0.009, 0.01, 0, 0.152, 0.002, 8, 6), RAW, wood);
+  const pegs = part(box(0.034, 0.004, 0.004, 0, 0.133, 0.002), RAW, ebony);
+  const bridge = part(box(0.022, 0.004, 0.009, 0, -0.012, 0.016), RAW, lin(0xe0c89a));
+  const tail = part(box(0.016, 0.03, 0.004, 0, -0.045, 0.0138), RAW + GLOSS, ebony);
+  const chin = part(ell(0.018, 0.012, 0.005, 0.012, -0.056, 0.013, 8, 5), RAW, ebony);
+  const strings = part(box(0.007, 0.16, 0.0014, 0, 0.042, 0.019), RAW + METAL, lin(0xd8d4c8));
+  return merge([plates, neck, board, pegbox, scroll, pegs, bridge, tail, chin, strings]);
+}
+
+/** A fiddle bow along +y from the frog (origin) to the tip, its hair on the +z side. */
+function buildBow() {
+  const stick = part(new THREE.CylinderGeometry(0.0032, 0.0042, 0.3, 5).translate(0, 0.15, 0), RAW, lin(0x5a2a10));
+  const hair = part(box(0.006, 0.28, 0.0016, 0, 0.152, 0.009), RAW, lin(0xf2ecdc));
+  const frog = part(box(0.008, 0.024, 0.012, 0, 0.018, 0.005), RAW + GLOSS, lin(0x1c1410));
+  const tip = part(box(0.006, 0.01, 0.011, 0, 0.297, 0.005), RAW, lin(0xf0ece0));
+  return merge([stick, hair, frog, tip]);
+}
+
+/** A wooden fife along +x, blown at the origin, finger holes on top (+y). */
+function buildFlute() {
+  const tube = new THREE.CylinderGeometry(0.0078, 0.0072, 0.27, 8);
+  tube.rotateZ(-PI / 2);
+  tube.translate(0.1, 0, 0);
+  const wood = lin(0xc89452), band = lin(0x5a3418);
+  part(tube, RAW, (x) => (x < -0.022 || x > 0.222 || Math.abs(x - 0.06) < 0.006 ? band : wood));
+  const holes = [0.012, 0.085, 0.105, 0.125, 0.15, 0.17, 0.19].map((x, i) =>
+    part(ell(i ? 0.0034 : 0.0048, 0.0014, i ? 0.0034 : 0.0034, x, 0.0072, 0, 6, 4), RAW, lin(0x1a100a)));
+  return merge([tube, ...holes]);
+}
+
+/** A leather ball stitched from red and cream panels. */
+function buildBall() {
+  const g = ell(0.05, 0.05, 0.05, 0, 0, 0, 14, 10);
+  const red = lin(0xc4382a), cream = lin(0xeee0bc);
+  return part(g, RAW, (x, y, z) => ((Math.floor((Math.atan2(x, z) / PI + 1) * 3) + (y > 0 ? 1 : 0)) & 1 ? red : cream));
+}
+
+function buildJuggleBall() {
+  return part(ell(0.034, 0.034, 0.034, 0, 0, 0, 10, 8), T1, (_x, y) => {
+    const k = 0.85 + 0.2 * smooth(-0.02, 0.02, y);
+    return [k, k, k];
+  });
+}
+
+function buildSnowball() {
+  const g = ell(0.033, 0.033, 0.033, 0, 0, 0, 10, 8);
+  const p = g.getAttribute('position') as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const k = 1 + 0.12 * Math.sin(p.getX(i) * 160 + p.getY(i) * 90) * Math.sin(p.getZ(i) * 130);
+    p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k);
+  }
+  g.computeVertexNormals();
+  return part(g, RAW, [0.94, 0.97, 1.0]);
+}
+
+export interface PropGeos {
+  violin: THREE.BufferGeometry;
+  bow: THREE.BufferGeometry;
+  flute: THREE.BufferGeometry;
+  ball: THREE.BufferGeometry;
+  jball: THREE.BufferGeometry;
+  snowball: THREE.BufferGeometry;
+}
+
+export function buildPropGeos(): PropGeos {
+  return {
+    violin: buildViolin(), bow: buildBow(), flute: buildFlute(), ball: buildBall(),
+    jball: buildJuggleBall(), snowball: buildSnowball(),
+  };
 }
 
 export interface SettlerGeos {

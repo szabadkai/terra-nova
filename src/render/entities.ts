@@ -5,7 +5,7 @@ import type { Game } from '../game/game';
 import type { Tree } from '../game/types';
 import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
-import { buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
+import { DEER_HEAD, DEER_HIPS, DEER_KNEE, DEER_NECK, buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
@@ -642,49 +642,115 @@ export class GrassRenderer {
 }
 
 // ------------------------------------------------------------------ deer
+/** What the renderer keeps about a deer that the game does not: how it is turned, where it is
+ * in its stride, what its neck and head are doing, and whether it is a stag, a hind or a fawn. */
+interface DeerLook { h: number; ph: number; neck: number; head: number; yaw: number; kind: 0 | 1 | 2; size: number; seed: number }
+
+const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+/** a lateral walk: left fore, right fore, left hind, right hind a quarter stride apart */
+const DEER_GAIT = [Math.PI / 2, Math.PI * 1.5, 0, Math.PI];
+
 export class AnimalsRenderer {
   group = new THREE.Group();
   private body: THREE.InstancedMesh;
-  private legs: THREE.InstancedMesh;
-  private phase = new Map<number, number>();
+  private fawn: THREE.InstancedMesh;
+  private neck: THREE.InstancedMesh;
+  private head: THREE.InstancedMesh;
+  private stag: THREE.InstancedMesh;
+  private upper: THREE.InstancedMesh;
+  private lower: THREE.InstancedMesh;
+  private looks = new Map<number, DeerLook>();
+  private base = new THREE.Matrix4();
+  private m = new THREE.Matrix4();
+  private m2 = new THREE.Matrix4();
+  private r = new THREE.Matrix4();
   constructor(private game: Game) {
     const g = buildDeerGeos();
     const mat = vcMat({ roughness: 0.85 });
     this.body = inst(g.body, mat, 600);
-    this.legs = inst(g.leg, mat, 2400);
-    this.group.add(this.body, this.legs);
+    this.fawn = inst(g.fawn, mat, 600);
+    this.neck = inst(g.neck, mat, 600);
+    this.head = inst(g.head, mat, 600);
+    this.stag = inst(g.stag, mat, 600);
+    this.upper = inst(g.upper, mat, 2400);
+    this.lower = inst(g.lower, mat, 2400);
+    this.group.add(this.body, this.fawn, this.neck, this.head, this.stag, this.upper, this.lower);
   }
+
+  private look(id: number, herd: number, heading: number): DeerLook {
+    let L = this.looks.get(id);
+    if (!L) {
+      const k = hash2(id, herd, 17);
+      const kind = k < 0.2 ? 1 : k < 0.4 ? 2 : 0;
+      L = { h: heading, ph: hash2(id, 3, 5) * 6, neck: 1.2, head: -0.3, yaw: 0, kind, size: kind === 1 ? 1.08 : kind === 2 ? 0.62 : 0.94 + hash2(id, 9, 2) * 0.08, seed: hash2(id, 7, 1) * 100 };
+      this.looks.set(id, L);
+    }
+    return L;
+  }
+
   update(dt: number, time: number) {
     const g = this.game;
     const w = g.world;
-    let nb = 0, nl = 0;
-    const base = new THREE.Matrix4(), m = new THREE.Matrix4(), r = new THREE.Matrix4();
+    dt = Math.min(dt, 0.1);
+    let nb = 0, nf = 0, nn = 0, nh = 0, ns = 0, nu = 0, nl = 0;
+    const ease = (v: number, t: number, k: number) => v + (t - v) * Math.min(1, dt * k);
     for (const a of g.animals.values()) {
-      if (nb >= 600) break;
+      if (nn >= 600) break;
       if (!w.explored[w.idx(Math.round(a.x), Math.round(a.z))]) continue;
+      const L = this.look(a.id, a.herd, a.heading);
       const y = w.heightAt(a.x, a.z);
-      const moving = a.next >= 0;
-      let ph = this.phase.get(a.id) ?? a.id;
-      if (moving) ph += dt * 9;
-      this.phase.set(a.id, ph);
-      tmpQ.setFromEuler(tmpE.set(0, a.heading, 0));
-      base.compose(tmpS.set(a.x, y, a.z), tmpQ, tmpV.set(1, 1, 1));
-      if (!a.alive) base.multiply(r.makeRotationZ(Math.PI / 2 * 0.92)).multiply(m.makeTranslation(0.15, -0.15, 0));
-      else if (!moving) {
-        // graze: head down occasionally
-        const graze = Math.max(0, Math.sin(time * 0.4 + a.id)) * 0.25;
-        base.multiply(r.makeTranslation(0, 0.3, 0.2)).multiply(m.makeRotationX(graze)).multiply(r.makeTranslation(0, -0.3, -0.2));
+      const moving = a.alive && a.next >= 0;
+      // turn into the way it is going rather than snapping round at every step
+      if (moving) L.h = wrapA(L.h + Math.max(-5 * dt, Math.min(5 * dt, wrapA(a.heading - L.h))));
+      if (moving) L.ph += dt * 11 / L.size;
+      // the head: down to graze most of the time, up now and then to look round, carried forward on the move
+      const alert = Math.sin(time * 0.37 + L.seed * 1.7) + 0.6 * Math.sin(time * 0.83 + L.seed) > 0.75;
+      let neck: number, head: number, yaw = 0;
+      if (!a.alive) { neck = 0.8; head = 0.1; }
+      else if (moving) { neck = 0.35 + Math.sin(L.ph * 2) * 0.05; head = -0.08; }
+      else if (alert) { neck = -0.12; head = 0.12; yaw = Math.sin(time * 0.7 + L.seed) * 0.7; }
+      else { neck = 1.62; head = -0.38 + Math.sin(time * 6 + L.seed) * 0.05; yaw = Math.sin(time * 0.3 + L.seed) * 0.25; }
+      L.neck = ease(L.neck, neck, 3);
+      L.head = ease(L.head, head, 4);
+      L.yaw = ease(L.yaw, yaw, 3);
+      const s = L.size;
+      const bob = moving ? Math.sin(L.ph * 2) * 0.008 * s : 0;
+      tmpQ.setFromEuler(tmpE.set(0, L.h, 0));
+      this.base.compose(tmpS.set(a.x, y + bob, a.z), tmpQ, tmpV.set(s, s, s));
+      if (!a.alive) {
+        // rolled over onto its side where it fell
+        this.base.multiply(this.r.makeTranslation(0.1, 0, 0)).multiply(this.m.makeRotationZ(-Math.PI / 2 * 0.95)).multiply(this.r.makeTranslation(-0.1, 0, 0));
       }
-      this.body.setMatrixAt(nb++, base);
-      const legs = [[-0.07, 0.18, 0], [0.07, 0.18, Math.PI], [-0.07, -0.16, Math.PI], [0.07, -0.16, 0]];
-      for (const [lx, lz, off] of legs) {
-        const ang = moving ? Math.sin(ph + off) * 0.6 : 0;
-        m.copy(base).multiply(r.makeTranslation(lx, 0.32, lz)).multiply(new THREE.Matrix4().makeRotationX(ang));
-        this.legs.setMatrixAt(nl++, m);
+      if (L.kind === 2) this.fawn.setMatrixAt(nf++, this.base);
+      else this.body.setMatrixAt(nb++, this.base);
+      this.m.copy(this.base).multiply(this.r.makeTranslation(DEER_NECK[0], DEER_NECK[1], DEER_NECK[2]))
+        .multiply(this.r.makeRotationFromEuler(tmpE.set(L.neck, L.yaw * 0.5, 0, 'YXZ')));
+      this.neck.setMatrixAt(nn++, this.m);
+      this.m2.copy(this.m).multiply(this.r.makeTranslation(DEER_HEAD[0], DEER_HEAD[1], DEER_HEAD[2]))
+        .multiply(this.r.makeRotationFromEuler(tmpE.set(L.head, L.yaw * 0.5, 0, 'YXZ')));
+      if (L.kind === 1) this.stag.setMatrixAt(ns++, this.m2);
+      else this.head.setMatrixAt(nh++, this.m2);
+      // slender legs in two halves: the hind ones angled back at the hock; on the move each lifts
+      // and folds in turn, a quarter stride after the one before
+      for (let l = 0; l < 4; l++) {
+        const hind = l >= 2;
+        const [hx, hy, hz] = DEER_HIPS[l];
+        let up = hind ? 0.3 : 0, lo = hind ? -0.3 : 0;
+        if (!a.alive) { up = hind ? 0.45 : -0.35; lo = 0; }
+        else if (moving) {
+          const p = L.ph + DEER_GAIT[l];
+          up += -Math.sin(p) * 0.4;
+          lo += Math.max(0, Math.cos(p)) * (hind ? 0.7 : 0.95);
+        }
+        this.m.copy(this.base).multiply(this.r.makeTranslation(hx, hy, hz)).multiply(this.m2.makeRotationX(up));
+        this.upper.setMatrixAt(nu++, this.m);
+        this.m.multiply(this.r.makeTranslation(0, -DEER_KNEE, 0)).multiply(this.m2.makeRotationX(lo));
+        this.lower.setMatrixAt(nl++, this.m);
       }
     }
-    commitInstances(this.body, nb);
-    commitInstances(this.legs, nl);
+    const counts: [THREE.InstancedMesh, number][] = [[this.body, nb], [this.fawn, nf], [this.neck, nn], [this.head, nh], [this.stag, ns], [this.upper, nu], [this.lower, nl]];
+    for (const [mesh, c] of counts) commitInstances(mesh, c);
+    if (this.looks.size > g.animals.size + 64) for (const id of this.looks.keys()) if (!g.animals.has(id)) this.looks.delete(id);
   }
 }
 

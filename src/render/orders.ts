@@ -6,6 +6,8 @@ import type { Game } from '../game/game';
 import type { GameEvent, Settler } from '../game/types';
 import { commandable } from '../game/orders';
 import { commitInstances, withInstanceColor } from './instancing';
+import { afloat } from '../game/naval';
+import { WATER_LEVEL } from '../game/world';
 
 const MAX_RINGS = 256;
 const PULSE_COLORS: Record<string, number> = { move: 0xffd36a, attack: 0xff5a40, garrison: 0x7ac8ff };
@@ -16,9 +18,15 @@ export class OrdersFX {
   chosen: number[] = [];
   /** soldiers inside the selection box being drawn */
   preview: number[] = [];
+  /** ids of the warships the player has picked (a fleet takes orders like a squad) */
+  ships: number[] = [];
+  /** warships inside the selection box being drawn */
+  shipPreview: number[] = [];
   /** what the pointer is over; a building's ring is drawn on the ground by the terrain shader */
-  hover: { kind: 'settler' | 'building'; id: number; foe: boolean } | null = null;
+  hover: { kind: 'settler' | 'building' | 'ship'; id: number; foe: boolean } | null = null;
   private rings: THREE.InstancedMesh;
+  /** long thin rings round ships on the water */
+  private hulls: THREE.InstancedMesh;
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
   private pulseGeo: THREE.RingGeometry;
 
@@ -33,14 +41,23 @@ export class OrdersFX {
     this.rings.renderOrder = 20;
     this.rings.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_RINGS * 3), 3);
     this.group.add(this.rings);
+    const hr = new THREE.RingGeometry(0.94, 1, 48);
+    hr.rotateX(-Math.PI / 2);
+    this.hulls = new THREE.InstancedMesh(hr, mat, 64);
+    this.hulls.count = 0;
+    this.hulls.frustumCulled = false;
+    this.hulls.renderOrder = 20;
+    this.hulls.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3), 3);
+    this.group.add(this.hulls);
     this.pulseGeo = new THREE.RingGeometry(0.82, 1, 40);
     this.pulseGeo.rotateX(-Math.PI / 2);
   }
 
-  /** Drop men who died, boarded a ship or were taken inside. */
+  /** Drop men who died, boarded a ship or were taken inside, and ships that went down. */
   prune() {
     const g = this.game;
     this.chosen = this.chosen.filter((id) => { const s = g.settlers.get(id); return commandable(g, g.local, s) && !s.inside; });
+    this.ships = this.ships.filter((id) => { const sh = g.ships.get(id); return !!sh && sh.owner === g.local && sh.kind === 'war' && afloat(sh); });
   }
 
   update(dt: number) {
@@ -67,6 +84,22 @@ export class OrdersFX {
       n++;
     };
     for (const id of this.preview) if (!this.chosen.includes(id)) ring(g.settlers.get(id), 1, 0.55, 0.5, 0.3);
+    // ships: a long ring round the hull on the water
+    let nh = 0;
+    const hull = (id: number, r: number, gg: number, b: number, hp: boolean) => {
+      const sh = g.ships.get(id);
+      if (nh >= 64 || !sh || !afloat(sh)) return;
+      const k = sh.kind === 'war' ? 1 : 0.8;
+      m.makeRotationY(sh.heading).scale(new THREE.Vector3(1.05 * k, 1, 2.3 * k)).setPosition(sh.x, WATER_LEVEL + 0.04, sh.z);
+      this.hulls.setMatrixAt(nh, m);
+      if (hp) { const h2 = Math.max(0, sh.hp / sh.maxHp); col.setRGB(h2 < 0.5 ? 1 : 2 - h2 * 2 + 0.25, h2 > 0.5 ? 1 : h2 * 2, 0.25); }
+      else col.setRGB(r, gg, b);
+      this.hulls.setColorAt(nh, col);
+      nh++;
+    };
+    for (const id of this.ships) hull(id, 0, 0, 0, true);
+    for (const id of this.shipPreview) if (!this.ships.includes(id)) hull(id, 0.55, 0.5, 0.3, false);
+    if (this.hover?.kind === 'ship' && !this.ships.includes(this.hover.id)) hull(this.hover.id, this.hover.foe ? 1 : 0.85, this.hover.foe ? 0.16 : 0.82, this.hover.foe ? 0.08 : 0.7, false);
     const h = this.hover;
     if (h?.kind === 'settler' && !this.chosen.includes(h.id)) {
       const s = g.settlers.get(h.id);
@@ -74,6 +107,7 @@ export class OrdersFX {
       if (h.foe) ring(s, big, 1, 0.16, 0.08); else ring(s, big, 0.85, 0.82, 0.7);
     }
     commitInstances(this.rings, n);
+    commitInstances(this.hulls, nh);
     for (let i = this.pulses.length - 1; i >= 0; i--) {
       const p = this.pulses[i];
       p.t += dt;
@@ -125,7 +159,25 @@ export class OrdersFX {
     return out;
   }
 
+  /** The local player's warships whose screen position falls in a client-space rectangle. */
+  shipsInRect(camera: THREE.Camera, canvas: HTMLCanvasElement, x0: number, y0: number, x1: number, y1: number): number[] {
+    const g = this.game;
+    const r = canvas.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    const out: number[] = [];
+    const [ax, bx] = x0 < x1 ? [x0, x1] : [x1, x0], [ay, by] = y0 < y1 ? [y0, y1] : [y1, y0];
+    for (const sh of g.ships.values()) {
+      if (sh.owner !== g.local || sh.kind !== 'war' || !afloat(sh)) continue;
+      v.set(sh.x, WATER_LEVEL + 0.6, sh.z).project(camera);
+      if (v.z > 1) continue;
+      const sx = (v.x * 0.5 + 0.5) * r.width + r.left, sy = (-v.y * 0.5 + 0.5) * r.height + r.top;
+      if (sx >= ax && sx <= bx && sy >= ay && sy <= by) out.push(sh.id);
+    }
+    return out;
+  }
+
   dispose() {
+    this.hulls.geometry.dispose();
     this.rings.geometry.dispose();
     (this.rings.material as THREE.Material).dispose();
     this.pulseGeo.dispose();

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { GOODS, Good } from '../game/defs';
 import type { Game } from '../game/game';
 import type { Settler } from '../game/types';
-import { buildDonkeyGeos } from './models';
+import { DONKEY_HIPS, DONKEY_KNEE, DONKEY_NECK, buildDonkeyGeos } from './models';
 import { patchMaterial } from './shaderPatch';
 import { commitInstances } from './instancing';
 
@@ -25,7 +25,9 @@ export class DonkeysRenderer {
   group = new THREE.Group();
   visibleList: { s: Settler; x: number; y: number; z: number }[] = [];
   private body: THREE.InstancedMesh;
-  private legs: THREE.InstancedMesh;
+  private necks: THREE.InstancedMesh;
+  private uppers: THREE.InstancedMesh;
+  private lowers: THREE.InstancedMesh;
   private packs: THREE.InstancedMesh;
   private goods = new Map<Good, THREE.InstancedMesh>();
   private phase = new Map<number, number>();
@@ -45,12 +47,14 @@ export class DonkeysRenderer {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
     patchMaterial(mat, { key: 'donkey' });
     this.body = inst(g.body, mat, 200);
-    this.legs = inst(g.leg, mat, 800);
+    this.necks = inst(g.neck, mat, 200);
+    this.uppers = inst(g.upper, mat, 800);
+    this.lowers = inst(g.lower, mat, 800);
     this.packs = inst(g.pack, mat, 200);
     const goodMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
     patchMaterial(goodMat, { key: 'donkeygood' });
     for (const gd of GOODS) this.goods.set(gd, inst(goodGeos[gd], goodMat, 200));
-    this.group.add(this.body, this.legs, this.packs, ...this.goods.values());
+    this.group.add(this.body, this.necks, this.uppers, this.lowers, this.packs, ...this.goods.values());
   }
 
   update(dt: number, time: number, camera: THREE.Camera) {
@@ -61,6 +65,7 @@ export class DonkeysRenderer {
     this.visibleList.length = 0;
     const counts = new Map<Good, number>();
     let nb = 0, nl = 0, np = 0;
+    const r2 = new THREE.Matrix4();
     for (const s of g.settlers.values()) {
       if (s.job !== 'donkey' || s.hidden) continue;
       if (nb >= 200) break;
@@ -73,24 +78,33 @@ export class DonkeysRenderer {
       let ph = this.phase.get(s.id) ?? s.seed * 10;
       if (moving) ph += dt * Math.PI * 2 * 1.15 / Math.max(0.3, s.stepDur);
       this.phase.set(s.id, ph);
-      // body: a little bounce on the trot, slow breathing at rest; on its side when dead
-      const bob = moving ? Math.abs(Math.sin(ph)) * 0.022 : 0;
+      // body: a little rise and fall with each step, slow breathing at rest; on its side when dead
+      const bob = moving ? (Math.sin(ph * 2) * 0.5 + 0.5) * 0.012 : 0;
       const breath = moving ? 0 : Math.sin(time * 1.4 + s.seed * 9) * 0.012;
       const sink = s.dead ? Math.max(0, s.deadT - 3) * 0.15 : 0;
       this.q.setFromEuler(this.e.set(0, s.heading, 0));
       this.base.compose(this.v.set(s.x, y0 + bob - sink, s.z), this.q, this.sc.set(SCALE * (1 + breath * 0.3), SCALE * (1 + breath), SCALE));
-      if (s.dead) this.base.multiply(this.r.makeRotationZ(Math.PI / 2 * 0.92)).multiply(this.m.makeTranslation(0.2, -0.2, 0));
-      else {
-        // ears flick and the head dips now and then while it waits
-        const dip = moving ? Math.sin(ph * 2) * 0.03 : Math.max(0, Math.sin(time * 0.5 + s.seed * 7)) * 0.12;
-        this.base.multiply(this.r.makeTranslation(0, 0.45, 0.15)).multiply(this.m.makeRotationX(dip)).multiply(this.r.makeTranslation(0, -0.45, -0.15));
-      }
-      this.body.setMatrixAt(nb++, this.base);
-      const legs = [[-0.09, 0.2, 0], [0.09, 0.2, Math.PI], [-0.09, -0.19, Math.PI], [0.09, -0.19, 0]];
-      for (const [lx, lz, off] of legs) {
-        const ang = moving ? Math.sin(ph + off) * 0.55 : 0;
-        this.m.copy(this.base).multiply(this.r.makeTranslation(lx, 0.34, lz)).multiply(new THREE.Matrix4().makeRotationX(ang));
-        this.legs.setMatrixAt(nl++, this.m);
+      if (s.dead) this.base.multiply(this.r.makeTranslation(0.12, 0, 0)).multiply(this.m.makeRotationZ(-Math.PI / 2 * 0.95)).multiply(this.r.makeTranslation(-0.12, 0, 0));
+      this.body.setMatrixAt(nb, this.base);
+      // the head nods with the walk; waiting, it dips now and then to crop the grass
+      const dip = s.dead ? 0.5 : moving ? 0.12 + Math.sin(ph * 2) * 0.05 : Math.max(0, Math.sin(time * 0.5 + s.seed * 7)) * 1.1;
+      this.m.copy(this.base).multiply(this.r.makeTranslation(DONKEY_NECK[0], DONKEY_NECK[1], DONKEY_NECK[2])).multiply(r2.makeRotationX(dip));
+      this.necks.setMatrixAt(nb++, this.m);
+      // sturdy legs in two halves, a quarter stride apart (left fore, right fore, left hind, right hind)
+      for (let l = 0; l < 4; l++) {
+        const hind = l >= 2;
+        const [lx, ly, lz] = DONKEY_HIPS[l];
+        let up = hind ? 0.22 : 0, lo = hind ? -0.22 : 0;
+        if (s.dead) { up = hind ? 0.4 : -0.3; lo = 0; }
+        else if (moving) {
+          const p = ph + [Math.PI / 2, Math.PI * 1.5, 0, Math.PI][l];
+          up += -Math.sin(p) * 0.38;
+          lo += Math.max(0, Math.cos(p)) * (hind ? 0.6 : 0.85);
+        }
+        this.m.copy(this.base).multiply(this.r.makeTranslation(lx, ly, lz)).multiply(r2.makeRotationX(up));
+        this.uppers.setMatrixAt(nl, this.m);
+        this.m.multiply(this.r.makeTranslation(0, -DONKEY_KNEE, 0)).multiply(r2.makeRotationX(lo));
+        this.lowers.setMatrixAt(nl++, this.m);
       }
       if (s.carrying || s.pack) {
         this.packs.setMatrixAt(np++, this.base);
@@ -109,8 +123,8 @@ export class DonkeysRenderer {
         }
       }
     }
-    commitInstances(this.body, nb);
-    commitInstances(this.legs, nl);
+    for (const m of [this.body, this.necks]) commitInstances(m, nb);
+    for (const m of [this.uppers, this.lowers]) commitInstances(m, nl);
     commitInstances(this.packs, np);
     for (const [gd, mesh] of this.goods) commitInstances(mesh, counts.get(gd) ?? 0);
     if (this.phase.size > 400) for (const id of this.phase.keys()) if (!g.settlers.has(id)) this.phase.delete(id);

@@ -282,7 +282,6 @@ export class BuildingsRenderer {
         if (m.name === 'blades') m.rotation.z += dt * (b.working ? 1.6 : 0.25);
         else if (m.name === 'saw') { if (b.working) m.rotation.x += dt * 18; }
         else if (m.name === 'winch') { if (b.worker && time % 6 < 2) m.rotation.x += dt * 4; }
-        else if (m.name === 'pigs') { m.position.y = Math.abs(Math.sin(time * 2 + b.id)) * 0.01; m.visible = b.stock.pig > 0 || b.working; }
         else if (m.name === 'donkeys') { m.rotation.y = Math.sin(time * 0.6 + b.id) * 0.04; m.visible = b.working || b.prodCount > 0; }
         else if (m.name === 'crane') {
           // swings to and fro while a ship is loaded or unloaded here
@@ -313,7 +312,7 @@ export class BuildingsRenderer {
           let k = 0;
           for (const gd of GOODS) {
             const n = b.stock[gd];
-            if (!n) continue;
+            if (!n || gd === 'pig') continue; // pigs stand about on their own feet (pigs.ts)
             const isOut = b.def.outputs?.includes(gd);
             const off = isOut ? 0 : 1;
             const px = b.cx + anchor.x - off * 0.35 * (anchor.x > 0 ? 1 : -1) - k * 0.05;

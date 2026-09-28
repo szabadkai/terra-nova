@@ -1,10 +1,10 @@
 // Economy: logistics dispatch, construction, worker recruitment, production.
 import {
-  BUILDINGS, FOODS, GOODS, GOOD_NAMES, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WEAPONS,
+  BUILDINGS, FOODS, GOODS, GOOD_NAMES, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WARSHIP_IRON, WEAPONS,
 } from './defs';
 import type { Game } from './game';
 import { OUT_CAP, canPrioritise } from './game';
-import { A, abortPlan, claim, enter, exit, plan } from './settlers';
+import { A, abortPlan, book, claim, enter, exit, park, parkable, plan, spotFree } from './settlers';
 import type { Building, Settler } from './types';
 import { recomputeTerritory, isSoldier, sendSoldierTo } from './military';
 import { offer } from './faith';
@@ -319,6 +319,11 @@ export function needsOf(g: Game, b: Building, out: Need[]) {
     for (const gd of inp.goods) have += b.stock[gd] + b.incoming[gd];
     const n = inp.cap - have;
     if (n > 0) out.push({ b, goods: inp.goods, n, prio: first ? -1 + have * 0.01 : 200 + have * 10 });
+  }
+  // a shipyard building warships wants iron for the fittings as well
+  if (b.type === 'shipyard' && b.shipKind === 'war') {
+    const have = b.stock.iron + b.incoming.iron;
+    if (have < WARSHIP_IRON) out.push({ b, goods: ['iron'], n: WARSHIP_IRON - have, prio: first ? -1 + have * 0.01 : 200 + have * 10 });
   }
 }
 
@@ -761,20 +766,19 @@ export function diggerThink(g: Game, s: Settler, dt: number) {
   const w = g.world;
   const nodes = g.footprint(b.size, b.x, b.y);
   nodes.push(b.door);
-  // choose node with the biggest error, prefer ones not targeted by other diggers
+  // choose node with the biggest error that no other digger stands on or is walking to
   let best = -1, bv = 0.02;
   for (const i of nodes) {
     let e = Math.abs(w.h[i] - b.targetH);
     if (i === b.door) e *= 0.5;
     if (e > bv) {
-      // spread diggers apart
-      let taken = false;
+      let taken = !spotFree(g, i, s.id);
       for (const id of b.diggers) {
         if (id === s.id) continue;
         const o = g.settlers.get(id);
         if (o && (o.node === i || o.next === i)) taken = true;
       }
-      if (!taken || e > bv * 3) { bv = e; best = i; }
+      if (!taken) { bv = e; best = i; }
     }
   }
   if (best < 0) {
@@ -786,6 +790,7 @@ export function diggerThink(g: Game, s: Settler, dt: number) {
     return;
   }
   const node = best;
+  book(g, node, s.id);
   plan(s, [
     A.walk(node),
     A.anim('dig', 1.5, b.door, (t) => { if (t < 0.05) g.emit({ type: 'dig', x: w.nx(node), z: w.ny(node) }); }),
@@ -820,7 +825,14 @@ export function builderThink(g: Game, s: Settler, dt: number) {
   for (let y = y0; y <= y1; y++) { spots.push(w.idx(x0, y)); spots.push(w.idx(x1, y)); }
   const good = spots.filter((i) => w.walkable(i));
   if (!good.length) { plan(s, [A.wait(1)]); return; }
-  const spot = good[(idx * 5 + ((g.time / 9) | 0)) % good.length];
+  // each works his own stretch of the perimeter, moving on along it where someone already stands
+  const k0 = idx * 5 + ((g.time / 9) | 0);
+  let spot = good[k0 % good.length];
+  for (let k = 0; k < good.length; k++) {
+    const i = good[(k0 + k) % good.length];
+    if (spotFree(g, i, s.id)) { spot = i; break; }
+  }
+  book(g, spot, s.id);
   if (b.state === 'leveling') {
     plan(s, [A.walk(spot), A.wait(1.0)]);
     return;
@@ -865,8 +877,8 @@ function crewIdle(g: Game, s: Settler, dt: number) {
     const tx = bx + g.rng.int(-4, 5), ty = by + g.rng.int(0, 5);
     if (!w.inBounds(tx, ty)) continue;
     const ti = w.idx(tx, ty);
-    if (!w.walkable(ti) || w.reserve[ti]) continue;
-    s.actions.push(A.walk(ti));
+    if (!parkable(g, s, ti)) continue;
+    park(g, s, ti);
     return;
   }
 }

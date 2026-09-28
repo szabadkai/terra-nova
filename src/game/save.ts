@@ -17,6 +17,7 @@ import { isSoldier } from './military';
 import { resumeTraining, storeCarried } from './economy';
 import { returnHome } from './work';
 import { resumeVoyage } from './sea';
+import { shipFields } from './naval';
 import { resumeTour } from './geology';
 import { reconcileLoads, resumeDonkey } from './trade';
 
@@ -66,10 +67,10 @@ export interface SaveMeta {
   thumb?: string; // small data URL
 }
 
-/** Game fields saved on their own (or never: `events` is per frame, the cache rebuilds itself). */
+/** Game fields saved on their own (or never: `events` is per frame, the cache and `spots` rebuild themselves). */
 const OWN = new Set([
   'world', 'path', 'rng', 'opts', 'players', 'buildings', 'settlers', 'trees', 'stones', 'fields',
-  'animals', 'ships', 'signs', 'ai', 'events', 'storageRegionCache',
+  'animals', 'ships', 'signs', 'ai', 'events', 'storageRegionCache', 'spots',
 ]);
 
 const isPlain = (v: unknown): boolean => {
@@ -186,7 +187,7 @@ export function restore(saved: SaveData): Game {
   for (const s of d.stones) g.stones.set(s.id, s);
   for (const f of d.fields) g.fields.set(f.id, f);
   for (const a of d.animals) g.animals.set(a.id, a);
-  for (const sh of d.ships) g.ships.set(sh.id, { ...sh, cargo: stockOf(sh.cargo) });
+  for (const sh of d.ships) g.ships.set(sh.id, { ...shipFields(sh.kind ?? 'trade'), ...sh, cargo: stockOf(sh.cargo) });
   for (const s of d.signs) g.signs.set(s.id, s);
   g.ai = d.ai.map((o) => {
     const c = new AIController(g, o.p as number, o.level as number);
@@ -272,7 +273,7 @@ function settle(g: Game) {
         plan(s, returnHome(g, s, work, true), () => { s.carrying = null; });
         continue;
       }
-      if (work.type === 'shipyard' && gd === 'board') { work.stock.board++; s.carrying = null; continue; }
+      if (work.type === 'shipyard' && (gd === 'board' || gd === 'iron')) { work.stock[gd]++; s.carrying = null; continue; }
     }
     if (s.job === 'carrier') { s.idle = false; storeCarried(g, s); continue; }
     s.carrying = null;

@@ -1,10 +1,11 @@
 // Military: territory, garrisons, attacks, melee/ranged combat, capturing.
 import type { Game } from './game';
-import { A, abortPlan, claim, enter, exit, plan, turnTo } from './settlers';
+import { A, abortPlan, book, claim, enter, exit, freeSpotNear, plan, turnTo } from './settlers';
 import type { Building, Settler } from './types';
 import { GUARD_RANGE, LEASH } from './orders';
 import { CATAPULT_RANGE } from './defs';
 import { siegeHit } from './siege';
+import { shipArrowLands, shipStoneLands, towerShootShip } from './naval';
 
 export function isSoldier(s: Settler) {
   return s.job === 'swordsman' || s.job === 'bowman';
@@ -341,9 +342,20 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
         // chase
         if (!s.actions.length || s.actions[0].k !== 'walk') {
           s.actions.length = 0;
-          s.actions.push(A.walk(e.next >= 0 ? e.next : e.node, true));
+          s.actions.push(besideFoe(g, s, e));
         }
         return false;
+      }
+      // several on one foe: each takes a side of his own (within a sword's reach) rather than piling onto one spot
+      const sp = g.spots;
+      if (sp.crowd[s.node] > 1 && sp.stand[s.node] !== s.id && !(s.actions[0]?.k === 'walk')) {
+        const spot = freeSpotNear(g, s, e.node, 2, 2, true);
+        if (spot >= 0) {
+          book(g, spot, s.id);
+          s.actions.length = 0;
+          s.actions.push(A.walk(spot));
+          return false;
+        }
       }
       s.actions.length = 0;
       if (s.cooldown <= 0) {
@@ -435,6 +447,15 @@ export function flushHits(g: Game) {
   }
 }
 
+/** A walk to a free node beside foe e (or just up to him when there is none). */
+function besideFoe(g: Game, s: Settler, e: Settler) {
+  const at = e.next >= 0 ? e.next : e.node;
+  const spot = freeSpotNear(g, s, at, 1, Infinity, true);
+  if (spot < 0) return A.walk(at, true);
+  book(g, spot, s.id);
+  return A.walk(spot);
+}
+
 function engage(g: Game, s: Settler, e: Settler) {
   s.actions.length = 0;
   s.path = null;
@@ -468,12 +489,8 @@ function thinkAttack(g: Game, s: Settler): boolean {
   const w = g.world;
   const dx = w.nx(s.node) - w.nx(b.door), dy = w.ny(s.node) - w.ny(b.door);
   const atDoor = Math.abs(dx) <= 1 && Math.abs(dy) <= 1;
-  if (!atDoor) {
-    plan(s, [A.walk(b.door, true)], () => {});
-    return false;
-  }
   // at the door: capture if empty and no defenders out
-  if (b.garrison.length === 0) {
+  if (atDoor && b.garrison.length === 0) {
     let defendersOut = false;
     for (const o of g.settlers.values()) {
       if (o.owner === b.owner && o.sstate === 'defend' && o.home === b.id && !o.dead) { defendersOut = true; break; }
@@ -483,7 +500,20 @@ function thinkAttack(g: Game, s: Settler): boolean {
       return true;
     }
   }
-  plan(s, [A.anim('idle', 0.6)]);
+  const sp = g.spots;
+  const crowded = sp.crowd[s.node] > 1 && sp.stand[s.node] !== s.id;
+  if (atDoor && !crowded) {
+    s.fails = 0;
+    plan(s, [A.anim('idle', 0.6)]);
+    return false;
+  }
+  // one man to a spot: close in on a free one beside the door, or wait a little way out
+  const near = Math.max(Math.abs(dx), Math.abs(dy)) <= 3;
+  let spot = s.fails > 2 ? -1 : freeSpotNear(g, s, b.door, 1);
+  if (spot < 0 && near && crowded) spot = freeSpotNear(g, s, b.door, 3);
+  if (spot >= 0) { book(g, spot, s.id); plan(s, [A.walk(spot)], () => { s.fails++; }); }
+  else if (!near) plan(s, [A.walk(b.door, true)], () => {});
+  else plan(s, [A.anim('idle', 0.6)]);
   return false;
 }
 
@@ -507,7 +537,7 @@ function thinkDefend(g: Game, s: Settler): boolean {
   }
   const d = Math.hypot(t.x - s.x, t.z - s.z);
   if (d > 16) { s.sstate = 'return'; return false; }
-  plan(s, [A.walk(t.next >= 0 ? t.next : t.node, true)]);
+  plan(s, [besideFoe(g, s, t)]);
   return false;
 }
 
@@ -564,7 +594,8 @@ export function updateProjectiles(g: Game, dt: number) {
     p.t += dt;
     if (p.t >= p.dur) {
       g.projectiles.splice(i, 1);
-      if (p.kind === 'stone') { siegeHit(g, p); continue; }
+      if (p.kind === 'stone') { if (p.ship) shipStoneLands(g, p); else siegeHit(g, p); continue; }
+      if (p.ship) { shipArrowLands(g, p); continue; }
       if (p.target < 0) continue; // animal (handled by hunter plan)
       const v = g.settlers.get(p.target);
       if (!v || v.dead) continue;
@@ -596,10 +627,14 @@ export function updateProjectiles(g: Game, dt: number) {
       const d = (o.x - b.cx) ** 2 + (o.z - b.cz) ** 2;
       if (d < bd) { bd = d; best = o; }
     }
-    if (!best) continue;
-    b.shootT = 2.4 / archers;
     const w = g.world;
     const top = w.heightAt(b.cx, b.cz) + (b.type === 'tower_s' ? 2.6 : b.type === 'castle' || b.type === 'hq' ? 3.4 : 3.2);
+    if (!best) {
+      // nobody on land: an enemy ship close under the walls, then
+      if (g.ships.size && towerShootShip(g, b, top)) b.shootT = 2.4 / archers;
+      continue;
+    }
+    b.shootT = 2.4 / archers;
     const ty = w.heightAt(best.x, best.z) + 0.35;
     const d = Math.sqrt(bd);
     g.projectiles.push({

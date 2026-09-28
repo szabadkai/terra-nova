@@ -7,7 +7,7 @@ export const HULL_L = 2.3;
 const HULL_B = 0.8;
 
 /** Half beam of the hull at t (0 stern .. 1 bow): a full stern with a transom, a fine bow. */
-function halfBeam(t: number) {
+export function halfBeam(t: number) {
   if (t < 0.5) {
     const u = 1 - 2 * t;
     return (HULL_B / 2) * (0.5 + 0.5 * Math.sqrt(Math.max(0, 1 - u * u * u)));
@@ -19,7 +19,7 @@ function halfBeam(t: number) {
 export function sheer(t: number) {
   return 0.27 + 0.36 * Math.max(0, 1 - 2 * t) ** 2 + 0.3 * Math.max(0, 2 * t - 1) ** 2.2;
 }
-function keelDepth(t: number) {
+export function keelDepth(t: number) {
   return 0.24 * (1 - 0.55 * Math.max(0, 2 * t - 1) ** 3 - 0.25 * Math.max(0, 1 - 2 * t) ** 4);
 }
 const SE = 0.78; // superellipse exponent of the sections (2/n)
@@ -114,7 +114,7 @@ export function hullRibs(mb: ModelBuilder, mat: string, n = 9) {
   mb.add(mat, box(0.05, sheer(1) + keelDepth(1) + 0.1, 0.05), 0, (sheer(1) - keelDepth(1)) / 2, HULL_L / 2 - 0.02, 0, -0.35, 0);
 }
 
-function deckGeometry() {
+export function deckGeometry() {
   return gridGeometry(2, 24, (u, v, out) => {
     const t = 0.02 + v * 0.95;
     const hw = halfBeam(t) * 0.95;
@@ -122,7 +122,7 @@ function deckGeometry() {
   }, [0.8, HULL_L * 1.1], false, false);
 }
 
-function bulwark(inner: boolean) {
+export function bulwark(inner: boolean) {
   return [-1, 1].map((side) => gridGeometry(28, 1, (u, v, out) => {
     const t = 0.001 + u * 0.998;
     const hw = halfBeam(t) * (inner ? 0.955 : 1.0);
@@ -131,7 +131,7 @@ function bulwark(inner: boolean) {
   }, [HULL_L * 0.9, 0.2], inner ? side > 0 : side < 0, true));
 }
 
-function rim() {
+export function rim() {
   return [-1, 1].map((side) => gridGeometry(28, 1, (u, v, out) => {
     const t = 0.001 + u * 0.998;
     const hw = halfBeam(t);
@@ -140,7 +140,7 @@ function rim() {
 }
 
 /** Painted wale in the owner's colour just below the gunwale. */
-function wale() {
+export function wale() {
   return [-1, 1].map((side) => gridGeometry(28, 1, (u, v, out) => {
     const t = 0.001 + u * 0.998;
     const s = 0.12 + v * 0.07;
@@ -149,7 +149,7 @@ function wale() {
   }, [HULL_L, 0.1], side > 0));
 }
 
-function transom() {
+export function transom() {
   // flat stern board closing the full stern
   const shape = new THREE.Shape();
   const p = new THREE.Vector3();
