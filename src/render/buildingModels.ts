@@ -4,7 +4,7 @@
 // towers, and a silhouette of its own for every building.
 import * as THREE from 'three';
 import type { BuildingType } from '../game/defs';
-import { ModelBuilder, RoofOpts, RoofStyle, WallOpts, box, cone, coneRoof, cyl, gableRoof, hipRoof, leanToRoof, setDetail, sphere, wallPrism } from './geom';
+import { ModelBuilder, RoofOpts, RoofStyle, WallOpts, box, cone, coneRoof, cyl, gableRoof, getDetail, hipRoof, leanToRoof, setDetail, sphere, wallPrism } from './geom';
 
 type MB = ModelBuilder;
 type Face = 'z' | '-z' | 'x' | '-x';
@@ -423,7 +423,8 @@ function fence(mb: MB, pts: [number, number][], y = 0, h = 0.3) {
 function flag(mb: MB, x: number, y: number, z: number, h = 1.0, owner = 0) {
   mb.add('timber', cyl(0.02, 0.026, h, 6), x, y, z);
   mb.add('gold', sphere(0.035, 8, 6), x, y + h + 0.02, z);
-  const fg = new THREE.PlaneGeometry(0.46, 0.3, 8, 4);
+  // the size is the banner cloth's in materials.ts; the shader bends it in the wind (coarser from afar)
+  const fg = getDetail() ? new THREE.PlaneGeometry(0.46, 0.3, 14, 5) : new THREE.PlaneGeometry(0.46, 0.3, 6, 2);
   fg.translate(0.23, 0, 0);
   mb.add(`banner${owner}`, fg, x + 0.02, y + h - 0.17, z);
   mb.anchors.flags.push(new THREE.Vector3(x, y + h, z));
@@ -1290,7 +1291,8 @@ const designs: Partial<Record<BuildingType, Design>> = {
     for (const [px, pz, r] of [[1.25, 0.75, 0.13], [1.0, 0.85, 0.12], [1.15, 1.0, 0.11], [0.85, 1.05, 0.1], [1.12, 0.88, 0.1]]) {
       mb.add('ashlar', new THREE.DodecahedronGeometry(r, 0), px, r * 0.85 + (px === 1.12 ? 0.2 : 0), pz, px * 3, pz * 2, 0);
     }
-    flag(mb, -1.3, 0, -1.25, 1.3, owner);
+    // tall enough that the flag flies over the roof when the wind blows across it
+    flag(mb, -1.3, 0, -1.25, 2.0, owner);
     mb.anchors.fires.push(new THREE.Vector3(-1.0, 0.45, -0.3));
     mb.anchors.piles.push(new THREE.Vector3(-0.2, 0, 1.15));
     mb.anchors.top = 1.9;
@@ -1303,7 +1305,8 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.add(`roof${owner}`, coneRoof(0.3, 0.55, 0.12, { style: 'tile', seed: 14 }), tx, 1.62, tz);
     win(mb, tx, 1.1, tz + 0.3, 'z', 0.08, 0.2, 'slit');
     flag(mb, tx, 2.2, tz, 0.5, owner);
-    flag(mb, 1.25, 0, 0.35, 1.5, owner);
+    // a tall pole clear of the eaves, so the flag can stream whichever way the wind blows
+    flag(mb, 1.4, 0, 0.6, 1.95, owner);
     for (const px of [-0.6, 0.6]) {
       mb.add('timber', box(0.04, 0.5, 0.04), px, 0.25, 0.75);
       mb.add('timber', box(0.3, 0.04, 0.04), px, 0.4, 0.75);

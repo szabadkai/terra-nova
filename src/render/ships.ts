@@ -9,8 +9,7 @@ import type { Ship } from '../game/types';
 import { WATER_LEVEL } from '../game/world';
 import { DECK_H, SHIP_SCALE, cargoCount, shipDeckY } from '../game/sea';
 import { SINK_TIME } from '../game/naval';
-import { getMaterial } from './materials';
-import { BANNER_COLORS } from './materials';
+import { BANNER_COLORS, getMaterial, PENNANT } from './materials';
 import { patchMaterial } from './shaderPatch';
 import { HULL_L, Sail, sailTexture, shipParts } from './shipModels';
 import { WAR_L, WarshipParts, warSailTexture, warshipParts } from './warshipModels';
@@ -64,8 +63,8 @@ export class ShipsRenderer {
   private barBack: THREE.MeshBasicMaterial;
 
   constructor(private game: Game, private piles: PilesRenderer, private particles: Particles) {
-    const fg = new THREE.PlaneGeometry(0.5, 0.13, 10, 2);
-    fg.translate(0.25, 0, 0);
+    const fg = new THREE.PlaneGeometry(PENNANT.len, PENNANT.height, 14, 3);
+    fg.translate(PENNANT.len / 2, 0, 0);
     this.flagGeo = fg;
     this.stoneGeo = new THREE.DodecahedronGeometry(0.045, 0);
     this.barBack = new THREE.MeshBasicMaterial({ color: 0x140e08, transparent: true, opacity: 0.7, depthTest: false, depthWrite: false, toneMapped: false });
@@ -91,7 +90,7 @@ export class ShipsRenderer {
       const g = parts.mb.build((k) => getMaterial(k));
       const sail = new Sail(this.sailMat(o, war), parts).mesh;
       sail.geometry.userData.sail = true;
-      g.add(sail, new THREE.Mesh(this.flagGeo, getMaterial(`banner${o}`)), new THREE.Mesh(this.barGeo, this.barBack));
+      g.add(sail, new THREE.Mesh(this.flagGeo, getMaterial(`pennant${o}`)), new THREE.Mesh(this.barGeo, this.barBack));
       if (war) {
         const wp = parts as WarshipParts;
         g.add(wp.turret.build((k) => getMaterial(k)), wp.arm.build((k) => getMaterial(k)), new THREE.Mesh(this.stoneGeo, getMaterial('rock')));
@@ -109,14 +108,14 @@ export class ShipsRenderer {
     const sail = new Sail(this.sailMat(sh.owner, war), parts);
     sail.mesh.position.z += war ? 0.07 : 0.08;
     group.add(sail.mesh);
-    const flag = new THREE.Mesh(this.flagGeo, getMaterial(`banner${sh.owner}`));
+    const flag = new THREE.Mesh(this.flagGeo, getMaterial(`pennant${sh.owner}`));
     flag.position.copy(parts.flagPos);
     flag.rotation.y = Math.PI / 2; // streams aft
     group.add(flag);
     let wv: WarView | null = null;
     if (war) {
       const wp = parts as WarshipParts;
-      const banner = new THREE.Mesh(this.flagGeo, getMaterial(`banner${sh.owner}`));
+      const banner = new THREE.Mesh(this.flagGeo, getMaterial(`pennant${sh.owner}`));
       banner.position.copy(wp.sternFlag);
       banner.rotation.y = Math.PI / 2;
       banner.scale.set(0.8, 1.6, 1);

@@ -5,8 +5,8 @@ import * as THREE from 'three';
 import { CATAPULT_RELOAD, PLAYER_COLORS } from '../game/defs';
 import type { Game } from '../game/game';
 import type { Settler } from '../game/types';
-import { buildCatapultGeos } from './models';
-import { patchMaterial } from './shaderPatch';
+import { buildCatapultGeos, CATAPULT_PENNANT } from './models';
+import { patchedDepthMaterial, patchMaterial } from './shaderPatch';
 import { commitInstances, withInstanceColor } from './instancing';
 
 const SCALE = 1.1;
@@ -59,8 +59,9 @@ export class CatapultsRenderer {
     this.arms = inst(g.arm, mat, MAX);
     this.stones = inst(g.stone, mat, MAX);
     const flagMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide });
-    patchMaterial(flagMat, { key: 'catapultflag' });
+    patchMaterial(flagMat, { key: 'catapultflag', wind: 'flag', flag: CATAPULT_PENNANT });
     this.flags = withInstanceColor(inst(g.flag, flagMat, MAX));
+    this.flags.customDepthMaterial = patchedDepthMaterial({ key: 'catapultflag', wind: 'flag', flag: CATAPULT_PENNANT });
     this.flags.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
     this.group.add(this.frame, this.wheels, this.arms, this.stones, this.flags);
   }

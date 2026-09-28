@@ -1,6 +1,6 @@
 // Shared material library for buildings and props. Every material is shader-patched.
 import * as THREE from 'three';
-import { patchMaterial, patchedDepthMaterial } from './shaderPatch';
+import { patchMaterial, patchedDepthMaterial, type FlagCloth } from './shaderPatch';
 import { brickTex, clothTex, cobbleTex, marbleTex, planksTex, plasterTex, roofTex, rubbleTex, shingleTex, stoneTex, thatchTex, timberTex } from './textures';
 
 export const ROOF_COLORS = [0xb8553a, 0x4d6f9e, 0xc49a3c, 0x7c4f8e];
@@ -72,10 +72,17 @@ def('bronze', () => std({ color: 0xb8864a, roughness: 0.32, metalness: 0.9 }));
 for (let p = 0; p < 4; p++) {
   def(`roof${p}`, () => { const t = roofTex(); return std({ map: t.map, normalMap: t.normal, color: ROOF_COLORS[p], roughness: 0.72, side: THREE.DoubleSide }); });
   def(`banner${p}`, () => { const t = clothTex(); return std({ map: t.map, color: BANNER_COLORS[p], roughness: 0.85, side: THREE.DoubleSide }); });
+  // ships' pennants stream aft from the masthead
+  def(`pennant${p}`, () => { const t = clothTex(); return std({ map: t.map, color: BANNER_COLORS[p], roughness: 0.85, side: THREE.DoubleSide }); });
   def(`trim${p}`, () => std({ color: BANNER_COLORS[p], roughness: 0.6 }));
 }
 
-const WIND_MATS = new Set(['banner0', 'banner1', 'banner2', 'banner3', 'canvasFlag']);
+/** cloth of the flags on buildings (see flag() in buildingModels) and of ships' pennants */
+const BUILDING_FLAG: FlagCloth = { len: 0.46, height: 0.3, align: true };
+export const PENNANT: FlagCloth = { len: 0.5, height: 0.13 };
+const FLAGS: Record<string, FlagCloth> = {};
+for (let p = 0; p < 4; p++) { FLAGS[`banner${p}`] = BUILDING_FLAG; FLAGS[`pennant${p}`] = PENNANT; }
+const WIND_MATS = new Set(Object.keys(FLAGS));
 
 const NO_SNOW = new Set(['window', 'glowFire', 'glowGold', 'glowHoly', 'water', 'wine', 'metal', 'iron', 'gold', 'bronze']);
 const GRIME = new Set(['plaster', 'plasterWarm', 'sandstone', 'timber', 'stone', 'stoneDark', 'ashlar', 'brick', 'log', 'doorRed', 'planks', 'marble', 'marbleDark', 'wood']);
@@ -83,7 +90,7 @@ const GRIME = new Set(['plaster', 'plasterWarm', 'sandstone', 'timber', 'stone',
 function patchOpts(key: string, clip: boolean) {
   const snow = NO_SNOW.has(key) || WIND_MATS.has(key) ? 0 : 1;
   const grime = GRIME.has(key) ? (key.startsWith('marble') ? 0.6 : 1) : 0;
-  return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), key: `bld_${key}`, snow, grime };
+  return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), flag: FLAGS[key], key: `bld_${key}`, snow, grime };
 }
 
 export function getMaterial(key: string): THREE.Material {
@@ -92,6 +99,8 @@ export function getMaterial(key: string): THREE.Material {
     const f = factories[key] ?? factories.plaster;
     m = f();
     patchMaterial(m, patchOpts(key, false));
+    // flags cast the shadow of the cloth as it is blowing (ModelBuilder picks this up)
+    if (FLAGS[key]) m.userData.depth = patchedDepthMaterial({ wind: 'flag', flag: FLAGS[key], key: `bld_${key}` });
     base.set(key, m);
   }
   return m;
@@ -112,8 +121,6 @@ export function getBurnMaterial(key: string): THREE.MeshStandardMaterial {
   patchMaterial(m, patchOpts(key, false));
   return m;
 }
-
-export const flagDepth = patchedDepthMaterial({ wind: 'none' });
 
 /** Night window glow intensity for all window materials. */
 export function setWindowGlow(v: number) {

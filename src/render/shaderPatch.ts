@@ -34,9 +34,19 @@ export const G = {
   uGrime: { value: 1 },
 };
 
+/** A flag's cloth: a plane `len` long from the pole and `height` high (uv 0..1 across it);
+ *  `align` turns it round its pole to stream downwind. */
+export interface FlagCloth {
+  len: number;
+  height: number;
+  align?: boolean;
+}
+
 export interface PatchOpts {
   wind?: 'tree' | 'grass' | 'flag' | 'none';
   windAmp?: number;
+  /** size of the cloth for wind 'flag' */
+  flag?: FlagCloth;
   clip?: boolean;
   fog?: boolean;
   clouds?: boolean;
@@ -123,6 +133,79 @@ vec3 applyFog(vec3 col, vec3 wp) {
 }
 `;
 
+// A flag is a plane cut from its hoist (uv.x = 0, on the pole) to the fly (uv.x = 1), facing along
+// its normal. Waves run from the pole to the fly and bend it; each row of the cloth is laid out by
+// integrating the bend angles along it, so the flag keeps its length and the pole edge stays put.
+// The wave fronts run slanted across the cloth, the flag sags as the wind drops and flaps harder in
+// a gale, and the normals follow the folds so they catch the light.
+function flagGlsl(f: FlagCloth) {
+  return `
+const float FLAG_L = ${f.len.toFixed(4)};
+const float FLAG_H = ${f.height.toFixed(4)};
+// bend angle of the cloth (x) and its rate of change up the flag (y) at s along a row h up the hoist;
+// q = (turn at the fly in radians, gale mix, phase)
+vec2 flagAngle(float s, float h, vec3 q) {
+  float k = 7.2 / FLAG_L, kv = 1.8 / FLAG_L;
+  float env = q.x * (0.3 + 0.7 * s / FLAG_L);
+  float a1 = k * s - 6.0 * uTime + q.z + kv * h;
+  float a2 = 1.3 * k * s - 11.0 * uTime + q.z * 1.7 + kv * h;
+  float a3 = 2.1 * k * s - 15.0 * uTime + q.z * 2.3 - 0.6 * kv * h;
+  float th = (1.0 - q.y) * sin(a1) + q.y * sin(a2) + 0.25 * sin(a3);
+  float dh = kv * ((1.0 - q.y) * cos(a1) + q.y * cos(a2) - 0.15 * cos(a3));
+  return env * vec2(th, dh);
+}
+void flagBend(inout vec3 p, inout vec3 nrm) {
+  vec3 n0 = normalize(vec3(nrm.x, 0.0, nrm.z) + vec3(0.0, 0.0, 1e-5));
+  vec3 f = vec3(n0.z, 0.0, -n0.x);
+  float s = uv.x * FLAG_L, h = uv.y * FLAG_H;
+  vec3 hoist = p - f * s;
+  #ifdef USE_INSTANCING
+    mat4 M = modelMatrix * instanceMatrix;
+  #else
+    mat4 M = modelMatrix;
+  #endif
+  vec3 wp = (M * vec4(hoist.x, 0.0, hoist.z, 1.0)).xyz;
+  float ph = dot(wp.xz, vec2(3.7, 5.3));
+  float gust = 0.6 + 0.4 * sin(uTime * 0.23 + wp.x * 0.05);
+  float w = length(uWind) * uWindStrength * uWindAmp * gust * (0.85 + 0.15 * sin(uTime * 1.3 + ph));
+  vec3 q = vec3(mix(0.5, 1.0, smoothstep(0.15, 2.0, w)), smoothstep(0.6, 1.8, w), ph);
+  float sag = mix(0.55, 0.05, smoothstep(0.05, 0.9, w));
+  ${f.align ? `// stream downwind (the wind is in world space)
+  vec2 wd = (transpose(mat3(M)) * vec3(uWind.x, 0.0, uWind.y)).xz;
+  f = vec3(normalize(wd + vec2(1e-5, 0.0)), 0.0).xzy;` : ''}
+  float yaw = 0.1 * sin(uTime * 0.6 + ph) + 0.05 * sin(uTime * 1.7 + ph * 2.0);
+  f = vec3(f.x * cos(yaw) - f.z * sin(yaw), 0.0, f.x * sin(yaw) + f.z * cos(yaw));
+  vec3 n = vec3(-f.z, 0.0, f.x), up = vec3(0.0, 1.0, 0.0);
+  float X = 0.0, Z = 0.0, Xh = 0.0, Zh = 0.0, ds = s / 8.0;
+  for (int i = 0; i < 8; i++) {
+    vec2 a = flagAngle((float(i) + 0.5) * ds, h, q);
+    float c = cos(a.x), sn = sin(a.x);
+    X += c * ds; Z += sn * ds;
+    Xh -= sn * a.y * ds; Zh += c * a.y * ds;
+  }
+  vec2 e = flagAngle(s, h, q);
+  // the hems ripple a little too: the rows lift and drop along the fly
+  float rip = 0.1 * q.x * sin(0.6 * 7.2 / FLAG_L * s - 4.3 * uTime + ph * 0.7) * s / FLAG_L;
+  float cs = cos(sag), ss = sin(sag) - rip;
+  p = hoist + f * (X * cs) - up * (X * ss) + n * Z;
+  vec3 ts = f * (cos(e.x) * cs) - up * (cos(e.x) * ss) + n * sin(e.x);
+  vec3 th = f * (Xh * cs) + up * (1.0 - Xh * ss) + n * Zh;
+  nrm = normalize(cross(ts, th));
+}
+`;
+}
+
+// thin cloth: the sun shines through the side facing away from it, most when you look into the sun
+const CLOTH_GLOW = `{
+    vec3 V = normalize(vViewPosition);
+    vec3 L = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+    float through = max(-dot(normal, L), 0.0) * (0.45 + 0.55 * pow(clamp(dot(-V, L), 0.0, 1.0), 2.0));
+    totalEmissiveRadiance += diffuseColor.rgb * through * 0.4 * (1.0 - uNight * 0.9);
+  }`;
+
+const DEFAULT_FLAG: FlagCloth = { len: 0.46, height: 0.3 };
+const flagKey = (f = DEFAULT_FLAG) => `${f.len},${f.height},${f.align ? 1 : 0}`;
+
 let patchCount = 0;
 
 export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts = {}): T {
@@ -131,7 +214,7 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   (mat as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
   (mat as any).userData.uWindAmp = uWindAmp;
-  const key = `p${o.wind}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.key ?? ''}`;
+  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.key ?? ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
@@ -149,10 +232,16 @@ uniform float uTime;
 uniform vec2 uWind;
 uniform float uWindStrength;
 uniform float uWindAmp;
+${o.wind === 'flag' ? flagGlsl(o.flag ?? DEFAULT_FLAG) : ''}
 ${o.vertexHead ?? ''}
 `);
     let windCode = '';
-    if (o.wind !== 'none') {
+    if (o.wind === 'flag') {
+      vs = vs.replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+  vec3 flagP = position;
+  flagBend(flagP, objectNormal);`);
+      windCode = 'transformed = flagP;';
+    } else if (o.wind !== 'none') {
       windCode = `
   {
     #ifdef USE_INSTANCING
@@ -170,12 +259,7 @@ ${o.vertexHead ?? ''}
     float hgt = max(transformed.y, 0.0);
     float sway = sin(uTime * 2.1 + ph + transformed.x * 3.0) * 0.6 + 0.5;
     transformed.xz += uWind * sway * uWindAmp * uWindStrength * gust * hgt * 0.35;
-    ` : `
-    float fx = max(transformed.x, 0.0);
-    float wave = sin(uTime * 6.0 - fx * 9.0 + ph) * 0.5 + sin(uTime * 9.7 - fx * 15.0 + ph) * 0.2;
-    transformed.z += wave * fx * 0.22 * uWindAmp * uWindStrength;
-    transformed.y -= fx * fx * 0.12;
-    `}
+    ` : ''}
   }`;
     }
     vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -206,8 +290,9 @@ ${o.fragHead ?? ''}
     if (o.fragRough) fs = fs.replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 ${o.fragRough}`);
     if (o.fragNormal) fs = fs.replace('#include <normal_fragment_maps>', o.fragNormal);
-    if (o.fragEmissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-${o.fragEmissive}`);
+    const emissive = (o.wind === 'flag' ? CLOTH_GLOW : '') + (o.fragEmissive ?? '');
+    if (emissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+${emissive}`);
     const grimeAmt = o.grime ?? 0;
     if (grimeAmt > 0) {
       fs = fs.replace('#include <common>', `#include <common>
@@ -268,7 +353,7 @@ export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map
   const uClip = { value: 1e9 };
   (m as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
-  const key = `d${o.wind}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${opts.key ?? ''}`;
+  const key = `d${o.wind}${o.wind === 'flag' ? flagKey(opts.flag) : ''}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${opts.key ?? ''}`;
   m.customProgramCacheKey = () => key;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp, ...(o.uniforms ?? {}) });
@@ -279,9 +364,16 @@ uniform vec2 uWind;
 uniform float uWindStrength;
 uniform float uWindAmp;
 varying float vWY;
+${o.wind === 'flag' ? flagGlsl(opts.flag ?? DEFAULT_FLAG) : ''}
 ${o.vertexHead ?? ''}`);
     let windCode = '';
-    if (o.wind === 'tree') {
+    if (o.wind === 'flag') {
+      windCode = `
+  {
+    vec3 flagN = normal;
+    flagBend(transformed, flagN);
+  }`;
+    } else if (o.wind === 'tree') {
       windCode = `
   {
     #ifdef USE_INSTANCING

@@ -117,7 +117,7 @@ export class BuildingsRenderer {
         const m = o as THREE.Mesh;
         if (!m.isMesh) return;
         m.material = getMaterial(m.userData.matKey);
-        m.customDepthMaterial = undefined;
+        m.customDepthMaterial = m.material.userData.depth;
       });
       for (const m of v.clipMats.values()) m.dispose();
       v.clipDepth?.dispose();

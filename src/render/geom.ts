@@ -120,6 +120,7 @@ function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, seg = 7) {
  *  cheap model shown from afar, whose silhouette and textures are the same. */
 let detail = 1;
 export function setDetail(d: 0 | 1) { detail = d; }
+export function getDetail() { return detail; }
 
 // ---------------------------------------------------------------- walls
 export interface WallOpts {
@@ -701,7 +702,10 @@ export class ModelBuilder {
   private buildLevel(materials: (key: string) => THREE.Material): THREE.Group {
     const group = new THREE.Group();
     for (const [key, merged] of this.mergeParts()) {
-      const mesh = new THREE.Mesh(merged, materials(key));
+      const mat = materials(key);
+      const mesh = new THREE.Mesh(merged, mat);
+      // wind-bent materials (flags) bring a depth material that bends the same way
+      if (mat.userData.depth) mesh.customDepthMaterial = mat.userData.depth;
       mesh.castShadow = !key.startsWith('glow') && key !== 'window';
       mesh.receiveShadow = true;
       mesh.userData.matKey = key;

@@ -944,6 +944,9 @@ export function buildDonkeyGeos() {
 }
 
 // ------------------------------------------------------------------ catapult
+/** the catapult's pennant cloth (see CatapultsRenderer) */
+export const CATAPULT_PENNANT = { len: 0.26, height: 0.13, align: true };
+
 /**
  * A torsion catapult on four wheels, facing +z. `frame` is the chassis with the A-frame and the
  * windlass; `wheel` is one wheel centred on its axle (placed four times); `arm` is the throwing
@@ -1005,10 +1008,11 @@ export function buildCatapultGeos() {
   arm.push(B(0.03, 0.4, 0.03, 0, 0.75, 0.05, iron));
   const st = new THREE.DodecahedronGeometry(0.1, 0);
   st.translate(0, 1.07, 0);
-  const pennant = new THREE.BoxGeometry(0.26, 0.13, 0.012);
-  pennant.translate(-0.34 + 0.14, 1.4, 0.14);
+  // a cloth plane hoisted on the pole; it keeps its uvs, which the flag shader bends it by
+  const pennant = new THREE.PlaneGeometry(CATAPULT_PENNANT.len, CATAPULT_PENNANT.height, 10, 2);
+  pennant.translate(-0.33 + CATAPULT_PENNANT.len / 2, 1.4, 0.14);
   colorize(pennant, () => [1, 1, 1]);
-  return { frame: merge(frame), wheel: merge(wheel), arm: merge(arm), stone: prep(tint(st, stone, 0.18)), flag: prep(pennant) };
+  return { frame: merge(frame), wheel: merge(wheel), arm: merge(arm), stone: prep(tint(st, stone, 0.18)), flag: pennant.toNonIndexed() };
 }
 
 // ------------------------------------------------------------------ goods
