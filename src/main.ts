@@ -178,7 +178,10 @@ function setupGlobalInput() {
     else if (k === '2') speed = pausedSpeed = 2;
     else if (k === '3') speed = pausedSpeed = 3;
     else if (k === '4') speed = pausedSpeed = 4;
-    else if (k === 'h' || k === 'H') {
+    else if (k === 'n' || k === 'N') {
+      const n = audio.skipTrack(e.shiftKey ? -1 : 1);
+      if (n) hud.message(`Music: track ${n} of ${audio.trackCount}`);
+    } else if (k === 'h' || k === 'H') {
       const hq = game.buildings.get(game.players[game.local].hq);
       if (hq) gr.cam.jumpTo(hq.cx, hq.cz + 3);
     } else if (k === 'Delete' || k === 'Backspace') {

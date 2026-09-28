@@ -78,6 +78,7 @@ const KEYS_GAME: [string, string][] = [
   ['<kbd>F10</kbd>', 'Open or close this menu'],
   ['<kbd>Space</kbd>', 'Pause without the menu'],
   ['<kbd>1</kbd> – <kbd>4</kbd>', 'Game speed'],
+  ['<kbd>N</kbd>', 'Next music track (<kbd>Shift</kbd> for the previous one)'],
 ];
 const KEYS_TOUCH: [string, string][] = [
   ['Drag', 'Pan'],
@@ -281,7 +282,7 @@ export class GameMenu {
     c.appendChild(this.slider('Effects', 'Work, building and battle sounds', 0, 1, 0.01, () => prefs.sfx, (v) => { prefs.sfx = v; apply(); }, pct, () => a.play('built')));
     c.appendChild(this.slider('Ambience', 'Wind, rain and birdsong', 0, 1, 0.01, () => prefs.ambience, (v) => { prefs.ambience = v; apply(); }, pct));
     c.appendChild(h('h3', '', 'Music'));
-    c.appendChild(this.toggle('Play music', a.soundtrack ? 'The soundtrack, shuffled' : 'A generative lute over a drone', () => prefs.musicOn, (v) => { prefs.musicOn = v; apply(); }));
+    c.appendChild(this.toggle('Play music', a.soundtrack ? 'The soundtrack in order; N skips to the next track' : 'A generative lute over a drone', () => prefs.musicOn, (v) => { prefs.musicOn = v; apply(); }));
     c.appendChild(this.slider('Music volume', '', 0, 1, 0.01, () => prefs.music, (v) => { prefs.music = v; apply(); }, pct));
     this.resetButton(c, 'Reset sound to defaults', () => {
       const d = defaultPrefs();

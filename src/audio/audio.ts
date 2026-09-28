@@ -73,8 +73,8 @@ export class Audio {
   private track: HTMLAudioElement | null = null;
   /** tracks believed playable; empty once the soundtrack failed to load */
   private tracks = TRACKS.slice();
-  private queue: Track[] = [];
-  private current: Track | null = null;
+  /** index into TRACKS of the track loaded now */
+  private trackIdx = -1;
   private trackOk = false;
   /** the browser refused play() without a gesture: retry on the next one */
   private trackBlocked = false;
@@ -174,31 +174,34 @@ export class Audio {
     el.onended = () => { this.trackTimer = window.setTimeout(() => this.nextTrack(), 4000 + Math.random() * 8000); };
     el.onerror = () => {
       // the first track failing means this build has no soundtrack; later ones are just skipped
-      this.tracks = this.trackOk ? this.tracks.filter((tr) => tr !== this.current) : [];
-      this.queue = this.queue.filter((tr) => this.tracks.includes(tr));
+      this.tracks = this.trackOk ? this.tracks.filter((tr) => tr !== TRACKS[this.trackIdx]) : [];
       this.nextTrack();
     };
     this.track = el;
     this.nextTrack();
   }
 
-  private nextTrack() {
+  /** Jump to the next (1) or previous (-1) track. Returns its number, or 0 without a soundtrack. */
+  skipTrack(dir: 1 | -1) {
+    if (!this.track || !this.soundtrack) return 0;
+    this.nextTrack(dir);
+    return this.trackIdx + 1;
+  }
+  get trackCount() {
+    return TRACKS.length;
+  }
+
+  private nextTrack(dir: 1 | -1 = 1) {
     clearTimeout(this.trackTimer);
     const el = this.track;
     if (!el || !this.tracks.length) return;
-    if (!this.queue.length) {
-      const q = this.tracks.slice();
-      for (let i = q.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [q[i], q[j]] = [q[j], q[i]];
-      }
-      // no repeat across the reshuffle
-      if (q.length > 1 && q[0] === this.current) q.push(q.shift()!);
-      this.queue = q;
-    }
-    this.current = this.queue.shift()!;
-    this.trackGain.gain.value = trackLevel(this.current);
-    el.src = MUSIC_DIR + this.current.file;
+    // in numerical order, skipping any that failed, and round again after the last
+    const n = TRACKS.length;
+    do this.trackIdx = (this.trackIdx + dir + n) % n;
+    while (!this.tracks.includes(TRACKS[this.trackIdx]));
+    const tr = TRACKS[this.trackIdx];
+    this.trackGain.gain.value = trackLevel(tr);
+    el.src = MUSIC_DIR + tr.file;
     if (this.musicOn) this.playTrack();
   }
 
