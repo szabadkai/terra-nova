@@ -476,7 +476,7 @@ export function orderShipBombard(g: Game, owner: number, ids: Iterable<number>, 
   }
   if (n) {
     g.emit({ type: 'order', x: b.cx, z: b.cz, owner, kind: 'attack' });
-    g.message(b.owner, `Enemy warships are sailing on your ${b.def.name}!`, b.cx, b.cz, 'bad');
+    g.message(b.owner, `Enemy warships are sailing on your ${b.def.name}!`, b.cx, b.cz, 'bad', b.id);
     b.underAttackT = Math.max(b.underAttackT, 20);
   }
   return n;

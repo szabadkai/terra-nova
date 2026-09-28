@@ -12,6 +12,7 @@ import { donkeyCap, donkeysOf, marketsOf, spawnDonkey } from './trade';
 import { catapultCap, catapultsOf, mendWalls, spawnCatapult } from './siege';
 import { CATAPULT_PARTS } from './defs';
 import { setStall, setStatus } from './status';
+import { consume } from './flow';
 
 const SITE_DIGGERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 const SITE_BUILDERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
@@ -80,7 +81,7 @@ export function onBuildingComplete(g: Game, b: Building, instant: boolean) {
   }
   if (!instant) {
     g.emit({ type: 'built', b: b.id, x: b.cx, z: b.cz, owner: b.owner });
-    g.message(b.owner, `${b.def.name} completed`, b.cx, b.cz, 'good');
+    g.message(b.owner, `${b.def.name} completed`, b.cx, b.cz, 'good', b.id);
   }
   g.world.splatDirty = true;
   if (b.def.military) g.territoryDirty = true;
@@ -159,7 +160,7 @@ function updateProduction(g: Game, b: Building, dt: number) {
       return;
     }
     if (b.type === 'siegeworks' && catapultsOf(g, b.owner) >= catapultCap(g, b.owner)) { setStatus(b, 'The yard is full of catapults'); return; }
-    for (const inp of def.inputs ?? []) takeInput(b, inp.goods);
+    for (const inp of def.inputs ?? []) { const gd = takeInput(b, inp.goods); if (gd) consume(g, b.owner, gd); }
     b.working = true;
     b.workT = 0;
     (b as any).curOut = out;
@@ -250,6 +251,7 @@ function updateBarracks(g: Game, b: Building, dt: number) {
       enter(g, s, b);
       b.stock[weapon]--;
       b.outgoing[weapon]--;
+      consume(g, b.owner, weapon);
       taken = true;
       s.carrying = weapon; // held while training, so a saved game knows what the recruit will become
       setStatus(b, 'Training soldier');
@@ -462,7 +464,7 @@ function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) 
       done = true;
       deliveries.delete(s);
       to.incoming[gd]--;
-      if (isSite(to) && (gd === 'board' || gd === 'stone')) to.delivered[gd]++;
+      if (isSite(to) && (gd === 'board' || gd === 'stone')) { to.delivered[gd]++; consume(g, to.owner, gd); } // built in: used up
       else to.stock[gd]++;
       s.carrying = null;
       picked = false;
@@ -636,6 +638,7 @@ export function equip(g: Game, s: Settler, src: Building, tool: Good, job: Job, 
       if (!g.buildings.has(src.id) || src.stock[tool] <= 0) return false;
       src.stock[tool]--;
       src.outgoing[tool]--;
+      consume(g, s.owner, tool);
       taken = true;
       s.job = job;
       s.task = '';

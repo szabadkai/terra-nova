@@ -16,6 +16,7 @@ import { updateFaith } from './faith';
 import { cancelVoyage, findDock, sinkFleet, updateSea } from './sea';
 import { updateSigns } from './geology';
 import { updateTrade } from './trade';
+import { sampleFlow, type FlowSample } from './flow';
 
 export interface PlayerState {
   id: number;
@@ -29,6 +30,10 @@ export interface PlayerState {
   militaryT: number;
   morale: number;
   produced: Record<Good, number>;
+  /** goods used up: inputs taken, materials built into sites, tools and weapons handed out (flow.ts) */
+  used: Record<Good, number>;
+  /** produced and used so far, sampled once a minute */
+  flow: FlowSample[];
   history: { t: number; pop: number; soldiers: number; buildings: number; goods: number }[];
   hq: number;
   mana: number;
@@ -136,7 +141,7 @@ export class Game {
     return {
       id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
       swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
-      produced: emptyStock(), history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0, traded: 0,
+      produced: emptyStock(), used: emptyStock(), flow: [], history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0, traded: 0,
     };
   }
 
@@ -145,8 +150,9 @@ export class Game {
     if (this.events.length > 2000) this.events.splice(0, 1000);
   }
 
-  message(owner: number, text: string, x?: number, z?: number, kind = 'info') {
-    if (owner === this.local) this.emit({ type: 'msg', text, x, z, owner, kind });
+  /** A message for the local player; `b`, a building a click on it opens. */
+  message(owner: number, text: string, x?: number, z?: number, kind = 'info', b?: number) {
+    if (owner === this.local) this.emit({ type: 'msg', text, x, z, owner, kind, b });
   }
 
   // ------------------------------------------------------------ setup
@@ -685,6 +691,7 @@ export class Game {
       this.checkT = 2;
       this.checkVictory();
       this.recordHistory();
+      sampleFlow(this);
       updateSigns(this);
     }
   }

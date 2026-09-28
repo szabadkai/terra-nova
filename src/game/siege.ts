@@ -176,7 +176,7 @@ export function siegeHit(g: Game, p: Projectile) {
     const v = g.settlers.get(id);
     if (v && !v.dead) {
       kill(g, v);
-      g.message(b.owner, `A ${p.by ? 'warship’s' : 'catapult'} stone struck your ${b.def.name} — a soldier was killed`, b.cx, b.cz, 'bad');
+      g.message(b.owner, `A ${p.by ? 'warship’s' : 'catapult'} stone struck your ${b.def.name} — a soldier was killed`, b.cx, b.cz, 'bad', b.id);
     }
     return;
   }
@@ -184,7 +184,7 @@ export function siegeHit(g: Game, p: Projectile) {
   const hits = siegeHits(b);
   const who = p.by ? 'warships' : 'catapults';
   if (b.damage < hits - 1e-6) {
-    if (b.damage < 1.5) g.message(b.owner, `${p.by ? 'Warships' : 'Catapults'} are battering your ${b.def.name}!`, b.cx, b.cz, 'bad');
+    if (b.damage < 1.5) g.message(b.owner, `${p.by ? 'Warships' : 'Catapults'} are battering your ${b.def.name}!`, b.cx, b.cz, 'bad', b.id);
     return;
   }
   g.message(b.owner, `Your ${b.def.name} was razed by ${who}!`, b.cx, b.cz, 'bad');

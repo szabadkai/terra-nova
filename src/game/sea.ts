@@ -14,6 +14,7 @@ import { isSoldier } from './military';
 import { Need, availableAt, needsOf } from './economy';
 import { afloat, mendShip, shipFields, sinkStep, tradeShipsOf, warshipStep, warshipsOf } from './naval';
 import { setStall, setStatus } from './status';
+import { consume } from './flow';
 
 const SHIP_SPEED = 2.7; // nodes per second at full sail
 const WARSHIP_SPEED = 3.1; // sail and oars
@@ -541,6 +542,8 @@ export function shipwrightThink(g: Game, s: Settler, b: Building) {
     A.anim('hammer', 5.2, b.dock, (t) => { if (Math.floor(t * 2.2) !== Math.floor((t - 0.05) * 2.2)) g.emit({ type: 'hammer', x: s.x, z: s.z }); }),
     A.do(() => {
       if (!g.buildings.has(b.id) || b.state !== 'done') return false;
+      consume(g, b.owner, 'board');
+      if (tookIron) consume(g, b.owner, 'iron');
       took = tookIron = false;
       b.shipProgress = Math.min(1, b.shipProgress + 1 / (b.shipKind === 'war' ? WARSHIP_BOARDS : SHIP_BOARDS));
       b.prodCount++;

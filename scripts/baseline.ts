@@ -1,10 +1,13 @@
 // One balance sample, printed as a JSON line, so many can run in parallel and be compared by median.
 //   passive <seed> <level> [islands]: the human player does nothing; when does the AI first attack?
 //   aivai <seed> <level> [islands]: AI against AI for up to 150 minutes; when (and whether) does it end?
+// Each sample also lists what each side is stuck on at the end, followed upstream to its root causes.
 // Usage: npx tsx scripts/baseline.ts passive 99 0 1
 // Many:  for l in 0 1 2; do for s in 99 199 299 399 499; do echo "passive $((s+l)) $l 1"; done; done | xargs -P 8 -L 1 npx tsx scripts/baseline.ts
 import { Game } from '../src/game/game';
 import { AIController } from '../src/game/ai';
+import { causeLine, causeOf, rootCauses } from '../src/game/causes';
+import { stalledBuildings } from '../src/game/status';
 
 const [mode = 'passive', seedS = '99', levelS = '1', islandsS = '1'] = process.argv.slice(2);
 const seed = Number(seedS), level = Number(levelS), islands = islandsS !== '0';
@@ -33,6 +36,14 @@ const out = {
   soldiers: g.players.map((p) => g.population(p.id).soldiers),
   buildings: g.players.map((p) => g.countBuildings(p.id)),
   traded: g.players.map((p) => p.traded),
+  // what each side is stuck on at the end, followed upstream to the root causes, by count
+  stalls: g.players.map((p) => {
+    const by: Record<string, number> = {};
+    for (const b of stalledBuildings(g, p.id)) {
+      for (const r of rootCauses(causeOf(g, b)!)) { const k = causeLine({ ...r, ids: r.ids.slice(0, 1) }); by[k] = (by[k] ?? 0) + 1; }
+    }
+    return by;
+  }),
   ms: Date.now() - t0,
 };
 console.log(JSON.stringify(out));

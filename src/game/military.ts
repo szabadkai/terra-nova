@@ -64,7 +64,7 @@ export function recomputeTerritory(g: Game) {
     if (b.def.military && b.occupied) continue;
     const c = w.idx(Math.round(b.cx), Math.round(b.cz));
     if (w.owner[c] !== b.owner) {
-      g.message(b.owner, `${b.def.name} was lost to the enemy!`, b.cx, b.cz, 'bad');
+      g.message(b.owner, `${b.def.name} was lost to the enemy!`, b.cx, b.cz, 'bad', b.id);
       g.destroyBuilding(b, true);
     }
   }
@@ -187,7 +187,7 @@ export function sendSoldierTo(g: Game, s: Settler, b: Building) {
         b.occupied = true;
         g.territoryDirty = true;
         g.emit({ type: 'occupied', b: b.id, x: b.cx, z: b.cz, owner: b.owner });
-        g.message(b.owner, `${b.def.name} is now manned — territory expanded`, b.cx, b.cz, 'good');
+        g.message(b.owner, `${b.def.name} is now manned — territory expanded`, b.cx, b.cz, 'good', b.id);
       }
     }),
   ], () => {
@@ -227,7 +227,7 @@ export function launchAttack(g: Game, owner: number, target: Building, count: nu
   }
   if (soldiers.length) {
     g.emit({ type: 'attack', b: target.id, owner, x: target.cx, z: target.cz });
-    g.message(target.owner, `Your ${target.def.name} is under attack!`, target.cx, target.cz, 'bad');
+    g.message(target.owner, `Your ${target.def.name} is under attack!`, target.cx, target.cz, 'bad', target.id);
     target.underAttackT = 20;
   }
   return soldiers.length;
@@ -548,8 +548,8 @@ function thinkDefend(g: Game, s: Settler): boolean {
 
 function capture(g: Game, b: Building, s: Settler) {
   const prev = b.owner;
-  g.message(prev, `Your ${b.def.name} has been captured!`, b.cx, b.cz, 'bad');
-  g.message(s.owner, `We captured an enemy ${b.def.name}!`, b.cx, b.cz, 'good');
+  g.message(prev, `Your ${b.def.name} has been captured!`, b.cx, b.cz, 'bad', b.id);
+  g.message(s.owner, `We captured an enemy ${b.def.name}!`, b.cx, b.cz, 'good', b.id);
   g.emit({ type: 'captured', b: b.id, owner: s.owner, x: b.cx, z: b.cz });
   if (b.type === 'hq') {
     // the headquarters is razed

@@ -166,7 +166,7 @@ export function restore(saved: SaveData): Game {
   // records are laid over freshly made ones, so fields added since the save get their defaults
   g.players = d.players.map((p, i) => {
     const fresh = g.newPlayer(p.id ?? i);
-    return Object.assign(fresh, p, { produced: stockOf(p.produced), toolPrio: { ...fresh.toolPrio, ...p.toolPrio } });
+    return Object.assign(fresh, p, { produced: stockOf(p.produced), used: stockOf(p.used), flow: p.flow ?? [], toolPrio: { ...fresh.toolPrio, ...p.toolPrio } });
   });
   for (const b of d.buildings) {
     const nb = Object.assign(g.newBuilding(b.id, b.type, b.owner, b.x, b.y), b);

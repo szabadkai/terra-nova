@@ -30,6 +30,9 @@ import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLa
 import { buildingIcons, goodIcons } from './icons';
 import { StallBadges } from './stallBadges';
 import { stalled } from '../game/status';
+import { StallWatch, type Alert } from '../game/alerts';
+import { aName, causeLine, causeOf, causeSteps, rootCauses } from '../game/causes';
+import { FLOW_WINDOW, flowHistory, flowReport, trend } from '../game/flow';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
 import { prefs } from './prefs';
@@ -113,6 +116,12 @@ export class HUD {
   /** badges over stalled buildings, and the one the ⚠ button went to last */
   stalls: StallBadges;
   private stallAt = 0;
+  private stallTipAt = -1e9;
+  private stallTipHtml = '';
+  /** raises a toast when a stall that used to go unnoticed sets in */
+  private watch: StallWatch;
+  /** the good the Statistics tab charts */
+  private chartGood: Good = 'board';
 
   constructor(private game: Game, private gr: GameRenderer, private audio: Audio, private hooks: HudHooks, parent: HTMLElement) {
     this.root = h('div', 'hud');
@@ -120,6 +129,7 @@ export class HUD {
     // first, so every panel sits above the badges
     this.stalls = new StallBadges(game, gr, (b) => { this.audio.play('ui'); this.select({ kind: 'building', id: b.id }); });
     this.root.appendChild(this.stalls.layer);
+    this.watch = new StallWatch(game.local);
     this.buildTop();
     this.buildLeft();
     this.info = h('div', 'panel info hidden');
@@ -149,7 +159,12 @@ export class HUD {
     // the bar is redrawn twice a second, so the ⚠ button is handled here rather than on the button
     this.top.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('#stalls')) this.nextStall((e as MouseEvent).shiftKey); });
     this.top.addEventListener('mousemove', (e) => {
-      if ((e.target as HTMLElement).closest('#stalls')) this.showTip(e, this.stallTip());
+      if ((e.target as HTMLElement).closest('#stalls')) {
+        // the chains behind it are walked at most twice a second, not on every move of the pointer
+        const now = performance.now();
+        if (now - this.stallTipAt > 500) { this.stallTipAt = now; this.stallTipHtml = this.stallTip(); }
+        this.showTip(e, this.stallTipHtml);
+      }
       else if ((e.target as HTMLElement).closest('.topbar')) this.hideTip();
     });
     this.top.addEventListener('mouseleave', () => this.hideTip());
@@ -234,6 +249,7 @@ export class HUD {
     for (const [id, ic, label] of defs) {
       const b = h('button', 'tab' + (id === this.tab ? ' on' : ''), `<span>${ic}</span>`);
       b.title = label;
+      b.dataset.tab = id;
       b.onclick = () => {
         this.tab = id;
         tabs.querySelectorAll('.tab').forEach((x) => x.classList.remove('on'));
@@ -335,15 +351,7 @@ export class HUD {
 
   private renderGoods(c: HTMLElement) {
     const g = this.game;
-    const st = g.totalStock(g.local);
-    c.appendChild(h('h3', '', 'Stockpiles'));
-    const grid = h('div', 'ggrid');
-    for (const gd of GOODS) {
-      const cell = h('div', 'gcell' + (st[gd] ? '' : ' zero'), `${this.icon(gd)}<span>${st[gd]}</span>`);
-      cell.title = GOOD_NAMES[gd];
-      grid.appendChild(cell);
-    }
-    c.appendChild(grid);
+    this.renderFlow(c);
     c.appendChild(h('h3', '', 'Tool production'));
     c.appendChild(h('p', 'note', 'The toolsmith forges what idle buildings are missing. Raise a priority to stockpile extra.'));
     const p = g.players[g.local];
@@ -400,6 +408,48 @@ export class HUD {
     const inp = row.querySelector('input')!;
     inp.oninput = () => { p.swordRatio = Number(inp.value) / 100; row.querySelector('span')!.textContent = inp.value + '%'; };
     c.appendChild(row);
+  }
+
+  /** Stock of each good next to how much was made and used in the last ten minutes, with the way it is going. */
+  private renderFlow(c: HTMLElement) {
+    const g = this.game;
+    const st = g.totalStock(g.local);
+    const rep = flowReport(g, g.local);
+    const mins = Math.max(1, Math.round(rep.span / 60));
+    c.appendChild(h('h3', '', `Goods <small class="muted">made · used, last ${mins >= FLOW_WINDOW / 60 ? FLOW_WINDOW / 60 : mins} min</small>`));
+    const table = h('div', 'flow');
+    table.appendChild(h('div', 'frow fhead', '<span></span><span>Stock</span><span>Made</span><span>Used</span><span title="Made (green) and used (red), two minutes a bar">Trend</span>'));
+    const quiet: Good[] = [];
+    const arrow = (t: number) => (t > 0 ? '<i class="up">▲</i>' : t < 0 ? '<i class="down">▼</i>' : '');
+    for (const gd of GOODS) {
+      const f = rep.goods[gd];
+      if (!f.made && !f.used && !f.madeSeries.some(Boolean) && !f.usedSeries.some(Boolean)) { quiet.push(gd); continue; }
+      const net = f.made - f.used;
+      const row = h('button', `frow${net < 0 && st[gd] < f.used - f.made ? ' short' : ''}`);
+      row.innerHTML = `${this.icon(gd)}<b>${st[gd]}</b><span class="fmade">${f.made ? `+${f.made}` : '·'}${arrow(trend(f.made, f.prevMade))}</span><span class="fused">${f.used ? `−${f.used}` : '·'}${arrow(trend(f.used, f.prevUsed))}</span>${spark(f.madeSeries, f.usedSeries)}`;
+      const before = f.prevMade !== null ? `<br><span class="muted">The ten minutes before: ${f.prevMade} made, ${f.prevUsed} used</span>` : '';
+      const tip = `<b>${GOOD_NAMES[gd]}</b>: ${st[gd]} in stock<br>Made ${f.made}, used ${f.used} in the last ${mins} min${net ? ` — ${net > 0 ? `${net} to spare` : `${-net} more used than made`}` : ''}${before}<br><span class="muted">Click to chart it over the whole game</span>`;
+      row.onmouseenter = (e) => this.showTip(e as MouseEvent, tip);
+      row.onmouseleave = () => this.hideTip();
+      row.onclick = () => { this.chartGood = gd; this.hideTip(); this.openTab('stats'); };
+      table.appendChild(row);
+    }
+    if (table.children.length === 1) table.appendChild(h('p', 'note', 'Nothing made or used yet.'));
+    c.appendChild(table);
+    if (quiet.length) {
+      const idle = h('div', 'ggrid small fquiet');
+      idle.title = 'Not made or used lately';
+      for (const gd of quiet) idle.appendChild(h('div', 'gcell' + (st[gd] ? '' : ' zero'), `${this.icon(gd)}<span>${st[gd]}</span>`));
+      c.appendChild(idle);
+    }
+  }
+
+  /** Switch the left panel to a tab, as its button does. */
+  private openTab(id: Tab) {
+    this.tab = id;
+    this.left.querySelectorAll<HTMLElement>('.tab').forEach((x) => x.classList.toggle('on', x.dataset.tab === id));
+    this.audio.play('ui');
+    this.renderTab();
   }
 
   private renderMilitary(c: HTMLElement) {
@@ -538,6 +588,19 @@ export class HUD {
     c.appendChild(h('h3', '', 'Soldiers over time'));
     c.appendChild(canvas2);
     this.drawChart(canvas2, 'soldiers');
+    c.appendChild(h('h3', '', 'Goods made and used'));
+    const pick = h('select', 'fpick') as HTMLSelectElement;
+    pick.innerHTML = GOODS.map((gd) => `<option value="${gd}"${gd === this.chartGood ? ' selected' : ''}>${GOOD_NAMES[gd]}</option>`).join('');
+    pick.setAttribute('aria-label', 'Good to chart');
+    const canvas3 = document.createElement('canvas');
+    canvas3.width = 540;
+    canvas3.height = 240;
+    canvas3.className = 'chart';
+    pick.onchange = () => { this.chartGood = pick.value as Good; this.drawFlowChart(canvas3, this.chartGood); };
+    c.appendChild(pick);
+    c.appendChild(canvas3);
+    c.appendChild(h('p', 'note', '<i class="sw" style="background:#8ee07a"></i>made · <i class="sw" style="background:#ff7a64"></i>used, per five minutes'));
+    this.drawFlowChart(canvas3, this.chartGood);
     const p = g.players[g.local];
     c.appendChild(h('h3', '', 'Produced so far'));
     const grid = h('div', 'ggrid');
@@ -572,6 +635,36 @@ export class HUD {
         const x = pad + ((W - pad - 8) * hpt.t) / maxT, y = pad + (H - pad * 2) * (1 - hpt[key] / maxV);
         if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y);
       });
+      ctx.stroke();
+    }
+  }
+
+  /** Made and used of one good per five minutes over the whole game. */
+  private drawFlowChart(cv: HTMLCanvasElement, gd: Good) {
+    const ctx = cv.getContext('2d')!;
+    const W = cv.width, H = cv.height, pad = 30;
+    ctx.clearRect(0, 0, W, H);
+    const pts = flowHistory(this.game, this.game.local, gd, 300);
+    let maxV = 4;
+    for (const q of pts) maxV = Math.max(maxV, q.made, q.used);
+    const maxT = Math.max(600, this.game.time);
+    ctx.strokeStyle = 'rgba(241,230,207,0.15)';
+    ctx.fillStyle = 'rgba(241,230,207,0.6)';
+    ctx.font = '16px Inter, sans-serif';
+    ctx.lineWidth = 1;
+    for (let k = 0; k <= 4; k++) {
+      const y = pad + ((H - pad * 2) * k) / 4;
+      ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - 8, y); ctx.stroke();
+      ctx.fillText(String(Math.round(maxV * (1 - k / 4))), 2, y + 5);
+    }
+    ctx.fillText(`${Math.round(maxT / 60)} min`, W - 64, H - 6);
+    if (!pts.length) { ctx.fillText('Charted every five minutes', pad + 8, H / 2); return; }
+    for (const [key, col] of [['made', '#8ee07a'], ['used', '#ff7a64']] as const) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(pad, H - pad);
+      for (const q of pts) ctx.lineTo(pad + ((W - pad - 8) * q.t) / maxT, pad + (H - pad * 2) * (1 - q[key] / maxV));
       ctx.stroke();
     }
   }
@@ -1236,6 +1329,7 @@ export class HUD {
       if (b.status && !d.military) {
         const since = stalled(g, b) ? g.time - b.stallT : 0;
         body += `<div class="status ${b.stall || (b.state !== 'done' && /Waiting/.test(b.status)) ? 'warn' : ''}">${b.status}${since >= 60 ? ` <span class="muted">· ${Math.floor(since / 60)} min</span>` : ''}</div>`;
+        if (mine && b.stall) body += this.causeSection(b);
       }
     }
     const buttons: string[] = [];
@@ -1257,6 +1351,18 @@ export class HUD {
       <div class="ihead"><img src="${buildingIcons.get(b.type) ?? ''}"><div><h2>${d.name}</h2><div class="owner"><i class="sw" style="background:${hex(PLAYER_COLORS[b.owner])}"></i>${owner.name}</div></div><button class="close" data-act="close">✕</button></div>
       <div class="ibody">${body}</div>
       <div class="ibtns">${buttons.join('')}</div>`;
+    this.info.querySelectorAll<HTMLElement>('[data-cause]').forEach((el) => {
+      el.onclick = () => {
+        const to = g.buildings.get(Number(el.dataset.cause));
+        if (!to) return;
+        this.audio.play('ui');
+        this.gr.cam.jumpTo(to.cx, to.cz + 2);
+        this.select({ kind: 'building', id: to.id });
+      };
+    });
+    this.info.querySelectorAll<HTMLElement>('[data-build]').forEach((el) => {
+      el.onclick = () => this.startPlacing(el.dataset.build as BuildingType);
+    });
     this.info.querySelectorAll<HTMLElement>('[data-act]').forEach((el) => {
       const act = el.dataset.act!;
       if (act === 'count') {
@@ -1441,6 +1547,27 @@ export class HUD {
   }
 
   // ------------------------------------------------------------ stalls
+  /** Why the building is stuck, followed upstream: one row per step (a click goes there), then what to do about it. */
+  private causeSection(b: Building): string {
+    const c = causeOf(this.game, b);
+    if (!c) return '';
+    const steps = causeSteps(c);
+    const roots = rootCauses(c);
+    const missing = roots.find((r) => r.type && !r.ids.length && r.hint && BUILDINGS[r.type].buildable !== false);
+    // the button says it for the building that is missing
+    const hints = [...new Set(roots.map((r) => r.hint).filter((t) => t && (!missing || t !== `Build ${aName(BUILDINGS[missing.type!].name)}`)))].slice(0, 2);
+    if (!steps.length && !hints.length) return '';
+    const rows = steps.slice(0, 8).map(({ c: s, depth }) => {
+      const icon = s.type ? `<img class="ci" src="${buildingIcons.get(s.type) ?? ''}" alt="">` : '<span class="cdot"></span>';
+      const cls = `cause${s.bad ? ' bad' : ''}${s.ids.length ? ' go' : ''}`;
+      const attr = s.ids.length ? ` data-cause="${s.ids[0]}" title="Go to the ${BUILDINGS[s.type!].name}"` : '';
+      return `<div class="${cls}" style="--d:${depth}"${attr}><span class="carr">↳</span>${icon}<span>${causeLine(s)}</span></div>`;
+    }).join('');
+    const tips = hints.map((t) => `<div class="chint">${t}</div>`).join('');
+    const build = missing ? `<button class="mini cbuild" data-build="${missing.type}">⚒ Build ${BUILDINGS[missing.type!].name}</button>` : '';
+    return `<div class="causes">${rows}${tips}${build}</div>`;
+  }
+
   /** Go to the next stalled building (Shift: the one before) and open it, like an RTS's idle-worker button. */
   nextStall(back = false) {
     const list = this.stalls.stalled;
@@ -1459,28 +1586,95 @@ export class HUD {
     const list = this.stalls.stalled;
     if (!list.length) return '<b>⚠ Stalled buildings</b><br><span class="muted">None: every workshop is busy or has nothing to wait for.</span>';
     const by = new Map<string, string[]>();
-    for (const b of list) { const r = by.get(b.status) ?? []; r.push(b.def.name); by.set(b.status, r); }
+    const root = new Map<string, string>();
+    for (const b of list) {
+      const r = by.get(b.status) ?? [];
+      r.push(b.def.name);
+      by.set(b.status, r);
+      // where the first of each group's chain ends
+      if (!root.has(b.status)) {
+        const c = causeOf(this.game, b);
+        root.set(b.status, c && c.next.length ? [...new Set(rootCauses(c).map(causeLine))].slice(0, 2).join(' · ') : '');
+      }
+    }
     const named = (names: string[]) => {
       const n = new Map<string, number>();
       for (const x of names) n.set(x, (n.get(x) ?? 0) + 1);
       return [...n].map(([x, k]) => (k > 1 ? `${x} ×${k}` : x)).join(', ');
     };
     const rows = [...by].sort((a, b) => b[1].length - a[1].length).slice(0, 8)
-      .map(([why, names]) => `${why}: <span class="muted">${named(names)}</span>`);
+      .map(([why, names]) => `${why}: <span class="muted">${named(names)}</span>${root.get(why) ? `<br><span class="troot">↳ ${root.get(why)}</span>` : ''}`);
     return `<b>⚠ ${list.length} stalled building${list.length > 1 ? 's' : ''}</b><br>${rows.join('<br>')}${by.size > 8 ? '<br>…' : ''}<br><span class="muted">Click or press <b>.</b> to go to the next (Shift: back)</span>`;
   }
 
-  // ------------------------------------------------------------ messages / tooltip
-  message(text: string, x?: number, z?: number, kind = 'info') {
-    const m = h('div', `msg msg-${kind}`, text); // prefixed: a bare 'info' class would pick up the selection panel's fixed layout
-    if (x !== undefined && z !== undefined) {
-      m.classList.add('link');
-      m.onclick = () => this.gr.cam.jumpTo(x, z + 2);
+  // ------------------------------------------------------------ messages / toasts / tooltip
+  /** A message in the column on the right. One with a place jumps the camera there when clicked, and opens the building if it names one. */
+  message(text: string, x?: number, z?: number, kind = 'info', b?: number) {
+    this.toast({ title: text, x, z, kind, b });
+  }
+
+  /** A toast: slides in, fades after `ttl` seconds unless the pointer rests on it, goes to its place when clicked. */
+  toast(o: { title: string; detail?: string; hint?: string; icon?: string; kind?: string; x?: number; z?: number; b?: number; action?: { label: string; run: () => void }; ttl?: number }) {
+    const rich = !!(o.detail || o.hint || o.icon || o.action);
+    // prefixed: a bare 'info' class would pick up the selection panel's fixed layout
+    const m = h('div', `msg msg-${o.kind ?? 'info'}${rich ? ' toast' : ''}`, rich ? '' : o.title);
+    if (rich) {
+      m.innerHTML = `${o.icon ? `<img class="ticon" src="${o.icon}" alt="">` : ''}<div class="ttext"><div class="ttitle">${o.title}</div>${o.detail ? `<div class="tdetail">${o.detail}</div>` : ''}${o.hint ? `<div class="thint">${o.hint}</div>` : ''}${o.action ? `<button class="tact">${o.action.label}</button>` : ''}</div><button class="tclose" aria-label="Dismiss" title="Dismiss">✕</button>`;
+      m.querySelector<HTMLElement>('.tclose')!.onclick = (e) => { e.stopPropagation(); m.remove(); };
+      const act = m.querySelector<HTMLElement>('.tact');
+      if (act && o.action) act.onclick = (e) => { e.stopPropagation(); this.audio.play('ui'); o.action!.run(); m.remove(); };
     }
+    if (o.x !== undefined && o.z !== undefined) {
+      m.classList.add('link');
+      m.onclick = () => {
+        this.gr.cam.jumpTo(o.x!, o.z! + 2);
+        const b = o.b ? this.game.buildings.get(o.b) : undefined;
+        if (b) { this.audio.play('ui'); this.select({ kind: 'building', id: b.id }); }
+      };
+    }
+    // it stays while the pointer rests on it, and goes a few seconds after it leaves
+    let fadeT = 0, dropT = 0;
+    const arm = (sec: number) => {
+      clearTimeout(fadeT); clearTimeout(dropT);
+      m.classList.remove('fade');
+      fadeT = window.setTimeout(() => m.classList.add('fade'), sec * 1000);
+      dropT = window.setTimeout(() => m.remove(), sec * 1000 + 1200);
+    };
+    m.onmouseenter = () => { clearTimeout(fadeT); clearTimeout(dropT); m.classList.remove('fade'); };
+    m.onmouseleave = () => arm(3);
+    arm(o.ttl ?? 7);
     this.msgs.prepend(m);
-    while (this.msgs.children.length > 6) this.msgs.lastChild?.remove();
-    setTimeout(() => m.classList.add('fade'), 7000);
-    setTimeout(() => m.remove(), 8200);
+    // six at most: routine news makes room before an alert does
+    while (this.msgs.children.length > 6) {
+      const plain = [...this.msgs.children].reverse().find((x) => !x.classList.contains('toast'));
+      (plain ?? this.msgs.lastElementChild)?.remove();
+    }
+  }
+
+  /** Messages that would run down over the selection panel wait out of sight (the oldest go first). */
+  private clipMessages() {
+    const list = [...this.msgs.children] as HTMLElement[];
+    for (const m of list) m.classList.remove('clip');
+    if (this.info.classList.contains('hidden') || !list.length) return;
+    const r = this.info.getBoundingClientRect(), col = this.msgs.getBoundingClientRect();
+    if (r.left > col.right || r.right < col.left) return;
+    let out = false;
+    for (const m of list) {
+      out ||= m.getBoundingClientRect().bottom > r.top - 8;
+      if (out) m.classList.add('clip');
+    }
+  }
+
+  /** A stall that used to go unnoticed: a toast with the chain behind it, a jump to the building and, where one helps, a button to put it right. */
+  private raiseAlert(a: Alert) {
+    const b = a.b;
+    let action: { label: string; run: () => void } | undefined;
+    if (a.kind === 'exhausted') action = { label: '⛏ Send a geologist', run: () => { this.gr.cam.jumpTo(b.cx, b.cz + 2); this.startProspecting(true); } };
+    else if (a.kind === 'settlers') action = { label: `⚒ Build a ${BUILDINGS.residence_s.name}`, run: () => this.startPlacing('residence_s') };
+    else if (a.build && BUILDINGS[a.build].buildable !== false) { const t = a.build; action = { label: `⚒ Build ${BUILDINGS[t].name}`, run: () => this.startPlacing(t) }; }
+    const hint = a.build && a.hint === `Build ${aName(BUILDINGS[a.build].name)}` ? '' : a.hint; // the button says it
+    this.toast({ title: a.title, detail: a.detail, hint, icon: buildingIcons.get(b.type), kind: 'bad', x: b.cx, z: b.cz, b: b.id, action, ttl: 14 });
+    this.audio.play('warn');
   }
 
   showTip(e: MouseEvent, html: string) {
@@ -1502,7 +1696,7 @@ export class HUD {
 
   onEvent(e: GameEvent) {
     this.objectives.noteEvent(e.type, e.owner);
-    if (e.type === 'msg' && e.text) this.message(e.text, e.x, e.z, e.kind);
+    if (e.type === 'msg' && e.text) this.message(e.text, e.x, e.z, e.kind, e.b);
     if (e.type === 'defeated' && e.text) this.message(e.text, undefined, undefined, e.owner === this.game.local ? 'bad' : 'good');
     if (e.type === 'gameover') this.gameOver(e.owner === this.game.local);
   }
@@ -1540,6 +1734,7 @@ export class HUD {
     this.stalls.update(dt);
     if (this.t <= 0) {
       this.t = 0.5;
+      for (const a of this.watch.poll(this.game)) this.raiseAlert(a);
       this.refreshTop();
       if (this.tab === 'build') {
         // refresh affordability without re-rendering on hover
@@ -1562,6 +1757,7 @@ export class HUD {
       this.infoT = 0.25;
       this.renderGroupBar();
       if (!this.info.matches(':hover') || !this.info.querySelector('input[type=range]:active, select:focus')) this.refreshInfo();
+      this.clipMessages();
     }
   }
 }
@@ -1580,4 +1776,18 @@ function shipDoing(g: Game, sh: Ship): string {
     case 'scouting': return 'Scouting the seas';
   }
   return '';
+}
+
+/** A little bar chart of made (up, green) and used (down, red) per bucket, oldest first. */
+function spark(made: number[], used: number[]): string {
+  const n = made.length, W = 46, H = 18, mid = H / 2;
+  const top = Math.max(1, ...made, ...used);
+  const bw = W / n;
+  let bars = '';
+  for (let k = 0; k < n; k++) {
+    const x = (k * bw + 0.5).toFixed(1), w = Math.max(1, bw - 1).toFixed(1);
+    if (made[k]) { const hh = Math.max(1, (made[k] / top) * (mid - 1)); bars += `<rect x="${x}" y="${(mid - hh).toFixed(1)}" width="${w}" height="${hh.toFixed(1)}" fill="var(--good)"/>`; }
+    if (used[k]) { const hh = Math.max(1, (used[k] / top) * (mid - 1)); bars += `<rect x="${x}" y="${mid}" width="${w}" height="${hh.toFixed(1)}" fill="var(--bad)"/>`; }
+  }
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><line x1="0" x2="${W}" y1="${mid}" y2="${mid}" stroke="currentColor" stroke-opacity="0.25"/>${bars}</svg>`;
 }

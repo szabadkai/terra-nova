@@ -58,6 +58,8 @@ export class StallBadges {
     // one size for all: by the zoom, not each building's depth, or near and far ones would mix
     const dot = H / (2 * Math.tan((cam.fov * Math.PI) / 360)) / this.gr.cam.dist < DOT_PPU;
     for (const b of this.list) {
+      // the list is a quarter of a second old: at speed a stall can clear (or the building go) in between
+      if (!b.stall || !this.game.buildings.has(b.id)) { const bd = this.badges.get(b.id); if (bd) bd.el.style.display = 'none'; continue; }
       const view = this.gr.buildings.views.get(b.id);
       const baseY = view ? view.group.position.y : this.game.world.heightAt(b.cx, b.cz);
       v.set(b.cx, baseY + (view?.height ?? 1.5) + 0.35, b.cz);

@@ -568,6 +568,14 @@ export class Audio {
         this.tone(t + 0.03, 55, 1.1, 'sine', 0.55, out, 32, 0.02);
         life = 3.5;
         break;
+      case 'warn':
+        // two soft falling notes: something has stopped
+        [659.3, 523.3].forEach((f, k) => {
+          this.tone(t + k * 0.16, f, 0.7, 'triangle', 0.07, out);
+          this.tone(t + k * 0.16, f * 2, 0.35, 'sine', 0.02, out);
+        });
+        life = 1.5;
+        break;
       case 'chime':
         [880, 1318.5, 1760].forEach((f, k) => {
           this.tone(t + k * 0.09, f, 1.4, 'sine', 0.09, out);

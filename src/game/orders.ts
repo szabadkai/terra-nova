@@ -352,7 +352,7 @@ export function orderAttack(g: Game, owner: number, ids: Iterable<number>, targe
   if (n) {
     g.emit({ type: 'attack', b: target.id, owner, x: target.cx, z: target.cz });
     g.emit({ type: 'order', x: target.cx, z: target.cz, owner, kind: 'attack' });
-    g.message(target.owner, `Your ${target.def.name} is under attack!`, target.cx, target.cz, 'bad');
+    g.message(target.owner, `Your ${target.def.name} is under attack!`, target.cx, target.cz, 'bad', target.id);
     target.underAttackT = 20;
   }
   return n;

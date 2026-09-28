@@ -10,15 +10,7 @@ Rules that apply to every item:
 
 ---
 
-## 1. Economy at a glance: no more clicking round for the stall
-
-This was the biggest frustration in Settlers 3. Slice a has landed: `src/game/status.ts` gives every stuck building a structured `b.stall` (input, tool, settlers, full, range, exhausted, market) next to the panel text in `b.status`, with `b.stallT` for how long; `src/ui/stallBadges.ts` floats the missing good over the roof (a dot when zoomed out), and the ⚠ counter in the top bar and the `.` key go from one stalled building to the next. Check: `scripts/stalls.ts`. Still to do, in this order:
-
-- **b. Messages for silent failures, as clickable toasts.** A mine running dry only sets its stall (`kind: 'exhausted'` in `updateProduction`) and sends no message. It should raise one, with a jump to the mine and a hint to send a geologist. Also cover "no free settlers" (the residence cap) and a toolsmith with no iron. Messages slide in as toasts that jump the camera to their source when clicked. Raise each once per stall (on the `stallT` edge past `STALL_GRACE`), not every tick.
-- **c. Cause chain.** Walk upstream from `b.stall`: *weaponsmith waiting for iron → smelter waiting for coal → coal mine waiting for food → both fishers: no fish in range*. Show it in the building panel and the ⚠ tooltip. The same walk lets the headless balance runs report AI stalls instead of finding them by hand; `scripts/stalls.ts` already prints what is stuck in an AI town at 25 minutes (seed 107: a waterworks with no water in range for 21 minutes, hunters with no game for 10–15).
-- **d. Goods flow.** The Economy tab shows how much of each good is made and used per 10 minutes, with a trend, next to the stock counts. The Statistics tab currently only charts population and soldiers.
-
-## 2. Workers at work in their workshops
+## 1. Workers at work in their workshops
 
 In Settlers 3 you could watch the smelter at the furnace and the toolsmith hammering out a tool. Terra Nova's workshop models already have the stations in the yard, as in the original: the toolsmith's hearth, anvil and water barrel (`hearth()` in `src/render/buildingModels.ts`), and the smelter's furnace, cauldron and ore heaps. But the worker disappears for the whole production cycle. `workerThink` in `src/game/work.ts` says "indoor workers simply stay inside", `enter()` sets `s.hidden`, and production is just a timer (`updateProduction` in `economy.ts`: `b.working`, `b.workT` running up to `def.cycle`).
 
@@ -31,64 +23,64 @@ Build a render-only work director, in the style of `pigs.ts` and `idle.ts`. Whil
 - **Bakery** (7 s): kneads dough at a table, slides loaves into the oven on a peel, the oven glows.
 - **Mines**: a tub rolls out along the existing rails (`railway()`), the miner tips the ore onto the heap and throws spoil aside. On an exhausted deposit he comes out and shrugs (the reference has `R_Miner*_Fail`).
 - **Also**: the mill (miller carrying sacks), the slaughterhouse (a cleaver at the block, kept cartoonish), the temple (the priest pours wine at the altar), the barracks (sparring with a dummy) and the siege workshop (the catapult frame gets parts added one by one as `shipProgress` rises).
-- **Waiting shows the stall** (reads `b.stall` from item 1a): when a workshop is waiting for an input, the worker sits on the step, looks at the empty pile or down the road. When the output pile is full, he stands beside it with arms folded. You can see the stall without clicking.
+- **Waiting shows the stall** (reads `b.stall` from `src/game/status.ts`): when a workshop is waiting for an input, the worker sits on the step, looks at the empty pile or down the road. When the output pile is full, he stands beside it with arms folded. You can see the stall without clicking.
 - **Keep it cheap**: only buildings in view and close enough (`lodView.cull` / `px`), and a few posed joints on the existing chibi rig (`Pose` in `idle.ts`). Held pieces reuse the carried-goods geometry (`models.ts`) and props (`settlerModels.buildPropGeos`). Add `?work=toolsmith,ironsmelter` to `tools/settler-preview` or `tools/building-preview` to tune scenes in a loop.
 - **Pilot**: the toolsmith and the iron smelter first, then the other smiths and the sawmill, then the rest.
 
-## 3. Cheaper terrain shader (performance)
+## 2. Cheaper terrain shader (performance)
 
 The terrain shader reads 30–40 textures per pixel, 3–4 ms of GPU time. Store only the top two or three ground types per node (a type index plus a weight texture), so each pixel blends two or three layers instead of all of them. Check against screenshots from before the change with `imgdiff.mjs`.
 
 Why this comes before batching the buildings: at 3440×1440 the GPU looks like the limit. Render CPU is 5.6 ms of a ~10 ms frame, yet dropping to 70% resolution saves 31% of the frame, which only happens when pixel work dominates. Confirm with one interleaved `perf-bench/` run before starting.
 
-## 4. Smoother frames (performance)
+## 3. Smoother frames (performance)
 
-Small jobs that pay off straight away on a 175 Hz screen; do them alongside item 3.
+Small jobs that pay off straight away on a 175 Hz screen; do them alongside item 2.
 
 - **Automatic resolution**: the Resolution setting and sharpening already exist. Let frame time drive them, dropping towards 85% only in busy moments.
 - **Water reflection** rendered at half the rate or half the size.
 - **Frame cap option**, for example 87 fps (half of 175 Hz), so frames arrive evenly.
 
-## 5. Batch the buildings (performance)
+## 4. Batch the buildings (performance)
 
-Building draw calls are the biggest CPU render cost. The last profile showed about 1,900 draws, taking 3.6 ms of the 5.6 ms the CPU spends rendering, in a 30-minute town at 3440×1440. The cost grows with the size of the town, so this is what keeps late-game towns fast, and item 10 needs it. Buildings don't move, so use one `BatchedMesh` per material, with near and far models as separate geometry ranges. Sites and burning buildings can stay separate. Watch the per-player `rekey`, the clip variants and the LOD switch. Measure with `perf-bench/` (see the performance memory), always comparing interleaved runs.
+Building draw calls are the biggest CPU render cost. The last profile showed about 1,900 draws, taking 3.6 ms of the 5.6 ms the CPU spends rendering, in a 30-minute town at 3440×1440. The cost grows with the size of the town, so this is what keeps late-game towns fast, and item 9 needs it. Buildings don't move, so use one `BatchedMesh` per material, with near and far models as separate geometry ranges. Sites and burning buildings can stay separate. Watch the per-player `rekey`, the clip variants and the LOD switch. Measure with `perf-bench/` (see the performance memory), always comparing interleaved runs.
 
 The simulation isn't the bottleneck. A 50 ms tick costs 0.05–0.08 ms on average (0.25 ms at the 95th percentile) at 10–45 minutes of AI-vs-AI, so moving it into a Web Worker gains nothing.
 
-## 6. Paths worn by traffic
+## 5. Paths worn by traffic
 
-Settlers 3 had no roads, so let the ground remember where people walk. Build a render-only traffic map at node resolution from settler positions, fading over a few game days. Where traffic is heavy, grass turns into dirt tracks through the terrain splat, and grass chunks lying on a path are flattened. Paths form on their own between the HQ, the woodcutters and the quarry, so your supply lines become visible. The same map can make grass part around walkers and leave footprints in snow. Do it after item 3, which rewrites the same terrain blending.
+Settlers 3 had no roads, so let the ground remember where people walk. Build a render-only traffic map at node resolution from settler positions, fading over a few game days. Where traffic is heavy, grass turns into dirt tracks through the terrain splat, and grass chunks lying on a path are flattened. Paths form on their own between the HQ, the woodcutters and the quarry, so your supply lines become visible. The same map can make grass part around walkers and leave footprints in snow. Do it after item 2, which rewrites the same terrain blending.
 
-## 7. A livelier UI
+## 6. A livelier UI
 
 - Small icons pop out of a building as each good is made ("+1 plank"), using the existing `produced` event.
 - Panels animate in and out, and numbers count up and down.
 
-(The clickable toasts moved into item 1b; the ring build menu was dropped.)
+(The ring build menu was dropped.)
 
-## 8. Morning mist and sun shafts
+## 7. Morning mist and sun shafts
 
 Height fog pools in valleys and over water at dawn and burns off by mid-morning, driven by the existing day cycle in `sky.ts`. Add sun shafts as a cheap screen-space pass (a radial blur of what blocks the sun, from depth), folded into the single final pass in `postfx.ts`. There's nothing like either yet. It costs GPU time, so it comes after the performance items.
 
-## 9. Ambient occlusion on by default for High
+## 8. Ambient occlusion on by default for High
 
-`GTAOPass` is already wired in `postfx.ts` but off by default. Switch it on for High once items 3 and 5 free up the time.
+`GTAOPass` is already wired in `postfx.ts` but off by default. Switch it on for High once items 2 and 4 free up the time.
 
-## 10. Bigger maps
+## 9. Bigger maps
 
-After item 5, since the simulation has plenty of headroom. Today towns peak around 290 settlers and 90 buildings on the 160 map. Recheck the AI deadlocks listed in the balance notes on larger maps.
+After item 4, since the simulation has plenty of headroom. Today towns peak around 290 settlers and 90 buildings on the 160 map. Recheck the AI deadlocks listed in the balance notes on larger maps.
 
-## 11. Photo mode
+## 10. Photo mode
 
 Hide the UI and use a free camera. Scrub the time of day and the season, and set the focus distance for the tilt-shift blur. It's cheap given what already exists.
 
-## 12. More for warships
+## 11. More for warships
 
 - **Landing troops on an enemy coast** first: it is what lets island wars be won.
 - Boarding enemy ships.
 - Deck archers shooting at soldiers on the shore.
 
-## 13. A smarter AI army and economy
+## 12. A smarter AI army and economy
 
 - **Formations**: the AI uses the formations players have (`planFormation` in `src/game/orders.ts`) for its attacks and defence.
 - **More trade outposts**: `AIController.tradeStep` sets up only one far outpost (storehouse plus market). Let it add a second as its realm grows.
