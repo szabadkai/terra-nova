@@ -102,8 +102,8 @@ export const K_REF = 1440 / (2 * Math.tan((36 * Math.PI) / 360));
 
 /** What the frame's cameras see: main view frustum, shadow frustum and the pixel scale. */
 export class LodView {
-  /** pixels per world unit at distance 1 */
-  K = 1000;
+  /** pixels per world unit at distance 1 (until a renderer sets it: the tuned view, e.g. in the model preview) */
+  K = K_REF;
   /** off: everything at full detail, nothing culled (for comparisons) */
   enabled = true;
   readonly eye = new THREE.Vector3();
