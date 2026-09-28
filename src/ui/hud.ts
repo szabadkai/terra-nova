@@ -22,7 +22,10 @@ import {
 import { catapultCap, catapultsOf, siegeHits } from '../game/siege';
 import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
-import { callOut, commandable, fieldSoldiers, orderAttack, orderGarrison, orderMove, orderReturn } from '../game/orders';
+import {
+  FORMATIONS, callOut, commandable, drillOf, fieldSoldiers, orderAttack, orderGarrison, orderMove, orderReturn, setDrill, setFirm,
+  type Formation,
+} from '../game/orders';
 import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder, placeOrder } from '../game/trade';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
@@ -44,6 +47,32 @@ const h = (tag: string, cls = '', html = '') => {
 };
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+
+// little dot pictures of the formations, front at the top
+const dots = (pts: [number, number][]) => `<svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">${pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.6" fill="currentColor"/>`).join('')}</svg>`;
+const DRILLS: Record<Formation, { name: string; tip: string; svg: string }> = {
+  line: {
+    name: 'Line', tip: 'A wide front: the swordsmen in a rank ahead of the bowmen, catapults at the back',
+    svg: dots([[3, 5], [7, 5], [11, 5], [15, 5], [19, 5], [5, 11], [9, 11], [13, 11], [17, 11]]),
+  },
+  block: {
+    name: 'Block', tip: 'A close square, swordsmen at the front — easy to keep together on the march',
+    svg: dots([[6, 3], [11, 3], [16, 3], [6, 8], [11, 8], [16, 8], [6, 13], [11, 13], [16, 13]]),
+  },
+  wedge: {
+    name: 'Wedge', tip: 'A point of swordsmen with their flanks along the sides and the bowmen sheltered within',
+    svg: dots([[11, 2.5], [8, 7.5], [14, 7.5], [5, 12.5], [11, 12.5], [17, 12.5]]),
+  },
+  ring: {
+    name: 'Ring', tip: 'All-round defence facing out: swordsmen outside, bowmen within, catapults in the middle',
+    svg: dots([...Array.from({ length: 8 }, (_, i) => [11 + Math.sin(i * Math.PI / 4) * 5.6, 8 - Math.cos(i * Math.PI / 4) * 5.6] as [number, number]), [11, 8]]),
+  },
+};
+/** The number keys of the control groups, in keyboard order. */
+const GROUP_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+
+/** A control group: soldiers (or warships) the player keeps under a number key. */
+export interface ControlGroup { men: number[]; ships: number[] }
 
 type Tab = 'build' | 'goods' | 'military' | 'faith' | 'stats';
 
@@ -74,6 +103,11 @@ export class HUD {
   private fpsEl!: HTMLElement;
   private frames = 0;
   private fpsT = 0;
+  /** control groups by number key (0–9) */
+  groups: ControlGroup[] = Array.from({ length: 10 }, () => ({ men: [], ships: [] }));
+  private groupBar!: HTMLElement;
+  private lastGroupKey = '';
+  private recalled = { slot: -1, at: 0 };
 
   constructor(private game: Game, private gr: GameRenderer, private audio: Audio, private hooks: HudHooks, parent: HTMLElement) {
     this.root = h('div', 'hud');
@@ -95,6 +129,8 @@ export class HUD {
     this.root.appendChild(this.tip);
     this.hint = h('div', 'hint hidden');
     this.root.appendChild(this.hint);
+    this.groupBar = h('div', 'panel groupbar hidden');
+    this.root.appendChild(this.groupBar);
     this.renderTab();
   }
 
@@ -389,6 +425,17 @@ export class HUD {
     (all as HTMLButtonElement).disabled = !field.length;
     all.onclick = () => { this.selectSoldiers(field.map((x) => x.id)); const f = field[0]; if (f) this.gr.cam.jumpTo(f.x, f.z + 2); };
     c.appendChild(all);
+    const used = GROUP_KEYS.filter((k) => this.groups[k].men.length || this.groups[k].ships.length);
+    if (used.length) {
+      c.appendChild(h('h3', '', 'Groups'));
+      const gl = h('div', 'list');
+      for (const k of used) {
+        const row = h('button', 'lrow', `<span class="emo"><kbd>${k}</kbd></span><span>Group ${k}</span><b>${this.groupLabel(k)}</b>`);
+        row.onclick = () => { this.recalled = { slot: k, at: performance.now() }; this.recallGroup(k); };
+        gl.appendChild(row);
+      }
+      c.appendChild(gl);
+    }
     c.appendChild(h('h3', '', 'Strongholds'));
     const list = h('div', 'list');
     for (const b of g.buildings.values()) {
@@ -398,7 +445,7 @@ export class HUD {
       list.appendChild(row);
     }
     c.appendChild(list);
-    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>. A <b>Siege Workshop</b> builds catapults: they take the same orders and shell strongholds from beyond arrow range, but need soldiers to protect them.'));
+    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. Pick a <b>formation</b> in their panel — line, block, wedge or ring — and they form up in it facing the way they marched, swordsmen in front; <b>Stand firm</b> keeps them at their posts instead of charging out. <b>Ctrl</b>+<b>1</b>–<b>9</b> keeps them as a group: press the number to pick them again, twice to go there. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>. A <b>Siege Workshop</b> builds catapults: they take the same orders and shell strongholds from beyond arrow range, but need soldiers to protect them.'));
   }
 
   private renderFaith(c: HTMLElement) {
@@ -646,7 +693,7 @@ export class HUD {
     if (o.chosen.length) this.audio.play('click');
     this.refreshInfo();
     if (o.chosen.length) {
-      this.hint.innerHTML = `<b>Right-click</b>: march there and stand guard · on an enemy stronghold: storm it · on your tower: man it · <b>R</b> back to duty · <b>Esc</b> lets them go`;
+      this.hint.innerHTML = `<b>Right-click</b>: march there and stand guard · on an enemy stronghold: storm it · on your tower: man it · <b>R</b> back to duty · <b>Ctrl</b>+<b>1</b>–<b>9</b> keeps them as a group · <b>Esc</b> lets them go`;
       this.hint.classList.remove('hidden');
     } else if (!this.modeOn()) this.hint.classList.add('hidden');
   }
@@ -664,7 +711,7 @@ export class HUD {
     if (o.ships.length) this.audio.play('click');
     this.refreshInfo();
     if (o.ships.length) {
-      this.hint.innerHTML = `<b>Right-click</b> the sea: stand guard there · an enemy ship: hunt · a stronghold by the water: bombard · your harbour: mend · <b>R</b> home · <b>Esc</b> lets go`;
+      this.hint.innerHTML = `<b>Right-click</b> the sea: stand guard there · an enemy ship: hunt · a stronghold by the water: bombard · your harbour: mend · <b>R</b> home · <b>Ctrl</b>+<b>1</b>–<b>9</b> keeps them as a group · <b>Esc</b> lets go`;
       this.hint.classList.remove('hidden');
     } else if (!this.modeOn()) this.hint.classList.add('hidden');
   }
@@ -855,13 +902,21 @@ export class HUD {
     let body = `<div class="kv"><span>Swordsmen · bowmen${ct ? ' · catapults' : ''}</span><b>⚔ ${sw} · 🏹 ${bw}${ct ? ` · ⚙ ${ct}` : ''}</b></div>`;
     body += `<div class="kv"><span>Health</span><b>${Math.round((hp / Math.max(1, max)) * 100)}%</b></div><div class="bar hp"><i style="width:${(hp / Math.max(1, max)) * 100}%"></i></div>`;
     body += `<div class="kv"><span>Orders</span><b>${Object.entries(doing).map(([k, v]) => `${k} ${v}`).join(' · ')}</b></div>`;
+    // the drill they form up in, and whether they stand firm or charge foes that come near
+    const men = ids.map((id) => g.settlers.get(id)!);
+    const drill = drillOf(men);
+    const firm = men.filter((s) => s.firm).length;
+    const firmCls = firm === men.length ? 'on' : firm ? 'part' : '';
+    body += `<div class="drill"><span class="dl">Formation</span><div class="drills">${FORMATIONS.map((f) => `<button class="${f === drill ? 'on' : ''}" data-drill="${f}" title="${DRILLS[f].name}: ${DRILLS[f].tip}" aria-label="${DRILLS[f].name}">${DRILLS[f].svg}</button>`).join('')}</div>`
+      + `<button class="firm ${firmCls}" data-act="firm" title="${firm === men.length ? 'They stand firm at their posts and let foes come to them — click to have them charge foes that come near again' : 'Stand firm: hold the formation and let foes come to them instead of charging out'}">🛡 Stand firm</button></div>`;
     const cm = this.gr.commanding;
     const buttons = `<button class="${cm === 'move' ? 'primary' : ''}" data-act="move">🚩 Move…</button><button class="${cm === 'attack' ? 'primary' : ''}" data-act="attack">⚔ Attack…</button><button data-act="duty">↩ Back to duty</button>`;
-    const key = `grp|${ids.join(',')}|${body}|${cm}`;
+    const slot = this.groupOfSelection();
+    const key = `grp|${ids.join(',')}|${body}|${cm}|${slot}`;
     if (key === this.lastInfoKey) return;
     this.lastInfoKey = key;
     this.info.innerHTML = `
-      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[g.local])}">${sw + bw ? '⚔' : '⚙'}</div><div><h2>${title}</h2><div class="owner">${g.players[g.local].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[g.local])}">${sw + bw ? '⚔' : '⚙'}</div><div><h2>${title}</h2><div class="owner">${slot >= 0 ? `Group ${slot} · ` : ''}${g.players[g.local].name} · ${DRILLS[drill].name.toLowerCase()}${firm === men.length ? ', standing firm' : ''}</div></div><button class="close" data-act="close">✕</button></div>
       <div class="ibody">${body}</div>
       <div class="ibtns">${buttons}</div>`;
     this.info.querySelectorAll<HTMLElement>('[data-act]').forEach((el) => {
@@ -870,8 +925,161 @@ export class HUD {
         if (act === 'close') this.selectSoldiers([]);
         else if (act === 'move' || act === 'attack') this.startCommanding(this.gr.commanding === act ? null : act);
         else if (act === 'duty') this.returnToDuty();
+        else if (act === 'firm') this.toggleFirm();
       };
     });
+    this.info.querySelectorAll<HTMLElement>('[data-drill]').forEach((el) => {
+      el.onclick = () => this.setFormation(el.dataset.drill as Formation);
+    });
+  }
+
+  /** The picked soldiers form up in `shape` (at once, where they stand guard). */
+  setFormation(shape: Formation) {
+    const ids = this.gr.orders.chosen;
+    if (!ids.length) return;
+    setDrill(this.game, this.game.local, ids, shape);
+    this.audio.play('place');
+    this.lastInfoKey = '';
+    this.refreshInfo();
+  }
+
+  /** The picked soldiers stand firm, or charge foes that come near again. */
+  toggleFirm() {
+    const g = this.game, ids = this.gr.orders.chosen;
+    if (!ids.length) return;
+    const firm = !ids.every((id) => g.settlers.get(id)?.firm);
+    setFirm(g, g.local, ids, firm);
+    this.audio.play('ui');
+    this.message(firm ? 'They stand firm: they keep their posts and let the foe come to them' : 'They charge foes that come near their posts again');
+    this.lastInfoKey = '';
+    this.refreshInfo();
+  }
+
+  // ------------------------------------------------------------ control groups
+  /** Keep the picked soldiers (or warships) as group `slot` — or add them to it. */
+  assignGroup(slot: number, add = false) {
+    const o = this.gr.orders;
+    const grp = this.groups[slot];
+    if (!o.chosen.length && !o.ships.length) {
+      this.message(`Pick soldiers or warships first, then press Ctrl+${slot} to keep them as group ${slot}`, undefined, undefined, 'bad');
+      return;
+    }
+    if (o.chosen.length) {
+      grp.men = add ? [...new Set([...grp.men, ...o.chosen])] : [...o.chosen];
+      if (!add) grp.ships = [];
+    } else {
+      grp.ships = add ? [...new Set([...grp.ships, ...o.ships])] : [...o.ships];
+      if (!add) grp.men = [];
+    }
+    this.audio.play('ui');
+    this.message(`Group ${slot}: ${this.groupLabel(slot)} — press ${slot} to pick ${grp.men.length + grp.ships.length > 1 ? 'them' : 'it'} again, twice to go there`, undefined, undefined, 'good');
+    this.lastGroupKey = '';
+    this.lastInfoKey = '';
+    this.renderGroupBar();
+  }
+
+  /** Pick group `slot` (added to the picked ones with `add`); a second press soon after goes there. */
+  recallGroup(slot: number, add = false) {
+    this.pruneGroups();
+    const g = this.game, grp = this.groups[slot];
+    const now = performance.now();
+    const again = this.recalled.slot === slot && now - this.recalled.at < 450;
+    this.recalled = { slot, at: now };
+    const men = grp.men.filter((id) => this.inField(id));
+    const ships = grp.ships.filter((id) => { const sh = g.ships.get(id); return !!sh && afloat(sh); });
+    if (!men.length && !ships.length) {
+      if (grp.men.length) this.message(`Group ${slot} is in its strongholds or at sea`, undefined, undefined, 'bad');
+      else this.message(`Group ${slot} is empty — pick soldiers and press Ctrl+${slot} to keep them as group ${slot}`);
+      return;
+    }
+    if (men.length) this.selectSoldiers(men, add);
+    else this.selectShips(ships, add);
+    if (again) {
+      let x = 0, z = 0;
+      const at = men.length ? men.map((id) => g.settlers.get(id)!) : ships.map((id) => g.ships.get(id)!);
+      for (const u of at) { x += u.x; z += u.z; }
+      this.gr.cam.jumpTo(x / at.length, z / at.length + 2);
+    }
+    this.renderGroupBar();
+  }
+
+  /** One of the player's soldiers in the field, who can be picked. */
+  private inField(id: number) {
+    const s = this.game.settlers.get(id);
+    return commandable(this.game, this.game.local, s) && !s.inside;
+  }
+
+  /** Forget the fallen, the captured and the sunk. */
+  private pruneGroups() {
+    const g = this.game;
+    for (const grp of this.groups) {
+      grp.men = grp.men.filter((id) => { const s = g.settlers.get(id); return !!s && !s.dead && s.owner === g.local; });
+      grp.ships = grp.ships.filter((id) => { const sh = g.ships.get(id); return !!sh && sh.owner === g.local && afloat(sh); });
+    }
+  }
+
+  /** The group whose members are exactly the picked ones, or -1. */
+  private groupOfSelection() {
+    const o = this.gr.orders;
+    const sel = o.chosen.length ? o.chosen : o.ships;
+    if (!sel.length) return -1;
+    const set = new Set(sel);
+    for (const k of GROUP_KEYS) {
+      const grp = this.groups[k];
+      const live = o.chosen.length ? grp.men.filter((id) => this.inField(id)) : grp.ships;
+      if (live.length === set.size && live.every((id) => set.has(id))) return k;
+    }
+    return -1;
+  }
+
+  private groupLabel(slot: number) {
+    const g = this.game, grp = this.groups[slot];
+    let sw = 0, bw = 0, ct = 0;
+    for (const id of grp.men) {
+      const s = g.settlers.get(id);
+      if (!s || s.dead) continue;
+      if (s.job === 'swordsman') sw++; else if (s.job === 'bowman') bw++; else ct++;
+    }
+    const parts = [sw ? `⚔${sw}` : '', bw ? `🏹${bw}` : '', ct ? `⚙${ct}` : '', grp.ships.length ? `⚓${grp.ships.length}` : ''].filter(Boolean);
+    return parts.join(' ');
+  }
+
+  /** The row of control groups along the bottom of the screen. */
+  private renderGroupBar() {
+    this.pruneGroups();
+    const cur = this.groupOfSelection();
+    const used = GROUP_KEYS.filter((k) => this.groups[k].men.length || this.groups[k].ships.length);
+    const chips = used.map((k) => {
+      const grp = this.groups[k];
+      // dimmed while none of them can be picked: all in their strongholds or at sea
+      const away = !grp.men.some((id) => this.inField(id)) && !grp.ships.length;
+      return { k, label: this.groupLabel(k), away };
+    });
+    const key = chips.map((c) => `${c.k}:${c.label}:${c.away}`).join('|') + `|${cur}`;
+    if (key === this.lastGroupKey) return;
+    this.lastGroupKey = key;
+    this.groupBar.classList.toggle('hidden', !chips.length);
+    this.root.classList.toggle('has-groups', chips.length > 0);
+    this.groupBar.innerHTML = chips.map((c) => `<button class="gchip${c.k === cur ? ' on' : ''}${c.away ? ' away' : ''}" data-slot="${c.k}" title="Group ${c.k}: press ${c.k} to pick it, twice to go there · Shift adds it to the picked ones"><kbd>${c.k}</kbd><span>${c.label}</span></button>`).join('');
+    this.groupBar.querySelectorAll<HTMLElement>('[data-slot]').forEach((el) => {
+      const k = Number(el.dataset.slot);
+      el.onclick = (e) => this.recallGroup(k, (e as MouseEvent).shiftKey);
+      el.ondblclick = () => { this.recalled = { slot: k, at: performance.now() }; this.recallGroup(k); };
+    });
+  }
+
+  /** Control groups as saved with the game. */
+  saveGroups(): ControlGroup[] {
+    this.pruneGroups();
+    return this.groups.map((grp) => ({ men: [...grp.men], ships: [...grp.ships] }));
+  }
+
+  loadGroups(data: unknown) {
+    if (!Array.isArray(data)) return;
+    const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number') : []);
+    this.groups = Array.from({ length: 10 }, (_, k) => ({ men: ids(data[k]?.men), ships: ids(data[k]?.ships) }));
+    this.lastGroupKey = '';
+    this.renderGroupBar();
   }
 
   private refreshInfo() {
@@ -1302,6 +1510,7 @@ export class HUD {
     }
     if (this.infoT <= 0) {
       this.infoT = 0.25;
+      this.renderGroupBar();
       if (!this.info.matches(':hover') || !this.info.querySelector('input[type=range]:active, select:focus')) this.refreshInfo();
     }
   }

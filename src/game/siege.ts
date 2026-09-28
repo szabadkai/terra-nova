@@ -9,7 +9,7 @@
 import { CATAPULT_HP, CATAPULT_RANGE, CATAPULT_RELOAD, MAX_CATAPULTS } from './defs';
 import type { Game } from './game';
 import { kill } from './military';
-import { A, plan } from './settlers';
+import { A, plan, turnTo } from './settlers';
 import type { Building, Projectile, Settler } from './types';
 
 /** Stones that miss fall this far around the walls. */
@@ -123,7 +123,7 @@ function fireStone(g: Game, s: Settler, b: Building) {
 }
 
 /** The per-tick brain of a catapult that has nothing queued. */
-export function catapultThink(g: Game, s: Settler, _dt: number) {
+export function catapultThink(g: Game, s: Settler, dt: number) {
   s.idle = false;
   s.task = '';
   // held by a swordsman it cannot answer: it stands there and takes it
@@ -149,9 +149,15 @@ export function catapultThink(g: Game, s: Settler, _dt: number) {
     else { plan(s, [A.walk(s.order)], () => { s.fails++; }); return; }
   }
   s.fails = 0;
+  s.pace = 1;
   // standing: shell whatever enemy stronghold is within reach
   const b = siegeTarget(g, s);
   if (b) { fireStone(g, s, b); return; }
+  // else it is swung round slowly the way its formation faces
+  if (s.sstate === 'hold' && s.face !== null && Math.abs(Math.atan2(Math.sin(s.face - s.heading), Math.cos(s.face - s.heading))) > 0.02) {
+    s.heading = turnTo(s.heading, s.face, dt * 1.2);
+    return;
+  }
   plan(s, [A.wait(1)]);
 }
 

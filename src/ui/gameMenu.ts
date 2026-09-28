@@ -91,14 +91,18 @@ const KEYS_ARMY: [string, string][] = [
   ['Right-click the ground', 'March the picked soldiers there to stand guard'],
   ['Right-click a stronghold', 'Storm an enemy one (⚔ cursor), or man one of yours (shield cursor)'],
   ['Right-click the minimap', 'March them there'],
+  ['Formation buttons in their panel', 'Line, block, wedge or ring: they form up facing the way they marched, swordsmen in front; the rings on the ground show where'],
+  ['🛡 Stand firm', 'They keep their posts and let the foe come to them instead of charging out'],
   ['<kbd>R</kbd>', 'Send the picked soldiers back to duty'],
+  ['<kbd>Ctrl</kbd> or <kbd>⌥</kbd>/<kbd>Alt</kbd> + <kbd>1</kbd> – <kbd>9</kbd>, <kbd>0</kbd>', 'Keep the picked soldiers (or warships) as a group (<kbd>Shift</kbd> adds them to it)'],
+  ['<kbd>1</kbd> – <kbd>9</kbd>, <kbd>0</kbd>', 'Pick that group again (<kbd>Shift</kbd> adds it to the picked ones); press twice to go there'],
 ];
 const KEYS_GAME: [string, string][] = [
   ['<kbd>Esc</kbd>', 'Cancel or deselect, then open this menu'],
   ['<kbd>F10</kbd>', 'Open or close this menu'],
   ...(immersiveAvailable ? [['<kbd>F</kbd>', `Immersive mode: fill the screen (${leaveHint.replace('Esc', '<kbd>Esc</kbd>')})`]] as [string, string][] : []),
   ['<kbd>Space</kbd>', 'Pause without the menu'],
-  ['<kbd>1</kbd> – <kbd>4</kbd>', 'Game speed'],
+  ['<kbd>[</kbd> <kbd>]</kbd>', 'Game speed slower / faster'],
   ['<kbd>N</kbd>', 'Next music track (<kbd>Shift</kbd> for the previous one)'],
 ];
 const KEYS_TRACKPAD: [string, string][] = [

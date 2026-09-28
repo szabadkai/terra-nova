@@ -1,10 +1,11 @@
 // Soldier command visuals: rings under the chosen men (tinted by their health), fainter rings
 // under the men a selection box is about to take, a ring under whatever the pointer is over (red
-// for a foe), a ring that pulses out where an order lands, and screen-space picking for box selection.
+// for a foe), ghost rings where the chosen men would form up with an arrow the way the formation
+// would face, a ring that pulses out where an order lands, and screen-space picking for box selection.
 import * as THREE from 'three';
 import type { Game } from '../game/game';
 import type { GameEvent, Settler } from '../game/types';
-import { commandable } from '../game/orders';
+import { commandable, type FormationPlan } from '../game/orders';
 import { commitInstances, withInstanceColor } from './instancing';
 import { afloat } from '../game/naval';
 import { WATER_LEVEL } from '../game/world';
@@ -24,7 +25,11 @@ export class OrdersFX {
   shipPreview: number[] = [];
   /** what the pointer is over; a building's ring is drawn on the ground by the terrain shader */
   hover: { kind: 'settler' | 'building' | 'ship'; id: number; foe: boolean } | null = null;
+  /** where the chosen men would stand if ordered to the spot under the pointer */
+  ghost: FormationPlan | null = null;
   private rings: THREE.InstancedMesh;
+  private ghosts: THREE.InstancedMesh;
+  private arrow: THREE.Mesh;
   /** long thin rings round ships on the water */
   private hulls: THREE.InstancedMesh;
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
@@ -49,6 +54,24 @@ export class OrdersFX {
     this.hulls.renderOrder = 20;
     this.hulls.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3), 3);
     this.group.add(this.hulls);
+    const gmat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false, depthTest: false, toneMapped: false });
+    this.ghosts = new THREE.InstancedMesh(ring, gmat, MAX_RINGS);
+    this.ghosts.count = 0;
+    this.ghosts.frustumCulled = false;
+    this.ghosts.renderOrder = 20;
+    this.ghosts.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_RINGS * 3), 3);
+    this.group.add(this.ghosts);
+    // a flat chevron ahead of the formation, pointing the way it would face
+    const chev = new THREE.Shape([
+      new THREE.Vector2(0, 0.55), new THREE.Vector2(0.7, -0.25), new THREE.Vector2(0.42, -0.4),
+      new THREE.Vector2(0, 0.05), new THREE.Vector2(-0.42, -0.4), new THREE.Vector2(-0.7, -0.25),
+    ]);
+    const ag = new THREE.ShapeGeometry(chev);
+    ag.rotateX(Math.PI / 2);
+    this.arrow = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({ color: 0xffe6a0, transparent: true, opacity: 0.55, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide }));
+    this.arrow.renderOrder = 20;
+    this.arrow.visible = false;
+    this.group.add(this.arrow);
     this.pulseGeo = new THREE.RingGeometry(0.82, 1, 40);
     this.pulseGeo.rotateX(-Math.PI / 2);
   }
@@ -107,6 +130,35 @@ export class OrdersFX {
       if (h.foe) ring(s, big, 1, 0.16, 0.08); else ring(s, big, 0.85, 0.82, 0.7);
     }
     commitInstances(this.rings, n);
+    // the formation the chosen men would take up under the pointer
+    let ng = 0;
+    const gp = this.ghost;
+    this.arrow.visible = false;
+    if (gp && this.chosen.length) {
+      const fx = Math.sin(gp.face), fz = Math.cos(gp.face);
+      let front = -Infinity, cx = 0, cz = 0;
+      for (const node of gp.nodes) { cx += w.nx(node); cz += w.ny(node); }
+      cx /= gp.nodes.length;
+      cz /= gp.nodes.length;
+      gp.nodes.forEach((node, k) => {
+        if (ng >= MAX_RINGS) return;
+        const x = w.nx(node), z = w.ny(node);
+        const s = gp.men[k];
+        const sc = s.job === 'catapult' ? 2.2 : 0.9;
+        m.makeScale(sc, 1, sc).setPosition(x, w.heightAt(x, z) + 0.05, z);
+        this.ghosts.setMatrixAt(ng, m);
+        this.ghosts.setColorAt(ng, s.job === 'swordsman' ? col.setRGB(1, 0.86, 0.52) : s.job === 'bowman' ? col.setRGB(0.72, 0.95, 0.62) : col.setRGB(0.9, 0.82, 0.74));
+        ng++;
+        front = Math.max(front, (x - cx) * fx + (z - cz) * fz);
+      });
+      if (gp.shape !== 'ring') {
+        const ax = cx + fx * (front + 1.6), az = cz + fz * (front + 1.6);
+        this.arrow.position.set(ax, w.heightAt(ax, az) + 0.08, az);
+        this.arrow.rotation.set(0, gp.face, 0);
+        this.arrow.visible = true;
+      }
+    }
+    commitInstances(this.ghosts, ng);
     commitInstances(this.hulls, nh);
     for (let i = this.pulses.length - 1; i >= 0; i--) {
       const p = this.pulses[i];
@@ -178,6 +230,9 @@ export class OrdersFX {
 
   dispose() {
     this.hulls.geometry.dispose();
+    (this.ghosts.material as THREE.Material).dispose();
+    this.arrow.geometry.dispose();
+    (this.arrow.material as THREE.Material).dispose();
     this.rings.geometry.dispose();
     (this.rings.material as THREE.Material).dispose();
     this.pulseGeo.dispose();

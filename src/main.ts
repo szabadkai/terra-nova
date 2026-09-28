@@ -11,7 +11,7 @@ import { Audio } from './audio/audio';
 import { CursorSetter, type CursorKind } from './ui/cursors';
 import { JOB_NAMES } from './game/defs';
 import { isCombatant } from './game/military';
-import { commandable } from './game/orders';
+import { commandable, planFormation } from './game/orders';
 import { afloat, canBombard } from './game/naval';
 import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
@@ -73,6 +73,7 @@ function capture(): { data: SaveData; meta: SaveMeta } {
     season: gr.seasons.phase,
     speed: pausedSpeed,
     objective: hud?.objectives.index ?? 0,
+    groups: hud?.saveGroups(),
   };
   const meta = describe(game);
   meta.thumb = thumbnail();
@@ -327,6 +328,7 @@ function startGame(resumed?: Record<string, unknown>) {
   gr.onEvent = (e) => hud?.onEvent(e);
   (window as any).hud = hud;
   if (view) {
+    hud.loadGroups((resumed as { groups?: unknown }).groups);
     hud.objectives.index = view.objective ?? 0;
     hud.objectives.render();
     hud.message(`Welcome back, my liege — ${playTime(game.time)} into your reign.`, undefined, undefined, 'good');
@@ -376,12 +378,23 @@ function setupGlobalInput() {
       return;
     }
     if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
+    // number keys: control groups — Ctrl (or Alt/Option) + number keeps the picked ones, the number
+    // picks them again (twice: go there), Shift adds to the picked ones or to the group
+    const digit = /^(?:Digit|Numpad)(\d)$/.exec(e.code);
+    if (digit && !e.metaKey) {
+      e.preventDefault();
+      const slot = Number(digit[1]);
+      if (e.ctrlKey || e.altKey) hud.assignGroup(slot, e.shiftKey);
+      else hud.recallGroup(slot, e.shiftKey);
+      return;
+    }
     if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
-    else if (k === '1') speed = pausedSpeed = 1;
-    else if (k === '2') speed = pausedSpeed = 2;
-    else if (k === '3') speed = pausedSpeed = 3;
-    else if (k === '4') speed = pausedSpeed = 4;
-    else if ((k === 'r' || k === 'R') && gr.orders.chosen.length) hud.returnToDuty();
+    else if (k === '[' || k === ']') {
+      const steps = [1, 2, 3, 4];
+      const cur = steps.indexOf(speed || pausedSpeed);
+      speed = pausedSpeed = steps[Math.max(0, Math.min(steps.length - 1, (cur < 0 ? 0 : cur) + (k === ']' ? 1 : -1)))];
+      hud.message(`Game speed ${speed}×`);
+    } else if ((k === 'r' || k === 'R') && gr.orders.chosen.length) hud.returnToDuty();
     else if ((k === 'r' || k === 'R') && gr.orders.ships.length) hud.shipsHome();
     else if (k === 'n' || k === 'N') {
       const n = audio.skipTrack(e.shiftKey ? -1 : 1);
@@ -422,6 +435,7 @@ const seenAt = (x: number, z: number) => {
 function refreshHover() {
   pointer.at = performance.now();
   const o = gr.orders;
+  o.ghost = null;
   if (!hud || gameMenu || state !== 'play' || !pointer.inside || pointer.buttons || box || gr.cam.drag) {
     o.hover = null;
     if (!pointer.inside || gameMenu) hud?.hideTip();
@@ -458,6 +472,8 @@ function refreshHover() {
       const node = gr.hoverNode;
       const reg = node >= 0 ? w.regionAt(node) : 0;
       if (!reg || !chosen.some((x) => regionOf(x) === reg)) hoverCursor = 'nogo';
+      // show where they would form up
+      else if (gr.hoverPoint) o.ghost = planFormation(g, me, o.chosen, gr.hoverPoint.x, gr.hoverPoint.z);
     }
   }
 
