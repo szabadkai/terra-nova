@@ -297,36 +297,136 @@ export const timberTex = () => cached('timber', () => build(256, (u, v) => {
   return [tone * 1.02, tone * 0.74, tone * 0.52, rings * 0.25 + streak * 0.35 + fibre * 0.12 - check * 0.6 + knot * 0.2];
 }, 6, 512));
 
-/** Neutral clay roof tiles (tinted per player through the material colour). 10 x 8 tiles;
- *  roofs are built in stepped rows that line up with the 8 texture rows. */
+/** Neutral clay barrel tiles (tinted per player through the material colour): ROOF_TILE.cols
+ *  channels across and ROOF_TILE.rows courses per texture unit, not staggered, so the channels
+ *  run straight from eave to ridge. Roofs are built as rounded, stepped courses whose humps
+ *  line up with the channels; the texture adds each tile's own tone, the dark lip at every
+ *  course, grime in the valleys and the shadow of the course above. */
+export const ROOF_TILE = { cols: 7, rows: 8 };
 export const roofTex = () => cached('roof', () => build(512, (u, v) => {
-  const rows = 8, cols = 10;
+  const { rows, cols } = ROOF_TILE;
   const ry = v * rows;
   const row = Math.floor(ry);
   const fy = ry - row; // 0 = exposed lower edge, 1 = under the next row
-  const off = (row % 2) * 0.5 + (hash2(row, 0, 9) - 0.5) * 0.1;
-  const cx = u * cols + off;
+  const cx = u * cols;
   const col = Math.floor(cx);
   const fx = cx - col;
-  const id = hash2(((col % cols) + cols) % cols, row, 5);
-  const id2 = hash2(((col % cols) + cols) % cols, row, 6);
-  // rounded tile end: the visible bottom edge is an arc
-  const arc = 0.12 * (1 - Math.pow(Math.sin(fx * Math.PI), 0.6));
-  const gapX = sstep(0.035, 0.0, Math.min(fx, 1 - fx));
-  const gapY = fy < arc ? 1 : 0;
-  const prof = Math.pow(Math.sin(fx * Math.PI), 0.7);
-  const n = pfbm(u, v, 16, 3, 31);
+  const cc = ((col % cols) + cols) % cols, rr = ((row % rows) + rows) % rows;
+  const id = hash2(cc, rr, 5);
+  const id2 = hash2(cc, rr, 6);
+  const id3 = hash2(cc, rr, 7);
+  const edge = Math.min(fx, 1 - fx);
+  const valley = sstep(0.16, 0.0, edge);
+  const prof = Math.pow(Math.sin(fx * Math.PI), 0.6);
+  const n = pfbm(u, v, 8, 3, 31);
   const fine = pnoise(u * 256, v * 256, 256, 32);
-  const under = Math.pow(fy, 2.5); // shadow from the row above
-  const lichen = pfbm(u, v, 24, 3, 33) > 0.74 && id2 > 0.75 ? sstep(0.74, 0.8, pfbm(u, v, 24, 3, 33)) : 0;
-  let c = 190 + prof * 34 - under * 95 + (id - 0.5) * 60 + (n - 0.5) * 30 + (fine - 0.5) * 12;
-  c *= 1 - gapX * 0.5;
-  if (gapY) c *= 0.45;
-  let r = c, g = c * (0.96 + id2 * 0.04), b = c * (0.9 + id2 * 0.08);
-  if (lichen) { const k = lichen * 0.35; r = r * (1 - k) + 190 * k; g = g * (1 - k) + 188 * k; b = b * (1 - k) + 150 * k; }
-  const hgt = gapY ? 0 : prof * 0.35 + (1 - fy) * 0.55 + fine * 0.05 - gapX * 0.3;
+  const under = Math.pow(fy, 2.2); // shadow from the course above
+  const lip = sstep(0.05, 0.0, fy); // the tile's own end, facing down the roof
+  const lm = pfbm(u, v, 12, 3, 33);
+  const lichen = lm > 0.66 && id2 > 0.6 ? sstep(0.66, 0.74, lm) * (1 - lip) : 0;
+  let c = 205 + prof * 26 - under * 80 + (id - 0.5) * 70 + (n - 0.5) * 34 + (fine - 0.5) * 12;
+  c *= 1 - valley * 0.42;
+  c *= 1 - lip * 0.5;
+  // a few tiles burnt darker or paler, as fired clay comes out of the kiln
+  const kiln = id3 > 0.88 ? 0.72 : id3 < 0.08 ? 1.12 : 1;
+  c *= kiln;
+  let r = c, g = c * (0.93 + id2 * 0.08), b = c * (0.86 + id2 * 0.12);
+  if (lichen) { const k = lichen * 0.4; r = r * (1 - k) + 170 * k; g = g * (1 - k) + 176 * k; b = b * (1 - k) + 128 * k; }
+  const hgt = prof * 0.3 + (1 - fy) * 0.35 + fine * 0.05 - valley * 0.2 + lichen * 0.1;
   return [r, g, b, hgt];
-}, 6));
+}, 3));
+
+/** Random rubble masonry in the Settlers manner: rounded fieldstones of mixed size in rough,
+ *  wandering courses, each stone its own tone, set in deep dark mortar. 1 texture = 1 unit. */
+export const rubbleTex = () => cached('rubble', () => {
+  const cs = makeCourses(9, 83, 0.07, 0.3, 0.6);
+  return build(512, (u, v) => {
+    const wu = u + (pfbm(u, v, 3, 3, 84) - 0.5) * 0.05;
+    let wv = v + (pfbm(u, v, 4, 3, 85) - 0.5) * 0.045;
+    wv = ((wv % 1) + 1) % 1;
+    const k = courseAt(cs, wu, wv);
+    const n = pfbm(u, v, 16, 4, 86);
+    const fine = pnoise(u * 256, v * 256, 256, 87);
+    const fine2 = pnoise(u * 128, v * 128, 128, 88);
+    const edgeN = pfbm(u, v, 20, 3, 89);
+    // split long stones in two now and then so the rows don't read as bricks
+    let dx = k.dx, hx = k.hx;
+    let sid = k.id;
+    if (hx > 0.09 && hash2(k.id, 4, 90) > 0.4) {
+      const cut = (hash2(k.id, 5, 90) - 0.5) * hx * 0.6;
+      if (dx < cut) { hx = (cut + k.hx) / 2; dx = dx - (cut - k.hx) / 2; sid += 1000; }
+      else { hx = (k.hx - cut) / 2; dx = dx - (cut + k.hx) / 2; }
+    }
+    const hy = k.hy * (0.85 + hash2(sid, 6, 90) * 0.15);
+    const dy = k.dy + (hash2(sid, 7, 90) - 0.5) * (k.hy - hy);
+    const rad = Math.min(hx, hy) * (0.55 + hash2(sid, 1, 90) * 0.4);
+    const d = rrect(dx, dy, hx - 0.009, hy - 0.009, rad) + (edgeN - 0.5) * 0.024;
+    const inS = sstep(0.002, -0.006, d);
+    const pillow = Math.sqrt(sstep(0, Math.min(hx, hy) * 0.9, -d));
+    const id = hash2(sid, 0, 91);
+    const hue = hash2(sid, 2, 91);
+    let tone = 150 + (id - 0.5) * 60 + (n - 0.5) * 34 + (fine - 0.5) * 16 + (fine2 - 0.5) * 12;
+    tone *= 0.74 + 0.26 * pillow; // stones darken towards their rounded edges
+    const [hr, hg, hb] = hue > 0.7 ? [1.08, 0.98, 0.8] : hue < 0.2 ? [0.95, 0.97, 0.98] : hue < 0.45 ? [1.05, 0.96, 0.84] : [1.02, 0.97, 0.88];
+    const mc = 84 + (fine - 0.5) * 20 + (n - 0.5) * 16;
+    const r = tone * hr * inS + mc * (1 - inS), g = tone * hg * inS + mc * 0.93 * (1 - inS), b = tone * hb * inS + mc * 0.82 * (1 - inS);
+    const hgt = inS * (0.3 + pillow * 0.55 + n * 0.1 + fine * 0.04) + (1 - inS) * fine * 0.04;
+    return [r, g, b, hgt];
+  }, 9);
+});
+
+/** Small red bricks in running bond with pale lime mortar: furnaces, hearths and arches. */
+export const brickTex = () => cached('brick', () => {
+  const cs = makeCourses(12, 97, 0.15, 0.2, 0.05);
+  return build(256, (u, v) => {
+    const k = courseAt(cs, u, v);
+    const n = pfbm(u, v, 8, 3, 98);
+    const fine = pnoise(u * 128, v * 128, 128, 99);
+    const d = rrect(k.dx, k.dy, k.hx - 0.006, k.hy - 0.006, 0.008) + (fine - 0.5) * 0.006;
+    const inB = sstep(0.002, -0.004, d);
+    const id = hash2(k.id, 0, 97);
+    const t = 0.78 + id * 0.36 + (n - 0.5) * 0.2;
+    const soot = sstep(0.55, 0.8, pfbm(u, v, 3, 3, 96)) * 0.4;
+    const br = 176 * t * (1 - soot), bg = 84 * t * (1 - soot * 0.9), bb = 56 * t * (1 - soot * 0.8);
+    const mc = 176 + (fine - 0.5) * 30 - soot * 60;
+    return [br * inB + mc * (1 - inB), bg * inB + mc * 0.95 * (1 - inB), bb * inB + mc * 0.86 * (1 - inB), inB * (0.6 + n * 0.2) + fine * 0.05];
+  }, 5);
+});
+
+/** Split wooden shakes for plank roofs: courses of boards of random width, grain down the slope,
+ *  gaps between the boards and the shadow of the course above. Rows match `thatch`/`tile`. */
+export const SHINGLE_ROWS = 7;
+export const shingleTex = () => cached('shingle', () => {
+  const rows = SHINGLE_ROWS;
+  const rng = new RNG(131);
+  const cuts: number[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const c = [0];
+    while (c[c.length - 1] < 0.9) c.push(c[c.length - 1] + 0.07 + rng.next() * 0.09);
+    c.push(1);
+    cuts.push(c);
+  }
+  return build(256, (u, v) => {
+    const ry = v * rows;
+    const row = Math.min(rows - 1, Math.floor(ry));
+    const fy = ry - row;
+    const c = cuts[row];
+    let bi = 0;
+    while (bi < c.length - 2 && u >= c[bi + 1]) bi++;
+    const fx = (u - c[bi]) / (c[bi + 1] - c[bi]);
+    const id = hash2(bi, row, 132);
+    const grain = pfbmA(u, v, 64, 2, 3, 133 + bi);
+    const fibre = pnoiseA(u * 256, v * 16, 256, 16, 134);
+    const gap = sstep(0.06, 0.0, Math.min(fx, 1 - fx) * (c[bi + 1] - c[bi]) * 12);
+    const lip = sstep(0.06, 0.0, fy);
+    const under = Math.pow(fy, 2) * 0.45;
+    const tone = (132 + (id - 0.5) * 50 + (grain - 0.5) * 40 + (fibre - 0.5) * 16) * (1 - under) * (1 - gap * 0.6) * (1 - lip * 0.35);
+    const gray = 0.25 + id * 0.3;
+    const l = tone * 0.8;
+    return [tone * (1 - gray) + l * gray, tone * 0.76 * (1 - gray) + l * gray, tone * 0.54 * (1 - gray) + l * gray * 0.95,
+      (1 - gap) * (0.5 + grain * 0.2) + (1 - fy) * 0.3];
+  }, 5);
+});
 
 /** Rough coursed stone: irregular rows, stones of random length with rounded, chipped
  *  edges, recessed mortar. */
@@ -404,8 +504,8 @@ export const thatchTex = () => cached('thatch', () => build(512, (u, v) => {
   const n = pfbm(u, v, 6, 4, 3);
   const grey = sstep(0.55, 0.85, pfbm(u, v, 3, 3, 49)) * 0.4;
   const shade = 1 - Math.pow(fy, 3) * 0.4 - (fy < 0.05 ? (0.05 - fy) * 4 : 0);
-  const tone = (160 + strands * 48 + (strands2 - 0.5) * 26 + (n - 0.5) * 40) * shade;
-  const r = tone, g = tone * (0.84 - grey * 0.04), b = tone * (0.52 + grey * 0.22);
+  const tone = (150 + strands * 56 + (strands2 - 0.5) * 30 + (n - 0.5) * 44) * shade;
+  const r = tone * 1.06, g = tone * (0.78 - grey * 0.04), b = tone * (0.34 + grey * 0.3);
   const l = (r + g + b) / 3;
   return [r * (1 - grey * 0.45) + l * grey * 0.45, g * (1 - grey * 0.45) + l * grey * 0.45, b * (1 - grey * 0.45) + l * grey * 0.4,
     strands * 0.18 + (1 - fy) * 0.6 + strands2 * 0.06];
