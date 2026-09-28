@@ -692,6 +692,56 @@ function railway(mb: MB, z0: number, ore: string) {
 // ------------------------------------------------------------------ building designs
 type Design = (mb: MB, owner: number) => void;
 
+/** The castle; the headquarters is the same with a roof over the keep. */
+function castleDesign(mb: MB, owner: number, roofedKeep: boolean) {
+  const S = 3.3, T = 0.3, H = 1.1;
+  const hs = S / 2;
+  plinth(mb, S + 0.3, S + 0.3, 0, 0, 0.1, 'stoneDark', 0.3);
+  // curtain walls with a battlement walk
+  const wall = (w: number, d: number, x: number, z: number) => {
+    mb.add('stone', wallPrism(w, d, H, { r: 0.03, batter: 0.03, wobble: 0.007, seed: x * 3 + z }), x, 0.1, z);
+    crenels(mb, w, d, H + 0.1, x, z, 'stone', 0.13);
+    mb.add('cobble', box(w - 0.08, 0.02, d - 0.08, 1.2), x, H + 0.1, z);
+  };
+  wall(S, T, 0, -hs);
+  wall(T, S, -hs, 0);
+  wall(T, S, hs, 0);
+  wall(S * 0.34, T, -S * 0.33, hs);
+  wall(S * 0.34, T, S * 0.33, hs);
+  // gatehouse with a round arch, red doors and a portcullis
+  mb.add('stone', wallPrism(1.1, 0.62, 1.55, { r: 0.05, batter: 0.03, wobble: 0.006, seed: 3 }), 0, 0.1, hs);
+  parapet(mb, 1.1, 0.62, 1.65, 0, hs);
+  put(mb, archDoor(0.46, 0.78), 0, 0.1, hs + 0.31);
+  for (let k = 0; k < 5; k++) mb.add('iron', box(0.018, 0.5, 0.018), -0.16 + k * 0.08, 0.7, hs + 0.33);
+  win(mb, 0, 1.3, hs + 0.31, 'z', 0.09, 0.22, 'slit');
+  // corner towers with open battlements
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    roundTower(mb, sx * hs, 0.1, sz * hs, 0.5, 1.6);
+    roundBattlement(mb, sx * hs, 1.7, sz * hs, 0.5 - 0.04);
+    for (const a of [0.8, 2.4]) win(mb, sx * hs + Math.sin(a * sx) * 0.47, 1.0, sz * hs + Math.cos(a * sz) * 0.47, 'z', 0.08, 0.2, 'slit');
+  }
+  // the keep at the back, and a great hall along the left wall
+  mb.add('stone', wallPrism(1.4, 1.3, 2.25, { r: 0.06, batter: 0.05, wobble: 0.008, seed: 12 }), 0.35, 0.1, -0.7);
+  parapet(mb, 1.4, 1.3, 2.35, 0.35, -0.7);
+  for (const y of [1.3, 1.85]) for (const px of [0.0, 0.7]) win(mb, px, y, -0.05, 'z', 0.12, 0.22, 'arch');
+  put(mb, archDoor(0.3, 0.5), 0.35, 0.1, -0.05);
+  house(mb, { w: 0.9, d: 1.8, wallH: 0.9, roofH: 0.55, x: -0.95, z: 0.1, door: null, wins: [], chim: [0.2, 0.3], rot: true, noPlinth: true, sideWin: false, over: 0.14 });
+  win(mb, -0.5, 0.7, -0.2, 'x', 0.14, 0.18);
+  win(mb, -0.5, 0.7, 0.4, 'x', 0.14, 0.18);
+  put(mb, archDoor(0.26, 0.46), -0.95, 0.12, 1.0);
+  if (roofedKeep) {
+    // the headquarters: a tiled roof over the keep's battlement on four corner posts, the flag on its peak
+    mb.add(`roof${owner}`, hipRoof(1.34, 1.24, 0.85, 0.12, { style: 'tile', seed: 19 }), 0.35, 2.9, -0.7);
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mb.add('timber', box(0.07, 0.36, 0.07, 2), 0.35 + sx * 0.6, 2.72, -0.7 + sz * 0.55);
+    flag(mb, 0.35, 3.7, -0.7, 0.65, owner);
+  } else flag(mb, 0.35, 2.76, -0.7, 1.0, owner);
+  flag(mb, -hs, 1.92, -hs, 0.6, owner);
+  flag(mb, hs, 1.92, -hs, 0.6, owner);
+  mb.add('cobble', box(S - T * 2, 0.02, S - T * 2, 1), 0, 0.11, 0);
+  mb.anchors.soldiers.push(new THREE.Vector3(-0.5, 1.22, hs), new THREE.Vector3(0.5, 1.22, hs), new THREE.Vector3(-hs, 1.22, 0.3), new THREE.Vector3(hs, 1.22, 0.3));
+  mb.anchors.top = 3.8;
+}
+
 const designs: Partial<Record<BuildingType, Design>> = {
   woodcutter(mb) {
     // log cabin under thick thatch, a shingled lean-to full of logs, the chopping block out front
@@ -1361,53 +1411,11 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.anchors.top = 4.8;
   },
   castle(mb, owner) {
-    const S = 3.3, T = 0.3, H = 1.1;
-    const hs = S / 2;
-    plinth(mb, S + 0.3, S + 0.3, 0, 0, 0.1, 'stoneDark', 0.3);
-    // curtain walls with a battlement walk
-    const wall = (w: number, d: number, x: number, z: number) => {
-      mb.add('stone', wallPrism(w, d, H, { r: 0.03, batter: 0.03, wobble: 0.007, seed: x * 3 + z }), x, 0.1, z);
-      crenels(mb, w, d, H + 0.1, x, z, 'stone', 0.13);
-      mb.add('cobble', box(w - 0.08, 0.02, d - 0.08, 1.2), x, H + 0.1, z);
-    };
-    wall(S, T, 0, -hs);
-    wall(T, S, -hs, 0);
-    wall(T, S, hs, 0);
-    wall(S * 0.34, T, -S * 0.33, hs);
-    wall(S * 0.34, T, S * 0.33, hs);
-    // gatehouse with a round arch, red doors and a portcullis
-    mb.add('stone', wallPrism(1.1, 0.62, 1.55, { r: 0.05, batter: 0.03, wobble: 0.006, seed: 3 }), 0, 0.1, hs);
-    parapet(mb, 1.1, 0.62, 1.65, 0, hs);
-    put(mb, archDoor(0.46, 0.78), 0, 0.1, hs + 0.31);
-    for (let k = 0; k < 5; k++) mb.add('iron', box(0.018, 0.5, 0.018), -0.16 + k * 0.08, 0.7, hs + 0.33);
-    win(mb, 0, 1.3, hs + 0.31, 'z', 0.09, 0.22, 'slit');
-    // corner towers with open battlements
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      roundTower(mb, sx * hs, 0.1, sz * hs, 0.5, 1.6);
-      roundBattlement(mb, sx * hs, 1.7, sz * hs, 0.5 - 0.04);
-      for (const a of [0.8, 2.4]) win(mb, sx * hs + Math.sin(a * sx) * 0.47, 1.0, sz * hs + Math.cos(a * sz) * 0.47, 'z', 0.08, 0.2, 'slit');
-    }
-    // the keep at the back, and a great hall along the left wall
-    mb.add('stone', wallPrism(1.4, 1.3, 2.25, { r: 0.06, batter: 0.05, wobble: 0.008, seed: 12 }), 0.35, 0.1, -0.7);
-    parapet(mb, 1.4, 1.3, 2.35, 0.35, -0.7);
-    for (const y of [1.3, 1.85]) for (const px of [0.0, 0.7]) win(mb, px, y, -0.05, 'z', 0.12, 0.22, 'arch');
-    put(mb, archDoor(0.3, 0.5), 0.35, 0.1, -0.05);
-    house(mb, { w: 0.9, d: 1.8, wallH: 0.9, roofH: 0.55, x: -0.95, z: 0.1, door: null, wins: [], chim: [0.2, 0.3], rot: true, noPlinth: true, sideWin: false, over: 0.14 });
-    win(mb, -0.5, 0.7, -0.2, 'x', 0.14, 0.18);
-    win(mb, -0.5, 0.7, 0.4, 'x', 0.14, 0.18);
-    put(mb, archDoor(0.26, 0.46), -0.95, 0.12, 1.0);
-    flag(mb, 0.35, 2.76, -0.7, 1.0, owner);
-    flag(mb, -hs, 1.92, -hs, 0.6, owner);
-    flag(mb, hs, 1.92, -hs, 0.6, owner);
-    mb.add('cobble', box(S - T * 2, 0.02, S - T * 2, 1), 0, 0.11, 0);
-    mb.anchors.soldiers.push(new THREE.Vector3(-0.5, 1.22, hs), new THREE.Vector3(0.5, 1.22, hs), new THREE.Vector3(-hs, 1.22, 0.3), new THREE.Vector3(hs, 1.22, 0.3));
-    mb.anchors.top = 3.8;
+    castleDesign(mb, owner, false);
   },
   hq(mb, owner) {
-    designs.castle!(mb, owner);
-    // a tiled roof over the keep's battlement on four corner posts, stores in the yard
-    mb.add(`roof${owner}`, hipRoof(1.34, 1.24, 0.85, 0.12, { style: 'tile', seed: 19 }), 0.35, 2.9, -0.7);
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mb.add('timber', box(0.07, 0.36, 0.07, 2), 0.35 + sx * 0.6, 2.72, -0.7 + sz * 0.55);
+    castleDesign(mb, owner, true);
+    // stores in the yard
     for (const [px, pz] of [[0.2, 0.6], [0.45, 0.72], [1.0, 0.65]]) barrel(mb, px, 0.12, pz);
     crate(mb, 0.75, 0.12, 0.35, 0.26, 0.3);
     sack(mb, -0.2, 0.12, 0.8);
