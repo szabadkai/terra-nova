@@ -9,6 +9,8 @@ import type { Building, Settler } from './types';
 import { recomputeTerritory, isSoldier, sendSoldierTo } from './military';
 import { offer } from './faith';
 import { donkeyCap, donkeysOf, marketsOf, spawnDonkey } from './trade';
+import { catapultCap, catapultsOf, mendWalls, spawnCatapult } from './siege';
+import { CATAPULT_PARTS } from './defs';
 
 const SITE_DIGGERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 const SITE_BUILDERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
@@ -29,6 +31,7 @@ export function updateBuilding(g: Game, b: Building, dt: number) {
     return;
   }
   if (b.underAttackT > 0) b.underAttackT -= dt;
+  if (b.def.military && b.state === 'done') mendWalls(b, dt);
   if (b.state === 'leveling') {
     if (b.levelTotal < 0.06) {
       g.finishLeveling(b);
@@ -152,11 +155,12 @@ function updateProduction(g: Game, b: Building, dt: number) {
       b.status = marketsOf(g, b.owner).length ? 'The stables are full' : 'Waiting for a market place to work for';
       return;
     }
+    if (b.type === 'siegeworks' && catapultsOf(g, b.owner) >= catapultCap(g, b.owner)) { b.status = 'The yard is full of catapults'; return; }
     for (const inp of def.inputs ?? []) takeInput(b, inp.goods);
     b.working = true;
     b.workT = 0;
     (b as any).curOut = out;
-    b.status = def.mana ? 'Offering wine to the gods' : 'Working';
+    b.status = def.mana ? 'Offering wine to the gods' : b.type === 'siegeworks' ? `Building a catapult (${Math.round(b.shipProgress * 100)}%)` : 'Working';
   } else {
     b.workT += dt;
     if (b.workT >= def.cycle) {
@@ -171,6 +175,17 @@ function updateProduction(g: Game, b: Building, dt: number) {
         spawnDonkey(g, b);
         b.prodCount++;
         b.lastProd = g.time;
+        return;
+      }
+      if (b.type === 'siegeworks') {
+        // one part per cycle; the machine rolls out when the last is fitted
+        b.shipProgress = Math.min(1, b.shipProgress + 1 / CATAPULT_PARTS);
+        b.lastProd = g.time;
+        if (b.shipProgress >= 1 - 1e-6) {
+          b.shipProgress = 0;
+          spawnCatapult(g, b);
+          b.prodCount++;
+        }
         return;
       }
       const out: Good = (b as any).curOut ?? def.outputs![0];

@@ -656,6 +656,74 @@ export function buildDonkeyGeos() {
   return { body: prep(bodyG), leg: prep(leg), pack: prep(pack) };
 }
 
+// ------------------------------------------------------------------ catapult
+/**
+ * A torsion catapult on four wheels, facing +z. `frame` is the chassis with the A-frame and the
+ * windlass; `wheel` is one wheel centred on its axle (placed four times); `arm` is the throwing
+ * arm pivoting about the x axis at its origin, beam along +y with the cup at the far end and the
+ * counterweight past the pivot; `stone` sits in the cup (arm space); `flag` is a white pennant
+ * tinted per instance with the owner's colour. Axle centres: x ±0.36, y 0.22, z ±0.38.
+ */
+export function buildCatapultGeos() {
+  const wood = lin(0x8a6640), woodD = lin(0x5a4028), iron = lin(0x3a3c42), rope = lin(0x9a8862), stone = lin(0x6e6a64);
+  const tint = (g: THREE.BufferGeometry, c: [number, number, number], v = 0.1) => colorize(g, (x, y, z) => {
+    const k = 1 - v + hash2(Math.round(x * 50), Math.round(y * 50) + Math.round(z * 50) * 3, 9) * v * 2;
+    return [c[0] * k, c[1] * k, c[2] * k];
+  });
+  const B = (w: number, h: number, d: number, x: number, y: number, z: number, c = wood, rx = 0, ry = 0, rz = 0) => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    if (rz) g.rotateZ(rz);
+    if (rx) g.rotateX(rx);
+    if (ry) g.rotateY(ry);
+    g.translate(x, y, z);
+    return tint(g, c);
+  };
+  const C = (r: number, h: number, x: number, y: number, z: number, c = wood, axis: 'x' | 'y' | 'z' = 'x', seg = 8) => {
+    const g = new THREE.CylinderGeometry(r, r, h, seg);
+    if (axis === 'x') g.rotateZ(Math.PI / 2); else if (axis === 'z') g.rotateX(Math.PI / 2);
+    g.translate(x, y, z);
+    return tint(g, c);
+  };
+  const frame: THREE.BufferGeometry[] = [];
+  // chassis rails and cross beams
+  for (const sx of [-1, 1]) frame.push(B(0.09, 0.1, 1.12, sx * 0.3, 0.3, 0));
+  for (const z of [-0.48, 0, 0.48]) frame.push(B(0.7, 0.08, 0.09, 0, 0.3, z, woodD));
+  // axles
+  for (const z of [-0.38, 0.38]) frame.push(C(0.025, 0.82, 0, 0.22, z, iron));
+  // A-frame: posts, braces and the padded stop bar
+  for (const sx of [-1, 1]) {
+    frame.push(B(0.07, 0.62, 0.07, sx * 0.3, 0.64, 0.14));
+    frame.push(B(0.06, 0.62, 0.06, sx * 0.3, 0.6, 0.36, wood, -0.62));
+    frame.push(B(0.06, 0.5, 0.06, sx * 0.3, 0.52, -0.1, wood, 0.55));
+  }
+  frame.push(B(0.76, 0.08, 0.1, 0, 0.95, 0.14, woodD));
+  frame.push(B(0.5, 0.11, 0.15, 0, 0.955, 0.14, rope, 0, 0, 0));
+  // torsion skein at the pivot and the windlass at the back
+  frame.push(C(0.065, 0.62, 0, 0.45, 0.12, rope, 'x', 10));
+  frame.push(C(0.045, 0.74, 0, 0.42, -0.44, woodD));
+  for (const sx of [-1, 1]) for (const a of [0, Math.PI / 2]) frame.push(B(0.03, 0.26, 0.03, sx * 0.4, 0.42, -0.44, woodD, a));
+  // pennant pole on the rear left post
+  frame.push(B(0.022, 0.55, 0.022, -0.34, 1.2, 0.14, woodD));
+  const wheel: THREE.BufferGeometry[] = [];
+  const rim = new THREE.TorusGeometry(0.15, 0.028, 6, 14);
+  rim.rotateY(Math.PI / 2);
+  wheel.push(tint(rim, woodD));
+  wheel.push(C(0.045, 0.09, 0, 0, 0, iron));
+  for (let k = 0; k < 4; k++) wheel.push(B(0.022, 0.3, 0.025, 0, 0, 0, wood, (k * Math.PI) / 4));
+  const arm: THREE.BufferGeometry[] = [];
+  arm.push(B(0.065, 1.22, 0.065, 0, 0.36, 0));
+  arm.push(B(0.2, 0.17, 0.17, 0, -0.2, 0, stone));
+  arm.push(tint(new THREE.TorusGeometry(0.105, 0.022, 6, 12).rotateX(Math.PI / 2).translate(0, 0.99, 0), iron, 0.04));
+  arm.push(C(0.1, 0.05, 0, 0.955, 0, woodD, 'y', 10));
+  arm.push(B(0.03, 0.4, 0.03, 0, 0.75, 0.05, iron));
+  const st = new THREE.DodecahedronGeometry(0.1, 0);
+  st.translate(0, 1.07, 0);
+  const pennant = new THREE.BoxGeometry(0.26, 0.13, 0.012);
+  pennant.translate(-0.34 + 0.14, 1.4, 0.14);
+  colorize(pennant, () => [1, 1, 1]);
+  return { frame: merge(frame), wheel: merge(wheel), arm: merge(arm), stone: prep(tint(st, stone, 0.18)), flag: prep(pennant) };
+}
+
 // ------------------------------------------------------------------ goods
 export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
   const c = (g: THREE.BufferGeometry, hex: number, v = 0.12) => colorize(g, (x, y, z) => {

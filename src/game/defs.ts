@@ -30,9 +30,9 @@ export type Job =
   | 'woodcutter' | 'forester' | 'stonecutter' | 'sawyer'
   | 'fisher' | 'hunter' | 'farmer' | 'miller' | 'baker' | 'butcher' | 'pigfarmer' | 'waterman'
   | 'miner' | 'smelter' | 'toolsmith' | 'weaponsmith'
-  | 'vintner' | 'priest' | 'shipwright' | 'geologist' | 'pioneer' | 'donkeybreeder'
+  | 'vintner' | 'priest' | 'shipwright' | 'geologist' | 'pioneer' | 'donkeybreeder' | 'engineer'
   | 'swordsman' | 'bowman'
-  | 'donkey';
+  | 'donkey' | 'catapult';
 
 export const JOB_NAMES: Record<Job, string> = {
   carrier: 'Carrier', builder: 'Builder', digger: 'Digger', woodcutter: 'Woodcutter', forester: 'Forester',
@@ -40,12 +40,12 @@ export const JOB_NAMES: Record<Job, string> = {
   miller: 'Miller', baker: 'Baker', butcher: 'Butcher', pigfarmer: 'Pig Farmer', waterman: 'Water Carrier',
   miner: 'Miner', smelter: 'Smelter', toolsmith: 'Toolsmith', weaponsmith: 'Weaponsmith',
   vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', geologist: 'Geologist', pioneer: 'Pioneer', donkeybreeder: 'Donkey Breeder',
-  swordsman: 'Swordsman', bowman: 'Bowman', donkey: 'Donkey',
+  engineer: 'Siege Engineer', swordsman: 'Swordsman', bowman: 'Bowman', donkey: 'Donkey', catapult: 'Catapult',
 };
 
 export const JOB_TOOL: Partial<Record<Job, Good>> = {
   builder: 'hammer', digger: 'shovel', woodcutter: 'axe', stonecutter: 'pickaxe', sawyer: 'saw',
-  fisher: 'rod', hunter: 'bow', farmer: 'scythe', miner: 'pickaxe', weaponsmith: 'hammer', shipwright: 'hammer', pioneer: 'shovel',
+  fisher: 'rod', hunter: 'bow', farmer: 'scythe', miner: 'pickaxe', weaponsmith: 'hammer', shipwright: 'hammer', pioneer: 'shovel', engineer: 'hammer',
 };
 
 export type BuildingType =
@@ -56,7 +56,7 @@ export type BuildingType =
   | 'ironsmelter' | 'goldsmelter' | 'toolsmith' | 'weaponsmith'
   | 'vineyard' | 'temple' | 'greattemple'
   | 'market' | 'donkeyfarm' | 'harbour' | 'shipyard'
-  | 'barracks' | 'tower_s' | 'tower_l' | 'castle';
+  | 'barracks' | 'siegeworks' | 'tower_s' | 'tower_l' | 'castle';
 
 export type Category = 'basic' | 'food' | 'industry' | 'military' | 'faith' | 'trade';
 
@@ -77,7 +77,8 @@ export interface BuildingDef {
   cycle?: number; // production seconds
   radius?: number; // work radius
   mine?: 'coal' | 'iron' | 'gold' | 'stone';
-  military?: { capacity: number; radius: number };
+  /** `siege`: catapult stones an empty stronghold takes before it falls */
+  military?: { capacity: number; radius: number; siege: number };
   residence?: number; // number of carriers spawned
   storage?: boolean;
   mana?: number; // mana gained per production cycle (temples)
@@ -90,7 +91,7 @@ const D = (d: BuildingDef) => d;
 
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   hq: D({ type: 'hq', name: 'Headquarters', size: 4, category: 'military', cost: { board: 0, stone: 0 },
-    storage: true, military: { capacity: 12, radius: 15 }, desc: 'Your seat of power. Stores goods and houses reserve soldiers.', buildable: false }),
+    storage: true, military: { capacity: 12, radius: 15, siege: 12 }, desc: 'Your seat of power. Stores goods and houses reserve soldiers.', buildable: false }),
   woodcutter: D({ type: 'woodcutter', name: "Woodcutter's Hut", size: 2, category: 'basic', cost: { board: 2, stone: 1 },
     worker: 'woodcutter', outputs: ['log'], radius: 11, desc: 'Fells mature trees and produces logs.' }),
   forester: D({ type: 'forester', name: "Forester's Hut", size: 2, category: 'basic', cost: { board: 2, stone: 1 },
@@ -155,7 +156,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     worker: 'donkeybreeder', inputs: [{ goods: ['grain'], cap: 6 }, { goods: ['water'], cap: 6 }], cycle: 16,
     desc: 'Breeds donkeys on grain and water. Donkeys wait at your market places and carry the goods of your trade routes.' }),
   harbour: D({ type: 'harbour', name: 'Harbour', size: 3, category: 'trade', cost: { board: 6, stone: 5 },
-    storage: true, coastal: true, military: { capacity: 2, radius: 8 },
+    storage: true, coastal: true, military: { capacity: 2, radius: 8, siege: 3 },
     desc: 'A coastal storehouse where ships dock. Ships carry goods and settlers between your harbours and sail expeditions to found colonies overseas.' }),
   shipyard: D({ type: 'shipyard', name: 'Shipyard', size: 3, category: 'trade', cost: { board: 4, stone: 2 },
     worker: 'shipwright', coastal: true, inputs: [{ goods: ['board'], cap: 8 }],
@@ -163,19 +164,22 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
 
   barracks: D({ type: 'barracks', name: 'Barracks', size: 3, category: 'military', cost: { board: 4, stone: 4 },
     inputs: [{ goods: ['sword'], cap: 4 }, { goods: ['bow'], cap: 4 }], cycle: 6, desc: 'Trains carriers into soldiers using weapons.' }),
+  siegeworks: D({ type: 'siegeworks', name: 'Siege Workshop', size: 3, category: 'military', cost: { board: 5, stone: 4 },
+    worker: 'engineer', inputs: [{ goods: ['board'], cap: 6 }, { goods: ['iron'], cap: 4 }], cycle: 7,
+    desc: 'An engineer builds catapults from boards and iron. Send one against an enemy stronghold: its stones kill the garrison, and enough of them bring an empty stronghold down. It outranges tower archers, but soldiers smash it with ease.' }),
   tower_s: D({ type: 'tower_s', name: 'Guard Tower', size: 2, category: 'military', cost: { board: 3, stone: 2 },
-    military: { capacity: 2, radius: 9 }, desc: 'Small tower that extends your territory.' }),
+    military: { capacity: 2, radius: 9, siege: 3 }, desc: 'Small tower that extends your territory.' }),
   tower_l: D({ type: 'tower_l', name: 'Watchtower', size: 3, category: 'military', cost: { board: 5, stone: 6 },
-    military: { capacity: 5, radius: 13 }, desc: 'Large tower with a strong garrison.' }),
+    military: { capacity: 5, radius: 13, siege: 5 }, desc: 'Large tower with a strong garrison.' }),
   castle: D({ type: 'castle', name: 'Castle', size: 4, category: 'military', cost: { board: 8, stone: 12 },
-    military: { capacity: 10, radius: 17 }, desc: 'Mighty fortress, claims a wide area.' }),
+    military: { capacity: 10, radius: 17, siege: 8 }, desc: 'Mighty fortress, claims a wide area.' }),
 };
 
 export const BUILD_ORDER: Record<Category, BuildingType[]> = {
   basic: ['woodcutter', 'forester', 'sawmill', 'stonecutter', 'residence_s', 'residence_m', 'residence_l', 'storehouse'],
   food: ['fisher', 'hunter', 'farm', 'waterworks', 'mill', 'bakery', 'pigfarm', 'slaughter'],
   industry: ['coalmine', 'ironmine', 'goldmine', 'stonemine', 'ironsmelter', 'goldsmelter', 'toolsmith', 'weaponsmith'],
-  military: ['tower_s', 'tower_l', 'castle', 'barracks'],
+  military: ['tower_s', 'tower_l', 'castle', 'barracks', 'siegeworks'],
   faith: ['vineyard', 'temple', 'greattemple'],
   trade: ['market', 'donkeyfarm', 'harbour', 'shipyard'],
 };
@@ -188,6 +192,13 @@ export const CATEGORY_NAMES: Record<Category, string> = {
 export const DONKEY_LOAD = 2;
 export const DONKEYS_PER_MARKET = 4;
 export const MAX_DONKEYS = 24;
+
+/** Catapults: cycles of boards and iron that go into one, how many a realm keeps, how far a stone flies and how often. */
+export const CATAPULT_PARTS = 4;
+export const MAX_CATAPULTS = 6;
+export const CATAPULT_RANGE = 10;
+export const CATAPULT_RELOAD = 7;
+export const CATAPULT_HP = 70;
 
 /** Boards a shipwright hammers into one ship. */
 export const SHIP_BOARDS = 10;

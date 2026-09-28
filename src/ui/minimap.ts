@@ -120,11 +120,12 @@ export class Minimap {
     }
     // soldiers of all players (visible)
     for (const s of g.settlers.values()) {
-      if (s.hidden || (s.job !== 'swordsman' && s.job !== 'bowman')) continue;
+      if (s.hidden || s.dead || (s.job !== 'swordsman' && s.job !== 'bowman' && s.job !== 'catapult')) continue;
       if (!w.explored[w.idx(Math.round(s.x), Math.round(s.z))]) continue;
       const c = pc[s.owner];
       this.ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-      this.ctx.fillRect(s.x - 0.8, s.z - 0.8, 1.6, 1.6);
+      const r = s.job === 'catapult' ? 1.2 : 0.8;
+      this.ctx.fillRect(s.x - r, s.z - r, r * 2, r * 2);
     }
     // ships: a pale hull with the owner's sail
     for (const sh of g.ships.values()) {

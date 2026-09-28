@@ -425,7 +425,7 @@ export class Game {
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,
       dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null, tradeTo: 0,
-      priority: false,
+      priority: false, damage: 0,
     };
   }
 
@@ -594,10 +594,11 @@ export class Game {
   }
 
   population(owner: number) {
-    const r = { total: 0, carriers: 0, idle: 0, soldiers: 0, builders: 0, diggers: 0, workers: 0, donkeys: 0 };
+    const r = { total: 0, carriers: 0, idle: 0, soldiers: 0, builders: 0, diggers: 0, workers: 0, donkeys: 0, catapults: 0 };
     for (const s of this.settlers.values()) {
       if (s.owner !== owner || s.dead) continue;
       if (s.job === 'donkey') { r.donkeys++; continue; } // beasts of burden, not people
+      if (s.job === 'catapult') { r.catapults++; continue; } // machines
       r.total++;
       if (s.job === 'carrier') { r.carriers++; if (s.idle) r.idle++; }
       else if (s.job === 'swordsman' || s.job === 'bowman') r.soldiers++;
@@ -800,7 +801,7 @@ export class Game {
     }
     for (const s of this.settlers.values()) {
       if (s.owner !== this.local || s.hidden || s.dead) continue;
-      reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : 4.5);
+      reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
     }
     for (const sh of this.ships.values()) if (sh.owner === this.local) reveal(sh.x, sh.z, 8);
     if (changed) w.exploredDirty = true;

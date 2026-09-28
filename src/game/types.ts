@@ -157,6 +157,8 @@ export interface Building {
   tradeTo: number; // market: the market its donkeys deliver to (chosen by the player), 0 none
   /** The player's one prioritised building: its needs come first and construction crews go there before anywhere else. */
   priority: boolean;
+  /** stronghold: catapult stones taken while empty (heals slowly in peace); the walls fall at `def.military.siege` */
+  damage: number;
 }
 
 export interface Animal {
@@ -253,9 +255,10 @@ export interface Projectile {
   tx: number; ty: number; tz: number;
   t: number;
   dur: number;
-  target: number; // settler id, or -animal id
-  damage: number;
-  kind: 'arrow';
+  target: number; // settler id, or -animal id; 0 for a stone
+  damage: number; // a stone: 1 when it will land on the building, 0 when it falls short or wide
+  kind: 'arrow' | 'stone';
+  building?: number; // the stronghold a catapult stone is aimed at
 }
 
 export interface GameEvent {

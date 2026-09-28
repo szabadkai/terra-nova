@@ -12,6 +12,7 @@ import { WaterRenderer } from './water';
 import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
 import { SettlersRenderer } from './settlers';
 import { DonkeysRenderer } from './donkeys';
+import { CatapultsRenderer } from './catapults';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
@@ -132,6 +133,7 @@ export class GameRenderer {
   grass: GrassRenderer;
   settlers: SettlersRenderer;
   donkeys: DonkeysRenderer;
+  catapults: CatapultsRenderer;
   animals: AnimalsRenderer;
   arrows: ProjectilesRenderer;
   piles: PilesRenderer;
@@ -221,6 +223,8 @@ export class GameRenderer {
     this.scene.add(this.settlers.group);
     this.donkeys = new DonkeysRenderer(game, goodGeos);
     this.scene.add(this.donkeys.group);
+    this.catapults = new CatapultsRenderer(game);
+    this.scene.add(this.catapults.group);
     this.orders = new OrdersFX(game);
     this.scene.add(this.orders.group);
     this.priority = new PriorityMarker(game);
@@ -228,7 +232,7 @@ export class GameRenderer {
     this.animals = new AnimalsRenderer(game);
     this.scene.add(this.animals.group);
     this.arrows = new ProjectilesRenderer(game);
-    this.scene.add(this.arrows.mesh);
+    this.scene.add(this.arrows.mesh, this.arrows.stones);
     this.piles = new PilesRenderer(goodGeos);
     this.scene.add(this.piles.group);
     this.buildings = new BuildingsRenderer(game, this.piles);
@@ -355,7 +359,7 @@ export class GameRenderer {
     const r = this.canvas.getBoundingClientRect();
     let best: Settler | null = null, bd = maxPx * maxPx;
     const v = new THREE.Vector3();
-    for (const it of [...this.settlers.visibleList, ...this.donkeys.visibleList]) {
+    for (const it of [...this.settlers.visibleList, ...this.donkeys.visibleList, ...this.catapults.visibleList]) {
       v.set(it.x, it.y + 0.45, it.z).project(this.cam.camera);
       const sx = (v.x * 0.5 + 0.5) * r.width + r.left, sy = (-v.y * 0.5 + 0.5) * r.height + r.top;
       const d = (sx - clientX) ** 2 + (sy - clientY) ** 2;
@@ -659,6 +663,11 @@ export class GameRenderer {
         case 'soldier': P.sparkle(x, y + 0.6, z, 16, [1.8, 1.2, 0.6]); snd('horn', 0.5); break;
         case 'equip': P.sparkle(x, y + 0.6, z, 6); break;
         case 'donkey': P.sparkle(x, y + 0.6, z, 10, [1.3, 1.2, 0.9]); P.dust(x, y, z, 4); snd('pop', 0.5); break;
+        case 'machine': P.sparkle(x, y + 0.9, z, 24, [1.6, 1.3, 0.7]); P.dust(x, y, z, 8); snd('built', 0.7); snd('creak', 0.7); break;
+        case 'catapult': P.dust(x, y + 0.3, z, 3, [0.6, 0.55, 0.45]); snd('thump'); break;
+        case 'stonefall': P.dust(x, y, z, 10, [0.5, 0.45, 0.38]); snd('crash', 0.55); break;
+        case 'siegehit': P.dust(x, y + 0.6, z, 18, [0.58, 0.54, 0.48]); P.sparks(x, y + 0.7, z, 8); P.smoke(x, y + 1, z, 0.4, 0.8); snd('crash'); this.cam.shake = Math.max(this.cam.shake, 0.35); break;
+        case 'razed': P.dust(x, y + 0.5, z, 30, [0.55, 0.5, 0.45]); P.sparks(x, y + 1, z, 12); snd('crash'); snd('horn', 0.5); this.cam.shake = Math.max(this.cam.shake, 0.6); break;
         case 'caravan': P.dust(x, y, z, 3, [0.6, 0.55, 0.45]); snd('pop', 0.35); break;
         case 'produced': if (Math.random() < 0.3) snd('pop', 0.3); break;
         case 'attack': snd('horn'); break;
@@ -903,6 +912,7 @@ export class GameRenderer {
     for (let k = 0; k < this.ships.wakeCount; k++) (WU.uWakes.value as THREE.Vector4[])[k].copy(this.ships.wakes[k]);
     this.settlers.update(dt, this.time, this.cam.camera);
     this.donkeys.update(dt, this.time, this.cam.camera);
+    this.catapults.update(dt, this.time, this.cam.camera);
     this.animals.update(dt, this.time);
     this.arrows.update();
     this.birds.update(dt, night);
@@ -945,7 +955,7 @@ export class GameRenderer {
     const U2 = this.water.uniforms;
     const waterSeen = this.waterInView();
     if (this.settings.reflections && waterSeen) {
-      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh]);
+      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones]);
       (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
       U2.uReflOn.value = 1;
     } else U2.uReflOn.value = 0;

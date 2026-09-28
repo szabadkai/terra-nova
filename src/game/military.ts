@@ -3,9 +3,16 @@ import type { Game } from './game';
 import { A, abortPlan, claim, enter, exit, plan, turnTo } from './settlers';
 import type { Building, Settler } from './types';
 import { GUARD_RANGE, LEASH } from './orders';
+import { CATAPULT_RANGE } from './defs';
+import { siegeHit } from './siege';
 
 export function isSoldier(s: Settler) {
   return s.job === 'swordsman' || s.job === 'bowman';
+}
+
+/** Anything soldiers fight: other soldiers and catapults. */
+export function isCombatant(s: Settler) {
+  return s.job === 'swordsman' || s.job === 'bowman' || s.job === 'catapult';
 }
 
 const regB = (g: Game, b: Building) => g.world.region[b.door];
@@ -237,9 +244,12 @@ function defend(g: Game, b: Building) {
   const threats: Settler[] = [];
   const r = regB(g, b);
   for (const s of g.settlers.values()) {
-    if (s.owner === b.owner || !isSoldier(s) || s.dead || s.hidden || regS(g, s) !== r) continue;
+    if (s.owner === b.owner || !isCombatant(s) || s.dead || s.hidden || regS(g, s) !== r) continue;
     const d = Math.hypot(s.x - b.cx, s.z - b.cz);
-    if ((s.sstate === 'attack' && s.targetB === b.id && d < 12) || d < 5) threats.push(s);
+    if (s.job === 'catapult') {
+      // a catapult that can reach us, or is rolling up to, must be smashed before its stones tell
+      if ((s.sstate === 'attack' && s.targetB === b.id && d < CATAPULT_RANGE + 4) || d < CATAPULT_RANGE + 1) threats.push(s);
+    } else if ((s.sstate === 'attack' && s.targetB === b.id && d < 12) || d < 5) threats.push(s);
   }
   if (!threats.length) return;
   b.underAttackT = 10;
@@ -271,7 +281,7 @@ const BOW_RANGE = 7;
 function enemySoldierNear(g: Game, s: Settler, range: number): Settler | null {
   let best: Settler | null = null, bd = range * range;
   for (const o of g.settlers.values()) {
-    if (o.owner === s.owner || !isSoldier(o) || o.dead || o.hidden) continue;
+    if (o.owner === s.owner || !isCombatant(o) || o.dead || o.hidden) continue;
     const d = (o.x - s.x) ** 2 + (o.z - s.z) ** 2;
     if (d < bd) { bd = d; best = o; }
   }
@@ -525,6 +535,7 @@ function capture(g: Game, b: Building, s: Settler) {
   }
   b.owner = s.owner;
   b.priority = false;
+  b.damage = 0;
   b.garrison = [];
   b.soldiersIncoming = 0;
   b.desiredSoldiers = b.def.military!.capacity;
@@ -553,6 +564,7 @@ export function updateProjectiles(g: Game, dt: number) {
     p.t += dt;
     if (p.t >= p.dur) {
       g.projectiles.splice(i, 1);
+      if (p.kind === 'stone') { siegeHit(g, p); continue; }
       if (p.target < 0) continue; // animal (handled by hunter plan)
       const v = g.settlers.get(p.target);
       if (!v || v.dead) continue;
@@ -580,7 +592,7 @@ export function updateProjectiles(g: Game, dt: number) {
     if (!archers) continue;
     let best: Settler | null = null, bd = 9 * 9;
     for (const o of g.settlers.values()) {
-      if (o.owner === b.owner || !isSoldier(o) || o.dead || o.hidden) continue;
+      if (o.owner === b.owner || !isCombatant(o) || o.dead || o.hidden) continue;
       const d = (o.x - b.cx) ** 2 + (o.z - b.cz) ** 2;
       if (d < bd) { bd = d; best = o; }
     }

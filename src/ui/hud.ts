@@ -12,6 +12,7 @@ import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStat
 import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, startExpedition } from '../game/sea';
 import type { Ship } from '../game/types';
 import { MAX_SHIPS } from '../game/defs';
+import { catapultCap, catapultsOf, siegeHits } from '../game/siege';
 import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
 import { callOut, commandable, fieldSoldiers, orderAttack, orderGarrison, orderMove, orderReturn } from '../game/orders';
@@ -340,6 +341,7 @@ export class HUD {
     c.appendChild(h('div', 'kv', `<span>Swordsmen / Bowmen</span><b>${swords} / ${bows}</b>`));
     c.appendChild(h('div', 'kv', `<span>Garrisoned / in the field</span><b>${inTowers} / ${idle}</b>`));
     c.appendChild(h('div', 'kv', `<span>Morale (gold)</span><b>${Math.round(p.morale * 100)}%</b>`));
+    if (pop.catapults || g.countBuildings(g.local, 'siegeworks')) c.appendChild(h('div', 'kv', `<span>Catapults</span><b>⚙ ${pop.catapults} / ${catapultCap(g, g.local)}</b>`));
     const field = fieldSoldiers(g, g.local);
     const all = h('button', 'wide', field.length ? `⚔ Select the ${field.length} in the field` : 'No soldiers in the field');
     (all as HTMLButtonElement).disabled = !field.length;
@@ -354,7 +356,7 @@ export class HUD {
       list.appendChild(row);
     }
     c.appendChild(list);
-    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>.'));
+    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>. A <b>Siege Workshop</b> builds catapults: they take the same orders and shell strongholds from beyond arrow range, but need soldiers to protect them.'));
   }
 
   private renderFaith(c: HTMLElement) {
@@ -651,18 +653,19 @@ export class HUD {
 
   private renderGroupInfo(ids: number[]) {
     const g = this.game;
-    let sw = 0, bw = 0, hp = 0, max = 0;
+    let sw = 0, bw = 0, ct = 0, hp = 0, max = 0;
     const doing: Record<string, number> = {};
     const ORDERS: Record<string, string> = { hold: 'Standing guard', attack: 'Storming', moving: 'Marching to a post', idle: 'Awaiting orders', return: 'Returning', defend: 'Defending' };
     for (const id of ids) {
       const s = g.settlers.get(id)!;
-      if (s.job === 'swordsman') sw++; else bw++;
+      if (s.job === 'swordsman') sw++; else if (s.job === 'bowman') bw++; else ct++;
       hp += Math.max(0, s.hp);
       max += s.maxHp;
-      const d = s.engaged ? 'Fighting' : ORDERS[s.sstate] ?? 'Busy';
+      const d = s.engaged ? (s.job === 'catapult' ? 'Under attack' : 'Fighting') : s.job === 'catapult' && s.sstate === 'attack' ? 'Bombarding' : ORDERS[s.sstate] ?? 'Busy';
       doing[d] = (doing[d] ?? 0) + 1;
     }
-    let body = `<div class="kv"><span>Swordsmen · bowmen</span><b>⚔ ${sw} · 🏹 ${bw}</b></div>`;
+    const title = ct === 0 ? `${ids.length} soldier${ids.length > 1 ? 's' : ''}` : sw + bw === 0 ? `${ct} catapult${ct > 1 ? 's' : ''}` : `${ids.length} units`;
+    let body = `<div class="kv"><span>Swordsmen · bowmen${ct ? ' · catapults' : ''}</span><b>⚔ ${sw} · 🏹 ${bw}${ct ? ` · ⚙ ${ct}` : ''}</b></div>`;
     body += `<div class="kv"><span>Health</span><b>${Math.round((hp / Math.max(1, max)) * 100)}%</b></div><div class="bar hp"><i style="width:${(hp / Math.max(1, max)) * 100}%"></i></div>`;
     body += `<div class="kv"><span>Orders</span><b>${Object.entries(doing).map(([k, v]) => `${k} ${v}`).join(' · ')}</b></div>`;
     const cm = this.gr.commanding;
@@ -671,7 +674,7 @@ export class HUD {
     if (key === this.lastInfoKey) return;
     this.lastInfoKey = key;
     this.info.innerHTML = `
-      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[g.local])}">⚔</div><div><h2>${ids.length} soldier${ids.length > 1 ? 's' : ''}</h2><div class="owner">${g.players[g.local].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[g.local])}">${sw + bw ? '⚔' : '⚙'}</div><div><h2>${title}</h2><div class="owner">${g.players[g.local].name}</div></div><button class="close" data-act="close">✕</button></div>
       <div class="ibody">${body}</div>
       <div class="ibtns">${buttons}</div>`;
     this.info.querySelectorAll<HTMLElement>('[data-act]').forEach((el) => {
@@ -752,6 +755,7 @@ export class HUD {
         let sw = 0, bw = 0;
         for (const id of b.garrison) { const s = g.settlers.get(id); if (s?.job === 'swordsman') sw++; else if (s?.job === 'bowman') bw++; }
         body += `<div class="kv"><span>Garrison</span><b>⚔ ${sw} · 🏹 ${bw} &nbsp;(${b.garrison.length}/${b.type === 'hq' ? '∞' : cap})</b></div>`;
+        if (b.damage > 0.05) body += `<div class="status bad">Walls battered by catapults: ${Math.ceil(b.damage - 1e-6)}/${siegeHits(b)} hits${b.garrison.length ? '' : ' — nobody inside to hold them'}</div>`;
         if (mine && b.type !== 'hq') body += `<div class="kv"><span>Desired soldiers</span><b><button class="mini" data-act="des-">−</button> ${b.desiredSoldiers} <button class="mini" data-act="des+">+</button></b></div>`;
         if (!b.occupied && mine) body += `<div class="status">Waiting for a soldier to man it</div>`;
         if (!mine && b.state === 'done') {
@@ -802,6 +806,10 @@ export class HUD {
       }
       if (b.type === 'donkeyfarm' && mine) {
         body += `<div class="kv"><span>Donkeys bred · kept</span><b>🐴 ${donkeysOf(g, g.local)} / ${donkeyCap(g, g.local)}</b></div>`;
+      }
+      if (b.type === 'siegeworks' && mine) {
+        body += `<div class="kv"><span>Catapult under construction</span><b>${Math.round(b.shipProgress * 100)}%</b></div>${pct(b.shipProgress)}`;
+        body += `<div class="kv"><span>Catapults built · in the field</span><b>⚙ ${b.prodCount} · ${catapultsOf(g, g.local)}/${catapultCap(g, g.local)}</b></div>`;
       }
       if (b.type === 'toolsmith' && mine) {
         body += `<div class="kv"><span>Forge</span><select data-act="tool"><option value="auto">Auto (by demand)</option>${TOOLS.map((t) => `<option value="${t}" ${b.toolChoice === t ? 'selected' : ''}>${GOOD_NAMES[t]}</option>`).join('')}</select></div>`;
@@ -913,9 +921,10 @@ export class HUD {
 
   private renderSettlerInfo(s: Settler) {
     const g = this.game;
-    const soldier = s.job === 'swordsman' || s.job === 'bowman';
+    const catapult = s.job === 'catapult';
+    const soldier = s.job === 'swordsman' || s.job === 'bowman' || catapult;
     const donkey = s.job === 'donkey';
-    let body = donkey ? '' : `<div class="kv"><span>Occupation</span><b>${JOB_NAMES[s.job]}</b></div>`;
+    let body = donkey || catapult ? '' : `<div class="kv"><span>Occupation</span><b>${JOB_NAMES[s.job]}</b></div>`;
     if (donkey && (s.carrying || s.pack)) body += `<div class="kv"><span>Carrying</span><b>${[s.carrying, s.pack].filter(Boolean).map((gd) => `${this.icon(gd as Good, 'ci')} ${GOOD_NAMES[gd as Good]}`).join(' · ')}</b></div>`;
     else if (s.carrying) body += `<div class="kv"><span>Carrying</span><b>${this.icon(s.carrying, 'ci')} ${GOOD_NAMES[s.carrying]}</b></div>`;
     if (donkey && s.target) { const m = g.buildings.get(s.target); if (m) body += `<div class="kv"><span>Bound for</span><b>${marketLabel(g, m, s.x, s.z)}</b></div>`; }
@@ -923,7 +932,9 @@ export class HUD {
     if (s.aboard) { const sh = g.ships.get(s.aboard); if (sh) body += `<div class="kv"><span>Aboard</span><b>⛵ ${sh.name}</b></div>`; }
     if (soldier) {
       body += `<div class="kv"><span>Health</span><b>${Math.max(0, Math.round(s.hp))}/${s.maxHp}</b></div><div class="bar hp"><i style="width:${Math.max(0, (s.hp / s.maxHp) * 100)}%"></i></div>`;
-      body += `<div class="kv"><span>Orders</span><b>${{ garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: 'Attacking', defend: 'Defending', fight: 'Fighting', return: 'Returning', ship: 'Travelling by sea', hold: 'Holding position' }[s.sstate]}</b></div>`;
+      const attacking = catapult ? (s.task || 'Bombarding') : 'Attacking';
+      body += `<div class="kv"><span>Orders</span><b>${s.engaged && catapult ? 'Under attack!' : { garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: attacking, defend: 'Defending', fight: 'Fighting', return: 'Returning', ship: 'Travelling by sea', hold: 'Holding position' }[s.sstate]}</b></div>`;
+      if (catapult) body += `<p class="note">Right-click an enemy stronghold to bombard it: each stone kills one of the garrison, and an empty stronghold falls after a few. It cannot fight back — keep soldiers near.</p>`;
     } else {
       body += `<div class="kv"><span>Doing</span><b>${s.task || (s.idle ? (donkey ? 'Waiting for goods to carry' : 'Idle') : s.anim === 'walk' ? 'Walking' : 'Working')}</b></div>`;
     }
@@ -932,7 +943,7 @@ export class HUD {
     if (key === this.lastInfoKey) return;
     this.lastInfoKey = key;
     this.info.innerHTML = `
-      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[s.owner])}">${soldier ? '⚔' : s.job === 'pioneer' ? '⚑' : donkey ? '🐴' : '☺'}</div><div><h2>${JOB_NAMES[s.job]}</h2><div class="owner">${g.players[s.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[s.owner])}">${catapult ? '⚙' : soldier ? '⚔' : s.job === 'pioneer' ? '⚑' : donkey ? '🐴' : '☺'}</div><div><h2>${JOB_NAMES[s.job]}</h2><div class="owner">${g.players[s.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
       <div class="ibody">${body}</div>${recall ? '<div class="ibtns"><button data-act="recall">↩ Call back</button></div>' : ''}`;
     this.info.querySelector<HTMLElement>('[data-act=close]')!.onclick = () => this.select(null);
     const rb = this.info.querySelector<HTMLElement>('[data-act=recall]');

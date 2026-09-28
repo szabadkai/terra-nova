@@ -449,6 +449,19 @@ export class Audio {
         this.pluck(t, 196, 0.4, 0.5, out);
         this.noise(t, 0.12, 'bandpass', 2400, 3, 0.1, out, 800);
         break;
+      case 'thump':
+        // a catapult lets fly: the arm slams the stop bar, the stone whistles away
+        this.noise(t, 0.05, 'bandpass', 500, 1.5, 0.4, out, 200);
+        this.tone(t, 110, 0.18, 'triangle', 0.35, out, 55);
+        this.noise(t + 0.08, 0.35, 'bandpass', 1800, 1.2, 0.09, out, 700);
+        break;
+      case 'crash':
+        // a stone comes down on masonry
+        this.noise(t, 0.4, 'lowpass', 340, 1, 0.65, out, 110);
+        this.tone(t, 68, 0.32, 'sine', 0.55, out, 38);
+        this.noise(t + 0.02, 0.1, 'bandpass', 2000, 2, 0.22, out, 900);
+        this.noise(t + 0.15, 0.3, 'bandpass', 600, 1, 0.12, out, 250);
+        break;
       case 'horn': {
         const o = this.ctx.createOscillator();
         o.type = 'sawtooth';

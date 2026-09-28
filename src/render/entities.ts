@@ -580,13 +580,36 @@ export class ProjectilesRenderer {
     const mat = new THREE.MeshStandardMaterial({ color: 0x8a6a40, roughness: 0.7 });
     patchMaterial(mat, { key: 'arrow' });
     this.mesh = inst(geo, mat, 400, true);
+    // catapult stones: rough lumps tumbling along a high arc
+    const sg = new THREE.DodecahedronGeometry(0.13, 0);
+    const sp = sg.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < sp.count; i++) {
+      const j = 0.88 + hash2(Math.round(sp.getX(i) * 100), Math.round(sp.getY(i) * 100) + Math.round(sp.getZ(i) * 100) * 3, 4) * 0.24;
+      sp.setXYZ(i, sp.getX(i) * j, sp.getY(i) * j * 0.9, sp.getZ(i) * j);
+    }
+    sg.computeVertexNormals();
+    const smat = new THREE.MeshStandardMaterial({ color: 0x6e6a64, roughness: 0.95 });
+    patchMaterial(smat, { key: 'siegestone' });
+    this.stones = inst(sg, smat, 64, true);
   }
+  /** catapult stones in flight */
+  stones: THREE.InstancedMesh;
   update() {
     const g = this.game;
-    let n = 0;
+    let n = 0, ns = 0;
     const from = new THREE.Vector3(), to = new THREE.Vector3(), pos = new THREE.Vector3(), nxt = new THREE.Vector3();
     for (const p of g.projectiles) {
-      if (n >= 400) break;
+      if (p.kind === 'stone') {
+        if (ns >= 64) continue;
+        const k = p.t / p.dur;
+        const d = Math.hypot(p.tx - p.sx, p.tz - p.sz);
+        pos.set(p.sx + (p.tx - p.sx) * k, p.sy + (p.ty - p.sy) * k + Math.sin(k * Math.PI) * d * 0.42, p.sz + (p.tz - p.sz) * k);
+        tmpQ.setFromEuler(tmpE.set(p.t * 5.5, p.id * 0.7, p.t * 3.1));
+        tmpM.compose(pos, tmpQ, tmpV.set(1, 1, 1));
+        this.stones.setMatrixAt(ns++, tmpM);
+        continue;
+      }
+      if (n >= 400) continue;
       const k = p.t / p.dur;
       const arc = (t: number, out: THREE.Vector3) => {
         const d = Math.hypot(p.tx - p.sx, p.tz - p.sz);
@@ -606,6 +629,8 @@ export class ProjectilesRenderer {
     }
     this.mesh.count = n;
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.stones.count = ns;
+    this.stones.instanceMatrix.needsUpdate = true;
   }
 }
 

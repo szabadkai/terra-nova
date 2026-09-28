@@ -935,6 +935,41 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.anchors.piles.push(new THREE.Vector3(1.05, 0, -1.15));
     mb.anchors.top = 1.8;
   },
+  siegeworks(mb, owner) {
+    // a timber shed with the engineer's forge, a catapult taking shape in the yard, wheels against
+    // the wall and a stack of stones waiting to be thrown
+    house(mb, { w: 1.7, d: 1.15, wallH: 0.95, roofH: 0.6, x: -0.55, z: -0.6, wall: 'planks', roof: `roof${owner}`, timber: true, doorX: 0.25, win: 1, chim: 0.55, over: 0.18 });
+    // lean-to over the yard
+    for (const [px, pz] of [[0.35, -1.2], [1.3, -1.2], [1.3, 0.1]]) mb.add('timber', box(0.07, 1.05, 0.07), px, 0.525, pz);
+    mb.add('planks', box(1.15, 0.05, 1.45, 2), 0.82, 1.2, -0.55, 0, 0.12, 0);
+    mb.add('timber', box(1.2, 0.06, 0.06), 0.82, 1.08, -1.2);
+    mb.add('timber', box(1.2, 0.06, 0.06), 0.82, 1.24, 0.1);
+    mb.add('soil', box(1.3, 0.03, 1.5), 0.82, 0.015, -0.5);
+    // the catapult under construction: chassis on trestles, A-frame up, arm still on the ground
+    mb.add('timber', box(0.07, 0.08, 0.85), 0.62, 0.34, -0.55);
+    mb.add('timber', box(0.07, 0.08, 0.85), 1.02, 0.34, -0.55);
+    for (const pz of [-0.9, -0.2]) mb.add('timber', box(0.5, 0.06, 0.07), 0.82, 0.34, pz);
+    for (const pz of [-0.85, -0.25]) { mb.add('dark', box(0.05, 0.3, 0.05), 0.62, 0.15, pz); mb.add('dark', box(0.05, 0.3, 0.05), 1.02, 0.15, pz); }
+    for (const px of [0.62, 1.02]) { mb.add('timber', box(0.06, 0.5, 0.06), px, 0.6, -0.45); mb.add('timber', box(0.05, 0.45, 0.05), px, 0.58, -0.25, 0, -0.55, 0); }
+    mb.add('timber', box(0.52, 0.06, 0.08), 0.82, 0.86, -0.45);
+    mb.add('timber', box(0.06, 0.06, 0.95), 0.82, 0.05, 0.55, 0, 0, 0.0);
+    mb.add('rope', cyl(0.05, 0.05, 0.42, 8), 0.82, 0.48, -0.5, 0, 0, Math.PI / 2);
+    // wheels leaning on the shed, one on the bench
+    for (const [px, pz, ry] of [[-0.1, 0.25, 0.25], [0.12, 0.3, -0.2]]) mb.add('dark', new THREE.TorusGeometry(0.16, 0.03, 6, 14), px, 0.19, pz, ry, 0, 0.35);
+    mb.add('planks', box(0.7, 0.06, 0.4, 2), -0.6, 0.5, 0.65);
+    for (const px of [-0.9, -0.3]) mb.add('timber', box(0.05, 0.5, 0.05), px, 0.25, 0.65);
+    mb.add('dark', new THREE.TorusGeometry(0.16, 0.03, 6, 14), -0.6, 0.56, 0.65, 0, Math.PI / 2, 0);
+    mb.add('iron', box(0.16, 0.12, 0.3), -0.85, 0.56, 0.75);
+    // stones stacked for the machines
+    for (const [px, pz, r] of [[1.25, 0.75, 0.13], [1.0, 0.85, 0.12], [1.15, 1.0, 0.11], [0.85, 1.05, 0.1], [1.12, 0.88, 0.1]]) {
+      mb.add('stone', new THREE.DodecahedronGeometry(r, 0), px, r * 0.85 + (px === 1.12 ? 0.2 : 0), pz, px * 3, pz * 2, 0);
+    }
+    fence(mb, [[0.35, -1.35], [1.4, -1.35], [1.4, 0.4]], 0, 0.28);
+    flag(mb, -1.3, 0, -1.25, 1.3, owner);
+    mb.anchors.fires.push(new THREE.Vector3(-1.0, 0.45, -0.3));
+    mb.anchors.piles.push(new THREE.Vector3(-0.2, 0, 1.15));
+    mb.anchors.top = 1.9;
+  },
   barracks(mb, owner) {
     house(mb, { w: 2.3, d: 1.2, wallH: 0.95, roofH: 0.6, x: -0.1, z: -0.45, wall: 'stone', doorX: 0.0, win: 3, chim: 0.8, roof: `roof${owner}` });
     flag(mb, -1.35, 0, 0.35, 1.5, owner);

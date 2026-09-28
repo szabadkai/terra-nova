@@ -6,6 +6,7 @@ import { SPELLS, castSpell, faithStatus } from './faith';
 import { colonySite, startExpedition } from './sea';
 import { PROBE_RADIUS, geologistsAtWork, prospectError, sendGeologist } from './geology';
 import { pioneerError, pioneersAtWork, sendPioneer } from './pioneers';
+import { orderAttack } from './orders';
 import { DX8, DY8 } from './world';
 import type { Building } from './types';
 
@@ -146,6 +147,8 @@ export class AIController {
       { type: 'ironmine', n: 2, cond: () => hasOre('iron') },
       { type: 'weaponsmith', n: 2, cond: () => t > 900 },
       { type: 'castle', n: 1, cond: () => t > 1200 },
+      // war machines once the army is up and iron flows
+      { type: 'siegeworks', n: 1, cond: () => this.level > 0 && t > 1500 && c('weaponsmith') > 0 && c('ironsmelter') > 0 && stock.iron >= 2 && this.enemyPressure() >= 10 },
       { type: 'greattemple', n: 1, cond: () => this.level > 0 && t > 1800 && c('temple') > 0 && stock.stone > 20 },
       { type: 'vineyard', n: 2, cond: () => t > 1900 && c('greattemple') > 0 },
     ];
@@ -592,5 +595,13 @@ export class AIController {
     const need = best.garrison.length + ([3, 2, 1][this.level] ?? 2);
     if (avail < need && avail < 6) return;
     launchAttack(g, this.p, best, Math.min(avail, need + 2));
+    // the catapults roll along behind the assault
+    const w = g.world;
+    const cats: number[] = [];
+    for (const s of g.settlers.values()) {
+      if (s.owner !== this.p || s.job !== 'catapult' || s.dead || s.engaged) continue;
+      if ((s.sstate === 'idle' || s.sstate === 'hold') && w.region[s.node] === w.region[best.door]) cats.push(s.id);
+    }
+    if (cats.length) orderAttack(g, this.p, cats, best);
   }
 }

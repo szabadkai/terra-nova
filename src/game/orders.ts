@@ -1,9 +1,9 @@
 // Direct orders for soldiers. The player picks men — in the field, or called out of a stronghold —
 // and sends them to a spot to stand guard, against an enemy stronghold, into one of his own
 // buildings, or back to their posts. Guards hold their ground: they charge foes that come near
-// and return to their post afterwards.
+// and return to their post afterwards. Catapults take the same orders (but never garrison).
 import type { Game } from './game';
-import { isSoldier, sendSoldierTo } from './military';
+import { isCombatant, sendSoldierTo } from './military';
 import { claim, exit } from './settlers';
 import type { Building, Settler } from './types';
 
@@ -12,9 +12,9 @@ export const GUARD_RANGE = 6;
 /** …but gives up the chase this far from his post. */
 export const LEASH = 9;
 
-/** Can the player give this settler orders? Soldiers in the field or in one of his strongholds. */
+/** Can the player give this settler orders? Soldiers in the field or in one of his strongholds, and catapults. */
 export function commandable(g: Game, owner: number, s: Settler | undefined): s is Settler {
-  if (!s || s.owner !== owner || !isSoldier(s) || s.dead || s.aboard || s.voyage) return false;
+  if (!s || s.owner !== owner || !isCombatant(s) || s.dead || s.aboard || s.voyage) return false;
   if (s.inside) {
     const b = g.buildings.get(s.inside);
     return !!b && b.owner === owner && !!b.def.military && b.garrison.includes(s.id);
@@ -73,9 +73,10 @@ export function orderMove(g: Game, owner: number, ids: Iterable<number>, x: numb
   const xi = Math.round(x), zi = Math.round(z);
   if (!w.inBounds(xi, zi)) return 0;
   const region = w.regionAt(w.idx(xi, zi));
-  // swordsmen take the front spots, bowmen stand behind them
+  // swordsmen take the front spots, bowmen stand behind them, catapults at the back
+  const rank = (s: Settler) => (s.job === 'swordsman' ? 0 : s.job === 'bowman' ? 1 : 2);
   const men = pick(g, owner, ids).filter((s) => w.region[s.inside ? (g.buildings.get(s.inside)?.door ?? s.node) : s.node] === region)
-    .sort((a, b) => (a.job === b.job ? 0 : a.job === 'swordsman' ? -1 : 1));
+    .sort((a, b) => rank(a) - rank(b));
   if (!men.length) return 0;
   const spots = formation(g, x, z, men.length, region);
   if (!spots.length) return 0;
@@ -123,7 +124,7 @@ export function orderGarrison(g: Game, owner: number, ids: Iterable<number>, b: 
   let n = 0;
   for (const s of pick(g, owner, ids)) {
     if (room <= 0) break;
-    if (s.inside === b.id) continue;
+    if (s.inside === b.id || s.job === 'catapult') continue;
     if (w.region[s.inside ? g.buildings.get(s.inside)?.door ?? s.node : s.node] !== w.region[b.door]) continue;
     release(g, s);
     s.order = -1;
