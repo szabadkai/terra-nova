@@ -3,7 +3,7 @@
 import {
   BUILDINGS, BUILD_ORDER, BuildingType, CATEGORY_NAMES, Category, GOODS, GOOD_NAMES, Good, JOB_NAMES, PLAYER_COLORS, TOOLS,
 } from '../game/defs';
-import type { Game } from '../game/game';
+import { canPrioritise, type Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
 import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
@@ -717,6 +717,7 @@ export class HUD {
     const d = b.def;
     let body = '';
     const pct = (v: number) => `<div class="bar"><i style="width:${Math.round(Math.min(1, v) * 100)}%"></i></div>`;
+    if (b.priority) body += `<div class="status prio">★ Priority: goods and crews come here before anywhere else</div>`;
     if (b.state === 'leveling' || b.state === 'building') {
       const total = d.cost.board + d.cost.stone;
       const del = b.delivered.board + b.delivered.stone;
@@ -815,6 +816,7 @@ export class HUD {
       buttons.push(`<button data-act="scout">🧭 Scout the seas</button>`);
     }
     if (mine && b.state === 'done' && d.military && b.garrison.length > 1) buttons.push(`<button class="primary" data-act="callout">⚔ Call out ${b.garrison.length - 1}</button>`);
+    if (mine && canPrioritise(b)) buttons.push(`<button class="${b.priority ? 'on' : ''}" data-act="prio" title="${b.priority ? 'Take the priority off this building (P)' : 'Put this building first in line for goods, builders and workers (P). Only one building at a time.'}">${b.priority ? '★ Prioritised' : '☆ Prioritise'}</button>`);
     if (mine && b.state === 'done' && (d.cycle || d.worker) && !d.military) buttons.push(`<button data-act="pause">${b.paused ? '▶ Resume' : '❚❚ Pause'}</button>`);
     if (mine && b.type !== 'hq' && b.state !== 'burning') buttons.push(`<button class="danger" data-act="destroy">🔥 Demolish</button>`);
     const key = `${b.id}|${body}|${buttons.join('')}`;
@@ -843,6 +845,7 @@ export class HUD {
         this.audio.play('ui');
         if (act === 'close') this.select(null);
         else if (act === 'pause') b.paused = !b.paused;
+        else if (act === 'prio') this.togglePriority(b);
         else if (act === 'callout') {
           const men = callOut(g, g.local, b, 1);
           if (men.length) { this.selectSoldiers(men.map((x) => x.id)); this.audio.play('horn'); return; }
@@ -874,6 +877,18 @@ export class HUD {
         this.refreshInfo();
       };
     });
+  }
+
+  /** Make the building the one that gets everything first, or take that off it again (the P key does the same). */
+  togglePriority(b: Building) {
+    const g = this.game;
+    if (b.owner !== g.local) return;
+    const on = !b.priority;
+    if (!g.setPriority(b, on)) { this.message('Only a building that still needs goods can be prioritised', b.cx, b.cz, 'bad'); this.audio.play('click'); return; }
+    this.message(on ? `${b.def.name}: goods and crews now come here first` : `${b.def.name} is no longer prioritised`, b.cx, b.cz, 'good');
+    this.audio.play(on ? 'chime' : 'ui');
+    this.lastInfoKey = '';
+    this.refreshInfo();
   }
 
   private renderShipInfo(sh: Ship) {

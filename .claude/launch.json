@@ -34,6 +34,17 @@
         "--strictPort"
       ],
       "port": 5177
+    },
+    {
+      "name": "dev-5181",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "5181",
+        "--strictPort"
+      ],
+      "port": 5181
     }
   ]
 }

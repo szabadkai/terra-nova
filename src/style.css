@@ -165,6 +165,8 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
 .ibtns { display: flex; gap: 6px; margin-top: 10px; }
 .ibtns button { flex: 1; padding: 7px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.35); color: var(--text); font-weight: 600; }
 .ibtns button:hover { border-color: var(--gold); }
+.ibtns button.on { border-color: var(--gold); background: rgba(240, 207, 120, 0.16); color: var(--gold); }
+.status.prio { color: var(--gold); border: 1px solid rgba(240, 207, 120, 0.35); background: rgba(240, 207, 120, 0.08); }
 .attack { margin-top: 8px; padding: 8px; border-radius: 8px; border: 1px solid rgba(255, 122, 100, 0.35); background: rgba(120, 20, 10, 0.18); }
 
 

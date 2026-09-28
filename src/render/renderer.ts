@@ -30,6 +30,7 @@ import { SignsRenderer } from './signs';
 import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
 import { OrdersFX } from './orders';
+import { PriorityMarker } from './priority';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -148,6 +149,8 @@ export class GameRenderer {
   spells: SpellFX;
   /** soldiers the player has picked, and where his orders land */
   orders: OrdersFX;
+  /** the star over the building the player put first in line */
+  priority: PriorityMarker;
   /** a Move or Attack order waiting for its target (from the soldiers' panel) */
   commanding: 'move' | 'attack' | null = null;
   // interaction state
@@ -220,6 +223,8 @@ export class GameRenderer {
     this.scene.add(this.donkeys.group);
     this.orders = new OrdersFX(game);
     this.scene.add(this.orders.group);
+    this.priority = new PriorityMarker(game);
+    this.scene.add(this.priority.group);
     this.animals = new AnimalsRenderer(game);
     this.scene.add(this.animals.group);
     this.arrows = new ProjectilesRenderer(game);
@@ -271,6 +276,7 @@ export class GameRenderer {
   /** Release GPU resources and listeners so a new world can be created on a fresh canvas. */
   dispose() {
     this.orders.dispose();
+    this.priority.dispose();
     window.removeEventListener('resize', this.onResize);
     this.cam.detach();
     this.scene.traverse((o) => {
@@ -648,6 +654,7 @@ export class GameRenderer {
         case 'bow': snd('bow', 0.6); break;
         case 'captured': P.sparkle(x, y + 2, z, 70, [0.6, 1.2, 2.0]); snd('fanfare'); this.cam.shake = 0.5; this.fx.flash(0.05); break;
         case 'occupied': P.sparkle(x, y + 2.5, z, 30, [1.6, 1.4, 0.8]); snd('horn'); break;
+        case 'priority': P.sparkle(x, y + 1.6, z, 24, [2.2, 1.7, 0.6]); break;
         case 'spawn': P.sparkle(x, y + 0.5, z, 8, [1.2, 1.4, 1.8]); break;
         case 'soldier': P.sparkle(x, y + 0.6, z, 16, [1.8, 1.2, 0.6]); snd('horn', 0.5); break;
         case 'equip': P.sparkle(x, y + 0.6, z, 6); break;
@@ -914,6 +921,11 @@ export class GameRenderer {
     void MAX_LIGHTS;
 
     this.orders.update(dt);
+    {
+      const pb = g.priorityOf(g.local);
+      const pv = pb ? this.buildings.views.get(pb.id) : undefined;
+      this.priority.update(this.time, this.cam.camera, pv?.height ?? 1.5, pv ? pv.group.position.y : pb ? g.world.heightAt(pb.cx, pb.cz) : 0);
+    }
     // selection ring
     const U = this.terrain.uniforms;
     if (this.selected) {

@@ -3,7 +3,7 @@ import {
   BUILDINGS, FOODS, GOODS, GOOD_NAMES, Good, JOB_TOOL, Job, MINE_ORE, TOOLS, WEAPONS,
 } from './defs';
 import type { Game } from './game';
-import { OUT_CAP } from './game';
+import { OUT_CAP, canPrioritise } from './game';
 import { A, abortPlan, claim, enter, exit, plan } from './settlers';
 import type { Building, Settler } from './types';
 import { recomputeTerritory, isSoldier, sendSoldierTo } from './military';
@@ -68,6 +68,8 @@ export function onBuildingComplete(g: Game, b: Building, instant: boolean) {
   }
   b.builders = [];
   b.diggers = [];
+  // a finished building that takes nothing in has nothing left to be first in line for
+  if (b.priority && !canPrioritise(b)) b.priority = false;
   if (b.def.military) {
     b.desiredSoldiers = b.def.military.capacity;
     if (b.type === 'hq') b.occupied = true;
@@ -272,15 +274,19 @@ export function resumeTraining(g: Game, s: Settler, b: Building) {
 }
 
 // ------------------------------------------------------------------ logistics
-export interface Need { b: Building; goods: Good[]; n: number; prio: number; }
+/** Something a building wants brought: `pile` marks a harbour's or market's export pile. */
+export interface Need { b: Building; goods: Good[]; n: number; prio: number; pile?: boolean; }
 
+// Needs are served in order of `prio`: the prioritised building (-2/-1), then construction sites
+// (10–100, older first), export piles (160) and production inputs (200 and up, emptiest first).
 export function needsOf(g: Game, b: Building, out: Need[]) {
   if (b.state === 'burning') return;
+  const first = b.priority;
   if (b.state === 'leveling' || b.state === 'building') {
     const cost = b.def.cost;
     const nb = cost.board - b.delivered.board - b.incoming.board;
     const ns = cost.stone - b.delivered.stone - b.incoming.stone;
-    const prio = 100 - Math.min(90, (g.time - b.created) * 0.05);
+    const prio = first ? -1 : 100 - Math.min(90, (g.time - b.created) * 0.05);
     if (nb > 0) out.push({ b, goods: ['board'], n: nb, prio: prio - 1 });
     if (ns > 0) out.push({ b, goods: ['stone'], n: ns, prio });
     return;
@@ -289,7 +295,7 @@ export function needsOf(g: Game, b: Building, out: Need[]) {
     // a harbour gathers goods that ships will carry overseas
     for (const gd of GOODS) {
       const n = b.seaWant[gd] - b.stock[gd] - b.incoming[gd];
-      if (n > 0) out.push({ b, goods: [gd], n: Math.min(n, 8), prio: 160 });
+      if (n > 0) out.push({ b, goods: [gd], n: Math.min(n, 8), prio: first ? -1 : 160, pile: true });
     }
   }
   if (b.state !== 'done' || b.paused || !b.def.inputs) return;
@@ -297,7 +303,7 @@ export function needsOf(g: Game, b: Building, out: Need[]) {
     let have = 0;
     for (const gd of inp.goods) have += b.stock[gd] + b.incoming[gd];
     const n = inp.cap - have;
-    if (n > 0) out.push({ b, goods: inp.goods, n, prio: 200 + have * 10 });
+    if (n > 0) out.push({ b, goods: inp.goods, n, prio: first ? -1 + have * 0.01 : 200 + have * 10 });
   }
 }
 
@@ -322,7 +328,8 @@ export function updateEconomy(g: Game, owner: number) {
   assignConstruction(g, owner, mine, carriers);
   assignWorkers(g, owner, mine, carriers);
 
-  if (!carriers.length) return;
+  const first = mine.find((b) => b.priority);
+  if (!carriers.length) { if (first) redirectToPriority(g, owner, first); return; }
   const needs: Need[] = [];
   for (const b of mine) needsOf(g, b, needs);
   needs.sort((a, b) => a.prio - b.prio);
@@ -338,7 +345,7 @@ export function updateEconomy(g: Game, owner: number) {
       for (const src of sources) {
         if (src.id === need.b.id || reg(g, src) !== r) continue;
         // an export pile (harbour or market) is never stocked from another one, or goods would go round in circles
-        if (need.prio === 160 && (src.type === 'harbour' || src.type === 'market')) continue;
+        if (need.pile && (src.type === 'harbour' || src.type === 'market')) continue;
         for (const gd of need.goods) {
           if (available(src, gd) <= 0) continue;
           let d = dist2(src.cx, src.cz, need.b.cx, need.b.cz);
@@ -353,6 +360,7 @@ export function updateEconomy(g: Game, owner: number) {
       budget--;
     }
   }
+  if (first) redirectToPriority(g, owner, first);
   // move surplus production to storage
   if (!carriers.length) return;
   for (const b of mine) {
@@ -389,12 +397,31 @@ function isSite(b: Building) {
   return b.state === 'leveling' || b.state === 'building';
 }
 
+/** Deliveries under way, so the prioritised building can have one turned its way (runtime only: a load survives a save as goods in hand). */
+const deliveries = new WeakMap<Settler, { to: Building; good: Good; redirect: (nb: Building) => boolean }>();
+
 function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) {
   claim(g, s);
   from.outgoing[gd]++;
   to.incoming[gd]++;
-  let picked = false;
+  let picked = false, done = false;
   s.task = `Carrying ${gd}`;
+  const walkTo = A.walk(to.door);
+  const entry = {
+    to, good: gd,
+    redirect: (nb: Building) => {
+      if (done || nb.id === to.id || !g.buildings.has(nb.id)) return false;
+      if (g.buildings.has(to.id)) to.incoming[gd] = Math.max(0, to.incoming[gd] - 1);
+      to = nb;
+      entry.to = nb;
+      nb.incoming[gd]++;
+      // the walk re-plans from wherever he is (after the step under way, if any)
+      if (walkTo.k === 'walk') { walkTo.to = nb.door; walkTo.started = false; walkTo.tries = 0; }
+      if (s.actions[0] === walkTo) s.path = null;
+      return true;
+    },
+  };
+  deliveries.set(s, entry);
   plan(s, [
     A.walk(from.door),
     A.anim('pick', 0.5, from.door),
@@ -405,10 +432,12 @@ function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) 
       picked = true;
       s.carrying = gd;
     }),
-    A.walk(to.door),
+    walkTo,
     A.do(() => {
       const alive = g.buildings.has(to.id) && to.state !== 'burning' && to.owner === s.owner;
       if (!alive) return false;
+      done = true;
+      deliveries.delete(s);
       to.incoming[gd]--;
       if (isSite(to) && (gd === 'board' || gd === 'stone')) to.delivered[gd]++;
       else to.stock[gd]++;
@@ -418,11 +447,31 @@ function transport(g: Game, s: Settler, from: Building, to: Building, gd: Good) 
     }),
     A.anim('pick', 0.4),
   ], () => {
+    done = true;
+    deliveries.delete(s);
     if (!picked) from.outgoing[gd] = Math.max(0, from.outgoing[gd] - (g.buildings.has(from.id) ? 1 : 0));
     if (g.buildings.has(to.id)) to.incoming[gd] = Math.max(0, to.incoming[gd] - 1);
     if (picked && s.carrying) storeCarried(g, s);
     s.task = '';
   });
+}
+
+/** Whatever the prioritised building still lacks after dispatch, carriers bound elsewhere with it turn its way. */
+function redirectToPriority(g: Game, owner: number, first: Building) {
+  const needs: Need[] = [];
+  needsOf(g, first, needs);
+  if (!needs.length) return;
+  const r = reg(g, first);
+  for (const need of needs) {
+    let n = need.n;
+    for (const s of g.settlers.values()) {
+      if (n <= 0) break;
+      if (s.owner !== owner || s.dead || s.job !== 'carrier') continue;
+      const d = deliveries.get(s);
+      if (!d || !need.goods.includes(d.good) || d.to.id === first.id || reg(g, d.to) !== r) continue;
+      if (d.redirect(first)) n--;
+    }
+  }
 }
 
 /** Bring whatever the carrier holds to the nearest storehouse on his landmass. */
@@ -444,7 +493,8 @@ export function storeCarried(g: Game, s: Settler) {
 
 // ------------------------------------------------------------------ construction crew
 function assignConstruction(g: Game, owner: number, mine: Building[], carriers: Settler[]) {
-  const all = mine.filter(isSite).sort((a, b) => a.created - b.created);
+  // oldest first, but the prioritised site ahead of them all
+  const all = mine.filter(isSite).sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0) || a.created - b.created);
   if (!all.length) return;
   // every landmass has its own crew
   const regions = new Set(all.map((b) => reg(g, b)));
@@ -485,9 +535,30 @@ function assignCrewIn(g: Game, owner: number, sites: Building[], carriers: Settl
         b.builders.push(s.id);
         if (s.actions.length) { s.actions.length = 0; s.onAbort = null; }
       }
-      const avail = b.delivered.board + b.delivered.stone - b.used;
-      b.status = !b.builders.length ? 'Waiting for builders' : avail <= 0 && b.used < b.buildTotal ? 'Waiting for materials' : 'Under construction';
+      b.status = siteStatus(b);
     }
+  }
+  // the prioritised site takes crew from the other sites when none are free
+  const first = sites[0];
+  if (first.priority && sites.length > 1) {
+    const pull = (list: 'diggers' | 'builders', want: number) => {
+      for (let k = sites.length - 1; k > 0 && first[list].length < want; k--) {
+        const o = sites[k];
+        while (o[list].length && first[list].length < want) {
+          const id = o[list].pop()!;
+          const s = g.settlers.get(id);
+          if (!s || s.dead) continue;
+          abortPlan(g, s);
+          s.home = first.id;
+          s.idle = false;
+          first[list].push(id);
+        }
+        o.status = siteStatus(o);
+      }
+    };
+    if (first.state === 'leveling') pull('diggers', SITE_DIGGERS(first));
+    else pull('builders', SITE_BUILDERS(first));
+    first.status = siteStatus(first);
   }
   // recruit extra crew from carriers with tools
   const recruit = (job: Job, want: number, total: number) => {
@@ -509,6 +580,12 @@ function assignCrewIn(g: Game, owner: number, sites: Building[], carriers: Settl
 
 function pickNearest(list: Settler[], x: number, z: number): Settler | null {
   return nearestCarrier(list, x, z);
+}
+
+function siteStatus(b: Building): string {
+  if (b.state === 'leveling') return b.diggers.length ? 'Levelling the ground' : 'Waiting for diggers';
+  const avail = b.delivered.board + b.delivered.stone - b.used;
+  return !b.builders.length ? 'Waiting for builders' : avail <= 0 && b.used < b.buildTotal ? 'Waiting for materials' : 'Under construction';
 }
 
 export function findToolSource(g: Game, owner: number, tool: Good, x: number, z: number, region = 0): Building | null {
@@ -562,7 +639,10 @@ export function equip(g: Game, s: Settler, src: Building, tool: Good, job: Job, 
 }
 
 function assignWorkers(g: Game, owner: number, mine: Building[], carriers: Settler[]) {
-  for (const b of mine) {
+  // the prioritised building gets the first free specialist or tool
+  const first = mine.find((b) => b.priority);
+  const order = first ? [first, ...mine.filter((b) => b !== first)] : mine;
+  for (const b of order) {
     if (b.state !== 'done' || !b.def.worker) continue;
     if (b.worker) {
       const w = g.settlers.get(b.worker);

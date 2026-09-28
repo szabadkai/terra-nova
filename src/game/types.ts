@@ -155,6 +155,8 @@ export interface Building {
   seaWant: Record<Good, number> | null; // harbour or market: goods to gather here for ships or donkeys to carry away
   // overland trade
   tradeTo: number; // market: the market its donkeys deliver to (chosen by the player), 0 none
+  /** The player's one prioritised building: its needs come first and construction crews go there before anywhere else. */
+  priority: boolean;
 }
 
 export interface Animal {

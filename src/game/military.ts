@@ -524,6 +524,7 @@ function capture(g: Game, b: Building, s: Settler) {
     }
   }
   b.owner = s.owner;
+  b.priority = false;
   b.garrison = [];
   b.soldiersIncoming = 0;
   b.desiredSoldiers = b.def.military!.capacity;

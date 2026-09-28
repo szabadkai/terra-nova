@@ -47,6 +47,13 @@ export interface GameOptions {
 
 export const OUT_CAP = 8;
 
+/** Only a building that still wants something can be put first: a site, or a finished one that takes goods in. */
+export function canPrioritise(b: Building): boolean {
+  if (b.state === 'burning') return false;
+  if (b.state !== 'done') return true;
+  return !!b.def.inputs || !!b.seaWant;
+}
+
 export class Game {
   world: World;
   path: PathFinder;
@@ -418,7 +425,23 @@ export class Game {
       spawned: 0, spawnT: 0, burnT: 0, shootT: 0, prodCount: 0, lastProd: 0, toolChoice: 'auto',
       weaponRatio: 0.65, underAttackT: 0,
       dock: def.coastal ? findDock(this, size, x, y) : -1, colony: false, shipProgress: 0, seaWant: null, tradeTo: 0,
+      priority: false,
     };
+  }
+
+  /** The building a player has put first in line for goods and crews, if any. */
+  priorityOf(owner: number): Building | null {
+    for (const b of this.buildings.values()) if (b.owner === owner && b.priority && b.state !== 'burning') return b;
+    return null;
+  }
+
+  /** Player command: make `b` the one prioritised building (clearing the previous one), or take the priority off it. */
+  setPriority(b: Building, on: boolean): boolean {
+    if (on && !canPrioritise(b)) return false;
+    for (const o of this.buildings.values()) if (o.owner === b.owner && o.priority) o.priority = false;
+    b.priority = on;
+    if (on) this.emit({ type: 'priority', b: b.id, x: b.cx, z: b.cz, owner: b.owner });
+    return true;
   }
 
   computeLevelWork(b: Building) {
@@ -498,6 +521,7 @@ export class Game {
       else if (s.voyageFrom === b.id) { abortPlan(this, s); cancelVoyage(this, s); }
     }
     b.seaWant = null;
+    b.priority = false;
     // fields of farm
     if (b.type === 'farm' || b.type === 'vineyard') for (const f of [...this.fields.values()]) if (f.farm === b.id) this.removeField(f);
     b.worker = 0;

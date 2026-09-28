@@ -376,6 +376,12 @@ function setupGlobalInput() {
     } else if (k === 'h' || k === 'H') {
       const hq = game.buildings.get(game.players[game.local].hq);
       if (hq) gr.cam.jumpTo(hq.cx, hq.cz + 3);
+    } else if (k === 'p' || k === 'P') {
+      const sel = gr.selected;
+      if (sel?.kind === 'building') {
+        const b = game.buildings.get(sel.id);
+        if (b && b.owner === game.local) hud.togglePriority(b);
+      }
     } else if (k === 'Delete' || k === 'Backspace') {
       const sel = gr.selected;
       if (sel?.kind === 'building') {
