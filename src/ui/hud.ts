@@ -165,6 +165,8 @@ export class HUD {
     const mmWrap = h('div', 'mm-wrap');
     this.left.appendChild(mmWrap);
     this.minimap = new Minimap(this.game, this.gr.cam, mmWrap);
+    // a right-click on the minimap sends the picked soldiers there, as does a left-click that picks a Move or Attack target
+    this.minimap.onCommand = (x, z, left) => (left ? !!this.gr.commanding : this.gr.orders.chosen.length > 0) && this.commandAtWorld(x, z, left ? this.gr.commanding : null);
     const tabs = h('div', 'tabs');
     const defs: [Tab, string, string][] = [['build', '⚒', 'Build'], ['goods', '⚖', 'Economy'], ['military', '⚔', 'Military'], ['faith', '✦', 'Faith'], ['stats', '📈', 'Statistics']];
     for (const [id, ic, label] of defs) {
@@ -604,10 +606,26 @@ export class HUD {
 
   /** Give the chosen soldiers an order at a screen point: storm, man or march there. */
   commandAt(clientX: number, clientY: number, kind: 'move' | 'attack' | null = null) {
+    if (!this.gr.orders.chosen.length) return false;
+    const p = this.gr.pickGround(clientX, clientY);
+    return this.command(this.gr.pickBuilding(clientX, clientY), p?.x, p?.z, kind);
+  }
+
+  /** The same for a point on the map (a right-click on the minimap). */
+  commandAtWorld(x: number, z: number, kind: 'move' | 'attack' | null = null) {
+    const w = this.game.world;
+    const xi = Math.round(x), zi = Math.round(z);
+    if (!w.inBounds(xi, zi)) return false;
+    const id = w.building[w.idx(xi, zi)];
+    const done = this.command(id ? this.game.buildings.get(id) ?? null : null, x, z, kind);
+    if (done && kind) this.startCommanding(null);
+    return done;
+  }
+
+  private command(b: Building | null, x: number | undefined, z: number | undefined, kind: 'move' | 'attack' | null) {
     const g = this.game, gr = this.gr;
     const ids = gr.orders.chosen;
     if (!ids.length) return false;
-    const b = gr.pickBuilding(clientX, clientY);
     const w = g.world;
     const seen = b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))];
     if (b && seen && b.def.military && b.state === 'done' && b.owner !== g.local && kind !== 'move') {
@@ -624,10 +642,9 @@ export class HUD {
       this.audio.play(n ? 'place' : 'click');
       return n > 0;
     }
-    const p = gr.pickGround(clientX, clientY);
-    if (!p) return false;
-    const n = orderMove(g, g.local, ids, p.x, p.z);
-    if (!n) { this.message('They cannot get there', p.x, p.z, 'bad'); this.audio.play('click'); return false; }
+    if (x === undefined || z === undefined) return false;
+    const n = orderMove(g, g.local, ids, x, z);
+    if (!n) { this.message('They cannot get there', x, z, 'bad'); this.audio.play('click'); return false; }
     this.audio.play('place');
     return true;
   }

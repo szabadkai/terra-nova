@@ -7,7 +7,8 @@ import type { GameRenderer, Quality, RenderSettings } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
-import { applyAudioPrefs, applyRenderPrefs, defaultPrefs, prefs, savePrefs } from './prefs';
+import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, prefs, savePrefs } from './prefs';
+import type { WheelMode } from '../render/camera';
 import { AUTO, playTime, saveSubtitle, type SaveSummary } from './saveStore';
 import { enterImmersive, immersiveAvailable, isImmersive, leaveHint, leaveImmersive } from './immersive';
 
@@ -66,12 +67,16 @@ const MAP_SIZES: Record<number, string> = { 128: 'Small', 160: 'Medium', 208: 'L
 const AI_LEVELS = ['Easy', 'Normal', 'Hard'];
 
 const KEYS_VIEW: [string, string][] = [
-  ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or arrows', 'Scroll (hold <kbd>Shift</kbd> to go faster)'],
-  ['Right or middle drag', 'Pan'],
-  ['<kbd>Wheel</kbd> or <kbd>+</kbd> <kbd>−</kbd>', 'Zoom'],
-  ['<kbd>Q</kbd> <kbd>E</kbd>', 'Rotate the view'],
+  ['Right-drag', 'Grab the ground and drag the view'],
+  ['<kbd>Wheel</kbd>', 'Zoom towards the pointer'],
+  ['Middle-drag, or <kbd>Alt</kbd>/<kbd>⌥</kbd> + drag', 'Turn the view (sideways) and tilt it (up and down)'],
+  ['<kbd>Shift</kbd> + wheel', 'Turn the view'],
+  ['Middle-click or the minimap compass', 'Face north again'],
+  ['⟲ ⟳ under the minimap', 'Turn the view by an eighth'],
+  ['<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrows or the screen edge', 'Scroll (hold <kbd>Shift</kbd> to go faster)'],
+  ['<kbd>Q</kbd> <kbd>E</kbd> · <kbd>+</kbd> <kbd>−</kbd>', 'Turn · zoom'],
   ['<kbd>H</kbd>', 'Jump to your headquarters'],
-  ['Click the minimap', 'Jump there'],
+  ['Click or drag on the minimap', 'Jump there'],
 ];
 const KEYS_ORDERS: [string, string][] = [
   ['Click', 'Select a building or settler, or place the chosen building'],
@@ -81,9 +86,11 @@ const KEYS_ORDERS: [string, string][] = [
 ];
 const KEYS_ARMY: [string, string][] = [
   ['Left-drag', 'Draw a box around your soldiers to pick them (<kbd>Shift</kbd> adds)'],
-  ['Double-click a soldier', 'Pick all of his kind in view'],
+  ['<kbd>Shift</kbd> + click a soldier', 'Add him to the group, or take him out'],
+  ['Double-click or <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click a soldier', 'Pick all of his kind on screen'],
   ['Right-click the ground', 'March the picked soldiers there to stand guard'],
-  ['Right-click a stronghold', 'Storm an enemy one, or man one of yours'],
+  ['Right-click a stronghold', 'Storm an enemy one (⚔ cursor), or man one of yours (shield cursor)'],
+  ['Right-click the minimap', 'March them there'],
   ['<kbd>R</kbd>', 'Send the picked soldiers back to duty'],
 ];
 const KEYS_GAME: [string, string][] = [
@@ -94,9 +101,16 @@ const KEYS_GAME: [string, string][] = [
   ['<kbd>1</kbd> – <kbd>4</kbd>', 'Game speed'],
   ['<kbd>N</kbd>', 'Next music track (<kbd>Shift</kbd> for the previous one)'],
 ];
+const KEYS_TRACKPAD: [string, string][] = [
+  ['Pinch', 'Zoom towards the fingers'],
+  ['Two-finger swipe', 'Pan once you have pinched (see Scroll wheel above)'],
+  ['<kbd>⌥</kbd> + drag, or <kbd>Shift</kbd> + swipe', 'Turn the view'],
+  ['Twist (Safari)', 'Turn the view'],
+  ['Two-finger click and drag', 'Grab the ground and drag the view'],
+];
 const KEYS_TOUCH: [string, string][] = [
   ['Drag', 'Pan'],
-  ['Pinch', 'Zoom'],
+  ['Pinch and twist', 'Zoom and turn'],
   ['Tap', 'Select or place'],
   ['⚒ button', 'Show or hide the build panel'],
 ];
@@ -448,6 +462,11 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Camera'));
     c.appendChild(this.toggle('Edge scrolling', 'Move the view when the pointer touches the edge of the screen', () => prefs.edgeScroll, (v) => { prefs.edgeScroll = v; cam.edgeScroll = v; }));
     c.appendChild(this.slider('Scroll speed', 'Keyboard and edge scrolling', 0.5, 2, 0.1, () => prefs.scrollSpeed, (v) => { prefs.scrollSpeed = v; cam.scrollSpeed = v; }, (v) => `${v.toFixed(1)}×`));
+    c.appendChild(this.toggle('Zoom towards the pointer', 'Off zooms on the middle of the screen', () => prefs.zoomToPointer, (v) => { prefs.zoomToPointer = v; cam.zoomToPointer = v; }));
+    c.appendChild(this.select('Scroll wheel', 'A pinch always zooms; Shift + wheel turns', [['auto', 'Mouse zooms, trackpad pans'], ['zoom', 'Always zoom'], ['pan', 'Always pan']],
+      () => prefs.wheel, (v) => { prefs.wheel = v as WheelMode; cam.wheelMode = prefs.wheel; }));
+    c.appendChild(this.select('Right-drag', 'The middle button (or Alt/⌥ + right-drag) does the other', [['pan', 'Moves the view'], ['orbit', 'Turns and tilts the view']],
+      () => prefs.rightDrag, (v) => { prefs.rightDrag = v as 'pan' | 'orbit'; cam.rightDrag = prefs.rightDrag; }));
     if (immersiveAvailable) {
       c.appendChild(h('h3', '', 'Screen'));
       c.appendChild(this.toggle('Immersive mode', `Fills the screen, so scrolling at the top edge never slips into the browser's tabs. F switches it; ${leaveHint}.`, isImmersive, (v) => {
@@ -463,12 +482,12 @@ export class GameMenu {
     keys('Orders', KEYS_ORDERS);
     keys('Soldiers', KEYS_ARMY);
     keys('Game', KEYS_GAME);
+    keys('Trackpad', KEYS_TRACKPAD);
     keys('Touch', KEYS_TOUCH);
     this.resetButton(c, 'Reset controls to defaults', () => {
       const d = defaultPrefs();
-      Object.assign(prefs, { edgeScroll: d.edgeScroll, scrollSpeed: d.scrollSpeed, immersive: d.immersive });
-      cam.edgeScroll = prefs.edgeScroll;
-      cam.scrollSpeed = prefs.scrollSpeed;
+      Object.assign(prefs, { edgeScroll: d.edgeScroll, scrollSpeed: d.scrollSpeed, zoomToPointer: d.zoomToPointer, wheel: d.wheel, rightDrag: d.rightDrag, immersive: d.immersive });
+      applyControlPrefs(this.o.gr);
       void leaveImmersive();
     });
   }

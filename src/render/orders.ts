@@ -1,5 +1,6 @@
-// Soldier command visuals: rings under the chosen men (tinted by their health), a ring that
-// pulses out where an order lands, and screen-space picking for box selection.
+// Soldier command visuals: rings under the chosen men (tinted by their health), fainter rings
+// under the men a selection box is about to take, a ring under whatever the pointer is over (red
+// for a foe), a ring that pulses out where an order lands, and screen-space picking for box selection.
 import * as THREE from 'three';
 import type { Game } from '../game/game';
 import type { GameEvent, Settler } from '../game/types';
@@ -12,6 +13,10 @@ export class OrdersFX {
   group = new THREE.Group();
   /** ids of the soldiers the player has picked */
   chosen: number[] = [];
+  /** soldiers inside the selection box being drawn */
+  preview: number[] = [];
+  /** what the pointer is over; a building's ring is drawn on the ground by the terrain shader */
+  hover: { kind: 'settler' | 'building'; id: number; foe: boolean } | null = null;
   private rings: THREE.InstancedMesh;
   private pulses: { mesh: THREE.Mesh; t: number }[] = [];
   private pulseGeo: THREE.RingGeometry;
@@ -45,12 +50,27 @@ export class OrdersFX {
       if (n >= MAX_RINGS) break;
       const s = g.settlers.get(id);
       if (!s || s.hidden || s.dead) continue;
-      m.makeTranslation(s.x, w.heightAt(s.x, s.z) + 0.05, s.z);
+      const k = s.job === 'catapult' ? 2.2 : 1;
+      m.makeScale(k, 1, k).setPosition(s.x, w.heightAt(s.x, s.z) + 0.05, s.z);
       this.rings.setMatrixAt(n, m);
       const hp = Math.max(0, s.hp / s.maxHp);
       col.setRGB(hp < 0.5 ? 1 : 2 - hp * 2 + 0.25, hp > 0.5 ? 1 : hp * 2, 0.25);
       this.rings.setColorAt(n, col);
       n++;
+    }
+    const ring = (s: Settler | undefined, scale: number, r: number, gg: number, b: number) => {
+      if (n >= MAX_RINGS || !s || s.hidden || s.dead) return;
+      m.makeScale(scale, 1, scale).setPosition(s.x, w.heightAt(s.x, s.z) + 0.05, s.z);
+      this.rings.setMatrixAt(n, m);
+      this.rings.setColorAt(n, col.setRGB(r, gg, b));
+      n++;
+    };
+    for (const id of this.preview) if (!this.chosen.includes(id)) ring(g.settlers.get(id), 1, 0.55, 0.5, 0.3);
+    const h = this.hover;
+    if (h?.kind === 'settler' && !this.chosen.includes(h.id)) {
+      const s = g.settlers.get(h.id);
+      const big = s?.job === 'catapult' ? 2.2 : s?.job === 'donkey' ? 1.5 : 1.1;
+      if (h.foe) ring(s, big, 1, 0.16, 0.08); else ring(s, big, 0.85, 0.82, 0.7);
     }
     this.rings.count = n;
     this.rings.instanceMatrix.needsUpdate = true;
@@ -78,6 +98,14 @@ export class OrdersFX {
     mesh.renderOrder = 20;
     this.group.add(mesh);
     this.pulses.push({ mesh, t: 0 });
+  }
+
+  /** Ground ring (x, z, radius) and colour for the building under the pointer, or null. */
+  hoverRing(selectedId: number): { x: number; z: number; r: number; foe: boolean } | null {
+    const h = this.hover;
+    if (h?.kind !== 'building' || h.id === selectedId) return null;
+    const b = this.game.buildings.get(h.id);
+    return b ? { x: b.cx, z: b.cz, r: b.size * 0.75 + 0.3, foe: h.foe } : null;
   }
 
   /** The local player's field soldiers whose screen position falls in a client-space rectangle. */

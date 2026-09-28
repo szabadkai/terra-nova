@@ -950,6 +950,12 @@ export class GameRenderer {
         if (s && !s.hidden) U.uSel.value.set(s.x, 0, s.z, 0.45); else if (!s) { this.selected = null; U.uSel.value.w = 0; } else U.uSel.value.w = 0;
       }
     } else U.uSel.value.w = 0;
+    const hov = this.orders.hoverRing(this.selected?.kind === 'building' ? this.selected.id : 0);
+    if (hov) {
+      U.uHov.value.set(hov.x, 0, hov.z, hov.r);
+      const c = U.uHovCol.value as THREE.Color;
+      if (hov.foe) c.setRGB(1.2, 0.1, 0.05); else c.setRGB(0.8, 0.78, 0.65);
+    } else U.uHov.value.w = 0;
 
     // planar water reflections (only when water is on screen)
     const U2 = this.water.uniforms;

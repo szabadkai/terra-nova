@@ -51,7 +51,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <li><b>Take to the sea.</b> A Harbour and a Shipyard on the coast give you ships. They carry goods and settlers between your harbours, and a harbour can send an expedition to found a colony on the rich islands offshore.</li>
         <li><b>Conquer.</b> Select an enemy military building in reach and press Attack — or take command yourself: drag a box around your soldiers (or Call out a tower's garrison) and right-click where they should go, or the stronghold they should storm. Capture them all to win.</li>
       </ol>
-      <p class="muted">Controls: WASD / arrows or right-drag to scroll, mouse wheel to zoom, Q/E to rotate, Space to pause.</p>
+      <p class="muted">Controls: right-drag to move the view, the wheel zooms towards the pointer, middle-drag or Option/Alt + drag turns and tilts it (or Shift + wheel, Q/E, the buttons under the minimap), WASD / arrows or the screen edge scroll, Space pauses. Esc → Controls has the full list.</p>
       <button class="wide" id="helpclose">Got it</button>
     </div>`;
   parent.appendChild(el);

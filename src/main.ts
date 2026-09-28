@@ -8,6 +8,11 @@ import { GameMenu } from './ui/gameMenu';
 import { applyAudioPrefs, applyRenderPrefs, prefs } from './ui/prefs';
 import { enterImmersive, onImmersiveChange, toggleImmersive } from './ui/immersive';
 import { Audio } from './audio/audio';
+import { CursorSetter, type CursorKind } from './ui/cursors';
+import { JOB_NAMES } from './game/defs';
+import { isCombatant } from './game/military';
+import { commandable } from './game/orders';
+import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, warmUp } from './ui/saveStore';
@@ -61,7 +66,7 @@ function wantsResume() {
 /** The running game as a save, with the view and chronicle so it looks the same when loaded. */
 function capture(): { data: SaveData; meta: SaveMeta } {
   const ui = {
-    cam: { x: gr.cam.target.x, z: gr.cam.target.z, dist: gr.cam.dist, yaw: gr.cam.yaw },
+    cam: { x: gr.cam.target.x, z: gr.cam.target.z, dist: gr.cam.dist, yaw: gr.cam.yaw, tilt: gr.cam.tilt },
     tod: gr.sky.timeOfDay,
     season: gr.seasons.phase,
     speed: pausedSpeed,
@@ -294,12 +299,13 @@ function startGame(resumed?: Record<string, unknown>) {
   G.uFogOn.value = 1;
   gr.cam.cinematic = false;
   game.ai.forEach((a) => (a.level = opts.ai));
-  const view = resumed as { cam?: { x: number; z: number; dist: number; yaw: number }; tod?: number; season?: number; speed?: number; objective?: number } | undefined;
+  const view = resumed as { cam?: { x: number; z: number; dist: number; yaw: number; tilt?: number }; tod?: number; season?: number; speed?: number; objective?: number } | undefined;
   const hq = game.buildings.get(game.players[game.local].hq);
   if (view?.cam) {
     gr.cam.jumpTo(view.cam.x, view.cam.z, true);
     gr.cam.zoomTo(view.cam.dist, true);
     gr.cam.setYaw(view.cam.yaw);
+    if (typeof view.cam.tilt === 'number') gr.cam.setTilt(view.cam.tilt);
   } else if (hq) {
     gr.cam.jumpTo(hq.cx, hq.cz + 3);
     gr.cam.zoomTo(28);
@@ -392,33 +398,119 @@ function setupGlobalInput() {
   });
 }
 
+/** The mouse over the game view, for hover highlights and cursors that follow the world moving under it. */
+const pointer = { x: 0, y: 0, inside: false, buttons: 0, at: 0 };
+let cursor: CursorSetter | null = null;
+let hoverCursor: CursorKind = 'default';
+/** the selection box being drawn, if any */
+let box: HTMLElement | null = null;
+
+const targeting = () => !!(gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering);
+const seenAt = (x: number, z: number) => {
+  const w = game.world, xi = Math.round(x), zi = Math.round(z);
+  return w.inBounds(xi, zi) && !!w.explored[w.idx(xi, zi)];
+};
+
+/** Find what the pointer is over: ring it, pick the cursor a click would earn and show its tooltip. */
+function refreshHover() {
+  pointer.at = performance.now();
+  const o = gr.orders;
+  if (!hud || gameMenu || state !== 'play' || !pointer.inside || pointer.buttons || box || gr.cam.drag) {
+    o.hover = null;
+    if (!pointer.inside || gameMenu) hud?.hideTip();
+    return;
+  }
+  const ev = { clientX: pointer.x, clientY: pointer.y } as MouseEvent;
+  if (targeting()) {
+    o.hover = null;
+    hud.hideTip();
+    hoverCursor = gr.placing ? 'default' : 'target';
+    return;
+  }
+  const g = game, w = g.world, me = g.local;
+  let b = gr.pickBuilding(pointer.x, pointer.y);
+  if (b && !seenAt(b.cx, b.cz)) b = null;
+  const s = gr.pickSettler(pointer.x, pointer.y, b ? 12 : 22);
+  const shipId = s ? 0 : gr.pickShip(pointer.x, pointer.y);
+  const sh = shipId ? g.ships.get(shipId) : undefined;
+  o.hover = s ? { kind: 'settler', id: s.id, foe: s.owner !== me } : b && !sh ? { kind: 'building', id: b.id, foe: b.owner !== me } : null;
+
+  // with soldiers picked, the cursor tells what a right-click (or the pending order's click) would do
+  const chosen = o.chosen.map((id) => g.settlers.get(id)).filter((x): x is Settler => !!x);
+  const cmd = gr.commanding;
+  hoverCursor = cmd ? 'target' : 'default';
+  if (chosen.length) {
+    const fort = b && b.def.military && b.state === 'done' ? b : null;
+    const foeFort = fort && fort.owner !== me;
+    const regionOf = (x: Settler) => w.region[x.inside ? g.buildings.get(x.inside)?.door ?? x.node : x.node];
+    if (cmd === 'attack') hoverCursor = foeFort ? 'attack' : 'nogo';
+    else if (foeFort && !cmd) hoverCursor = 'attack';
+    else if (fort && !cmd && chosen.some((x) => x.job !== 'catapult')) hoverCursor = 'garrison';
+    else if (s && s.owner !== me && isCombatant(s) && !cmd) hoverCursor = 'attack';
+    else {
+      const node = gr.hoverNode;
+      const reg = node >= 0 ? w.regionAt(node) : 0;
+      if (!reg || !chosen.some((x) => regionOf(x) === reg)) hoverCursor = 'nogo';
+    }
+  }
+
+  // tooltips
+  if (sh) {
+    hud.showTip(ev, `<b>⛵ ${sh.name}</b><br><span class="muted">${g.players[sh.owner].name}</span>`);
+  } else if (s && isCombatant(s)) {
+    const act = chosen.length && s.owner !== me ? '<br><b class="bad">Right-click: march on him</b>' : '';
+    hud.showTip(ev, `<b>${JOB_NAMES[s.job]}</b><br><span class="muted">${g.players[s.owner].name}</span><br>Health ${Math.ceil(s.hp)} / ${s.maxHp}${act}`);
+  } else if (b) {
+    const owner = g.players[b.owner];
+    const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
+    // with soldiers picked: what a right-click would have them do
+    const n = chosen.length;
+    const act = n && b.def.military && b.state === 'done' ? (b.owner !== me ? `<br><b class="bad">Right-click: storm it with ${n}</b>` : '<br><b>Right-click: man it</b>') : '';
+    hud.showTip(ev, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}${act}`);
+  } else hud.hideTip();
+}
+
+/** The cursor for this frame: a drag of the view wins over whatever the pointer is over. */
+function updateCursor() {
+  if (!cursor) return;
+  const d = gr.cam.drag;
+  cursor.set(d === 'pan' ? 'grab' : d === 'orbit' ? 'orbit' : state === 'play' ? hoverCursor : 'default');
+}
+
 function bindCanvas(c: HTMLCanvasElement) {
   let downX = 0, downY = 0, downBtn = -1, multiTouch = false;
   const active = new Set<number>();
+  cursor = new CursorSetter(c);
+  hoverCursor = 'default';
   // left-drag with the mouse draws a box around soldiers to pick
-  let box: HTMLElement | null = null;
-  const boxEnd = () => { box?.remove(); box = null; };
+  const boxEnd = () => { box?.remove(); box = null; gr.orders.preview = []; };
   c.addEventListener('pointerdown', (e) => {
     boxEnd();
     active.add(e.pointerId);
     if (active.size > 1) multiTouch = true;
     if (active.size === 1) { downX = e.clientX; downY = e.clientY; downBtn = e.button; multiTouch = false; }
+    if (e.pointerType === 'mouse') { pointer.buttons = e.buttons; gr.orders.hover = null; hud?.hideTip(); }
     if (e.pointerType === 'touch' && state === 'play') {
       // update hover so taps place buildings where the finger is
       const p = gr.pickGround(e.clientX, e.clientY);
       gr.hoverNode = gr.pickNode(p);
     }
   });
-  let tipT = 0;
   c.addEventListener('pointermove', (e) => {
     if (state !== 'play') return;
-    if (e.pointerType === 'mouse' && (e.buttons & 1) && downBtn === 0 && hud && !gr.placing && !gr.casting && !gr.expedition && !gr.prospecting && !gr.pioneering
+    if (e.pointerType === 'mouse') {
+      pointer.x = e.clientX; pointer.y = e.clientY; pointer.inside = true; pointer.buttons = e.buttons;
+    }
+    if (e.pointerType === 'mouse' && (e.buttons & 1) && downBtn === 0 && hud && !targeting() && !gr.cam.drag
       && (box || Math.hypot(e.clientX - downX, e.clientY - downY) > 8)) {
       if (!box) { box = document.createElement('div'); box.className = 'selbox'; uiRoot.appendChild(box); }
-      box.style.left = `${Math.min(downX, e.clientX)}px`;
-      box.style.top = `${Math.min(downY, e.clientY)}px`;
-      box.style.width = `${Math.abs(e.clientX - downX)}px`;
-      box.style.height = `${Math.abs(e.clientY - downY)}px`;
+      const x0 = Math.min(downX, e.clientX), y0 = Math.min(downY, e.clientY), x1 = Math.max(downX, e.clientX), y1 = Math.max(downY, e.clientY);
+      box.style.left = `${x0}px`;
+      box.style.top = `${y0}px`;
+      box.style.width = `${x1 - x0}px`;
+      box.style.height = `${y1 - y0}px`;
+      // the men the box would take get a faint ring as it is drawn
+      gr.orders.preview = gr.orders.inRect(gr.cam.camera, c, x0, y0, x1, y1);
       hud.hideTip();
       return;
     }
@@ -426,36 +518,13 @@ function bindCanvas(c: HTMLCanvasElement) {
     gr.hoverNode = gr.pickNode(p);
     gr.hoverPoint = p;
     if (e.pointerType === 'touch') return;
-    // hover tooltip for buildings (throttled)
-    const now = performance.now();
-    if (!hud || gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering || e.buttons) { hud?.hideTip(); return; }
-    if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
-    tipT = now;
-    const shipId = gr.pickShip(e.clientX, e.clientY);
-    const sh = shipId ? game.ships.get(shipId) : undefined;
-    if (sh) {
-      hud.showTip(e, `<b>⛵ ${sh.name}</b><br><span class="muted">${game.players[sh.owner].name}</span>`);
-      c.style.cursor = 'pointer';
-      return;
-    }
-    const b = gr.pickBuilding(e.clientX, e.clientY);
-    const w = game.world;
-    if (b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))]) {
-      const owner = game.players[b.owner];
-      const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
-      // with soldiers picked: what a right-click would have them do
-      const n = gr.orders.chosen.length;
-      const act = n && b.def.military && b.state === 'done' ? (b.owner !== game.local ? `<br><b class="bad">Right-click: storm it with ${n}</b>` : '<br><b>Right-click: man it</b>') : '';
-      hud.showTip(e, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}${act}`);
-      c.style.cursor = 'pointer';
-    } else {
-      hud.hideTip();
-      c.style.cursor = '';
-    }
+    if (performance.now() - pointer.at > 50) refreshHover();
+    else if (hud && !e.buttons) hud.moveTip(e.clientX, e.clientY);
   });
-  c.addEventListener('pointerleave', () => hud?.hideTip());
+  c.addEventListener('pointerleave', () => { pointer.inside = false; gr.orders.hover = null; hud?.hideTip(); });
   const up = (e: PointerEvent) => {
     active.delete(e.pointerId);
+    if (e.pointerType === 'mouse') pointer.buttons = e.buttons;
     if (box) {
       const r = box.getBoundingClientRect();
       boxEnd();
@@ -467,23 +536,29 @@ function bindCanvas(c: HTMLCanvasElement) {
     const moved = Math.hypot(e.clientX - downX, e.clientY - downY) > (e.pointerType === 'touch' ? 12 : 6);
     if (moved || e.button !== downBtn) return;
     if (e.button === 0) onClick(e);
-    else if (e.button === 2) {
+    else if (e.button === 2 && !e.altKey) {
       if (hud.cancelMode()) return;
       // with soldiers picked, a right-click gives them their orders
       if (gr.orders.chosen.length) hud.commandAt(e.clientX, e.clientY);
       else hud.select(null);
     }
+    refreshHover();
   };
   c.addEventListener('pointerup', up);
-  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); boxEnd(); });
+  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); pointer.buttons = 0; boxEnd(); });
   // double-click a soldier: every one of his kind in view
   c.addEventListener('dblclick', (e) => {
-    if (state !== 'play' || !hud || gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering || gr.commanding) return;
+    if (state !== 'play' || !hud || targeting() || gr.commanding) return;
     const s = gr.pickSettler(e.clientX, e.clientY, 26);
     if (!s || !gr.orders.chosen.includes(s.id)) return;
-    const r = c.getBoundingClientRect();
-    hud.selectSoldiers(gr.orders.inRect(gr.cam.camera, c, r.left, r.top, r.right, r.bottom, s.job), e.shiftKey);
+    selectKindInView(s, e.shiftKey);
   });
+}
+
+/** Pick every soldier of `s`'s kind on screen. */
+function selectKindInView(s: Settler, add: boolean) {
+  const r = canvas.getBoundingClientRect();
+  hud?.selectSoldiers(gr.orders.inRect(gr.cam.camera, canvas, r.left, r.top, r.right, r.bottom, s.job), add);
 }
 
 function onClick(e: PointerEvent) {
@@ -527,7 +602,9 @@ function onClick(e: PointerEvent) {
   // settlers win when the click is right on them (or no building was hit)
   const s = gr.pickSettler(e.clientX, e.clientY, b ? 12 : 26);
   const ship = s ? 0 : gr.pickShip(e.clientX, e.clientY);
-  if (s) hud.select({ kind: 'settler', id: s.id }, e.shiftKey);
+  // Ctrl/Cmd + click one of your soldiers: all of his kind on screen
+  if (s && (e.ctrlKey || e.metaKey) && commandable(game, game.local, s) && !s.inside) selectKindInView(s, e.shiftKey);
+  else if (s) hud.select({ kind: 'settler', id: s.id }, e.shiftKey);
   else if (ship) hud.select({ kind: 'ship', id: ship });
   else if (b) hud.select({ kind: 'building', id: b.id });
   else hud.select(null);
@@ -546,6 +623,8 @@ function loop() {
       gr.handleEvents(game.events.splice(0));
       gr.frame(dt, gdt);
       if (!gameMenu) hud?.update(dt);
+      // the world moves under a resting pointer too: soldiers walk by, the view scrolls
+      if (pointer.inside && performance.now() - pointer.at > 120) refreshHover();
       autosaveT -= dt;
       if (autosaveT <= 0) {
         autosaveT = AUTOSAVE_EVERY;
@@ -555,6 +634,7 @@ function loop() {
       game.events.length = 0;
       gr.frame(dt, dt * 0.3);
     }
+    updateCursor();
     audio.setListener(gr.cam.target.x, gr.cam.target.z, gr.cam.dist);
     audio.update(dt, gr.sky.night, gr.raining, gr.waterFrac);
   }

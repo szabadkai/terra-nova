@@ -3,6 +3,7 @@
 import { DEFAULT_RENDER_SETTINGS, type GameRenderer, type RenderSettings } from '../render/renderer';
 import type { SeasonMode } from '../render/seasons';
 import type { Audio } from '../audio/audio';
+import type { WheelMode } from '../render/camera';
 
 export interface Prefs {
   render: RenderSettings;
@@ -17,6 +18,12 @@ export interface Prefs {
   ambience: number;
   edgeScroll: boolean;
   scrollSpeed: number;
+  /** the wheel zooms towards the pointer rather than the middle of the screen */
+  zoomToPointer: boolean;
+  /** what the scroll wheel or a two-finger swipe does */
+  wheel: WheelMode;
+  /** what a plain right-drag does to the view */
+  rightDrag: 'pan' | 'orbit';
   /** fill the screen (fullscreen) whenever a game starts; follows what the user last chose */
   immersive: boolean;
   showFps: boolean;
@@ -36,6 +43,9 @@ export const defaultPrefs = (): Prefs => ({
   ambience: 1,
   edgeScroll: true,
   scrollSpeed: 1,
+  zoomToPointer: true,
+  wheel: 'auto',
+  rightDrag: 'pan',
   immersive: false,
   showFps: true,
 });
@@ -70,9 +80,16 @@ export function applyRenderPrefs(gr: GameRenderer) {
   Object.assign(gr.settings, prefs.render);
   gr.seasons.mode = prefs.season;
   gr.sky.dayLength = prefs.dayLength;
+  applyControlPrefs(gr);
+  gr.applyQuality();
+}
+
+export function applyControlPrefs(gr: GameRenderer) {
   gr.cam.edgeScroll = prefs.edgeScroll;
   gr.cam.scrollSpeed = prefs.scrollSpeed;
-  gr.applyQuality();
+  gr.cam.zoomToPointer = prefs.zoomToPointer;
+  gr.cam.wheelMode = prefs.wheel;
+  gr.cam.rightDrag = prefs.rightDrag;
 }
 
 export function applyAudioPrefs(audio: Audio) {

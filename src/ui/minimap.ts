@@ -1,10 +1,17 @@
-// 2D minimap: shaded terrain, territories, buildings, units and the camera view.
+// 2D minimap: shaded terrain, territories, buildings, units and the camera view, with buttons in
+// its corner to turn the view and a compass whose needle points north (click it to face north).
 import { PLAYER_COLORS, T_DIRT, T_FOREST, T_GRASS, T_MEADOW, T_ROCK, T_SAND, T_SNOW, T_SWAMP } from '../game/defs';
 import type { Game } from '../game/game';
 import { WATER_LEVEL } from '../game/world';
 import type { RTSCamera } from '../render/camera';
 import * as THREE from 'three';
 import { G } from '../render/shaderPatch';
+
+const arrow = (d: string) => `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+// a quarter turn ending in an arrowhead, anticlockwise and clockwise
+const TURN_L = arrow('M3.5 9.5A5 5 0 1 0 6.5 3.6M6.5 3.6L8.8 1.8M6.5 3.6L8.4 6.2');
+const TURN_R = arrow('M12.5 9.5A5 5 0 1 1 9.5 3.6M9.5 3.6L7.2 1.8M9.5 3.6L7.6 6.2');
+const NEEDLE = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5L10.6 8H5.4Z" fill="#ff6a50"/><path d="M8 14.5L5.4 8H10.6Z" fill="#e8dcc4"/><circle cx="8" cy="8" r="1.2" fill="#2a1c0c"/></svg>';
 
 const TCOL: Record<number, [number, number, number]> = {
   [T_GRASS]: [96, 146, 52], [T_MEADOW]: [128, 160, 62], [T_FOREST]: [64, 104, 44], [T_DIRT]: [140, 110, 76],
@@ -27,16 +34,44 @@ export class Minimap {
     this.ctx = this.canvas.getContext('2d')!;
     this.base = this.ctx.createImageData(w.W, w.H);
     this.buildBase();
-    const jump = (e: PointerEvent) => {
+    const at = (e: PointerEvent) => {
       const r = this.canvas.getBoundingClientRect();
-      const x = ((e.clientX - r.left) / r.width) * w.W, z = ((e.clientY - r.top) / r.height) * w.H;
-      this.cam.jumpTo(x, z);
+      return { x: ((e.clientX - r.left) / r.width) * w.W, z: ((e.clientY - r.top) / r.height) * w.H };
     };
+    const jump = (e: PointerEvent) => { const p = at(e); this.cam.jumpTo(p.x, p.z); };
+    // left: jump there, and drag to sweep the view along; right: orders for the picked soldiers
     let down = false;
-    this.canvas.addEventListener('pointerdown', (e) => { down = true; jump(e); this.canvas.setPointerCapture(e.pointerId); });
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.button !== 2) return;
+      const p = at(e);
+      if (this.onCommand?.(p.x, p.z, e.button === 0)) return;
+      if (e.button === 2) { this.cam.jumpTo(p.x, p.z); return; }
+      down = true;
+      jump(e);
+      this.canvas.setPointerCapture(e.pointerId);
+    });
     this.canvas.addEventListener('pointermove', (e) => { if (down) jump(e); });
     this.canvas.addEventListener('pointerup', () => { down = false; });
+    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // turning the view without a middle mouse button
+    const turn = document.createElement('div');
+    turn.className = 'mm-turn';
+    turn.innerHTML = `<button data-t="-1" title="Turn the view left (Q)" aria-label="Turn the view left">${TURN_L}</button>`
+      + `<button data-t="0" class="north" title="Face north (middle-click)" aria-label="Face north">${NEEDLE}</button>`
+      + `<button data-t="1" title="Turn the view right (E)" aria-label="Turn the view right">${TURN_R}</button>`;
+    turn.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      const t = Number(b.dataset.t);
+      b.onclick = () => (t ? this.cam.turnBy(t * (Math.PI / 4)) : this.cam.resetView());
+    });
+    this.needle = turn.querySelector<HTMLElement>('.north svg')!;
+    parent.appendChild(turn);
   }
+
+  private needle: HTMLElement;
+  private needleYaw = Infinity;
+
+  /** A click at a map point (left or right); returns true when it became an order. */
+  onCommand: ((x: number, z: number, left: boolean) => boolean) | null = null;
 
   buildBase() {
     const g = this.game;
@@ -86,6 +121,11 @@ export class Minimap {
   }
 
   update(dt: number) {
+    // the needle shows where north lies on screen
+    if (Math.abs(this.cam.yaw - this.needleYaw) > 0.002) {
+      this.needleYaw = this.cam.yaw;
+      this.needle.style.transform = `rotate(${this.cam.yaw}rad)`;
+    }
     this.t -= dt;
     this.baseT -= dt;
     if (this.t > 0) return;

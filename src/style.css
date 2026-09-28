@@ -14,7 +14,7 @@
   --font-title: 'Cinzel', Georgia, 'Times New Roman', serif;
   --font: 'Inter', system-ui, -apple-system, Segoe UI, sans-serif;
 }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; color: var(--text); font-family: var(--font); }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1622; color: var(--text); font-family: var(--font); overscroll-behavior: none; }
 #c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; touch-action: none; }
 :root { color-scheme: dark; }
 body { background: #0b1622; color: #f3e8d2; }
@@ -60,6 +60,10 @@ button { font-family: var(--font); cursor: pointer; }
 .mm-wrap { padding: 8px 8px 6px; position: relative; }
 .mm-wrap::after { content: ''; position: absolute; inset: 8px 8px 6px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(226, 184, 87, 0.5), inset 0 0 18px rgba(0, 0, 0, 0.6); pointer-events: none; }
 .minimap { width: 228px; height: 228px; border-radius: 8px; image-rendering: pixelated; display: block; cursor: crosshair; background: #102030; }
+.mm-turn { position: absolute; right: 13px; bottom: 11px; display: flex; gap: 3px; z-index: 1; }
+.mm-turn button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border-radius: 50%; background: rgba(18, 12, 8, 0.72); color: var(--text); border: 1px solid var(--line); }
+.mm-turn button:hover { border-color: var(--gold); color: var(--gold); }
+.mm-turn .north svg { transition: transform .08s linear; }
 .tabs { display: flex; gap: 3px; padding: 2px 8px 6px; }
 .tab { flex: 1; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line); border-radius: 8px; color: var(--muted); padding: 5px 0; font-size: 15px; transition: all .15s; }
 .tab:hover { color: var(--text); background: rgba(226, 184, 87, 0.12); }
@@ -375,4 +379,4 @@ label.opt-switch { cursor: pointer; }
 }
 
 /* box selection of soldiers */
-.selbox { position: fixed; z-index: 30; pointer-events: none; border: 1px solid rgba(255, 224, 150, 0.9); background: rgba(255, 214, 120, 0.12); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); border-radius: 2px; }
+.selbox { position: fixed; z-index: 30; pointer-events: none; border: 1px solid rgba(255, 224, 150, 0.95); background: linear-gradient(rgba(255, 214, 120, 0.1), rgba(255, 214, 120, 0.16)); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 14px rgba(255, 200, 90, 0.18); border-radius: 3px; }

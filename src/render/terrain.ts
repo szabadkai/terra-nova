@@ -23,6 +23,8 @@ uniform sampler2D tOre;
 uniform float uWaterLevel;
 uniform vec3 uPlayerCols[4];
 uniform vec4 uSel;
+uniform vec4 uHov;
+uniform vec3 uHovCol;
 uniform vec4 uRange;
 uniform vec3 uRangeCol;
 uniform vec4 uSpell;
@@ -367,6 +369,11 @@ const TERRAIN_MAP = /* glsl */ `
     float ring = (1.0 - smoothstep(0.0, 0.09, abs(d - uSel.w))) + (1.0 - smoothstep(0.0, 0.35, abs(d - uSel.w))) * 0.3;
     tEmis += vec3(1.0, 0.85, 0.35) * ring * (0.7 + 0.3 * sin(uTime * 5.0));
   }
+  // the building under the pointer
+  if (uHov.w > 0.0) {
+    float d = abs(length(p - uHov.xz) - uHov.w);
+    tEmis += uHovCol * ((1.0 - smoothstep(0.0, 0.07, d)) * 0.75 + (1.0 - smoothstep(0.0, 0.28, d)) * 0.2);
+  }
   // work range circle
   if (uRange.w > 0.0) {
     float d = length(p - uRange.xz);
@@ -501,6 +508,8 @@ export class TerrainRenderer {
       uWaterLevel: { value: WATER_LEVEL },
       uPlayerCols: { value: game.players.map((p) => new THREE.Color(p.color)).concat([new THREE.Color(), new THREE.Color(), new THREE.Color(), new THREE.Color()]).slice(0, 4) },
       uSel: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uHov: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uHovCol: { value: new THREE.Color(1, 1, 1) },
       uRange: { value: new THREE.Vector4(0, 0, 0, 0) },
       uRangeCol: { value: new THREE.Color(0.45, 0.85, 1.0) },
       uSpell: { value: new THREE.Vector4(0, 0, 0, 0) },
