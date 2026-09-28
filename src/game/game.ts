@@ -6,6 +6,7 @@ import {
 } from './defs';
 import { generateMap } from './mapgen';
 import { PathFinder } from './path';
+import { populateWild, updateWild, wander } from './wildlife';
 import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, TradeOrder, Tree } from './types';
 import { WATER_LEVEL, World } from './world';
 import { abortPlan, markSpots, Spots, updateSettler } from './settlers';
@@ -101,6 +102,8 @@ export class Game {
   checkT = 0;
   deerT = 0;
   deerTarget = 0;
+  /** until the next round of hares breeding and moving out (wildlife.ts) */
+  wildT = 0;
   winner = -1;
   over = false;
   starts: { x: number; y: number }[] = [];
@@ -121,6 +124,7 @@ export class Game {
     for (const s of gen.stones) this.addStone(s.node, s.amount);
     for (const d of gen.deer) this.addAnimal(d.node, d.herd);
     this.deerTarget = gen.deer.length;
+    populateWild(this, gen.starts);
 
     for (let p = 0; p < opts.players; p++) {
       this.players.push(this.newPlayer(p));
@@ -260,11 +264,11 @@ export class Game {
     if (this.world.field[f.node] === f.id) this.world.field[f.node] = 0;
     this.fieldsVersion++;
   }
-  addAnimal(node: number, herd: number): Animal {
+  addAnimal(node: number, herd: number, kind: Animal['kind'] = 'deer'): Animal {
     const a: Animal = {
-      id: this.id(), kind: 'deer', node, next: -1, t: 0, stepDur: 1, path: null, pathI: 0,
+      id: this.id(), kind, node, next: -1, t: 0, stepDur: 1, path: null, pathI: 0,
       x: this.world.nx(node), z: this.world.ny(node), heading: this.rng.range(0, 6.28), reserved: false,
-      alive: true, deadT: 0, wanderT: this.rng.range(0, 8), herd,
+      alive: true, deadT: 0, wanderT: this.rng.range(0, 8), herd, home: node, leave: 0,
     };
     this.animals.set(a.id, a);
     return a;
@@ -737,6 +741,8 @@ export class Game {
         if (a.deadT > 90) this.animals.delete(a.id);
         continue;
       }
+      if (a.leave) continue;
+      const hare = a.kind === 'hare';
       // movement
       if (a.next >= 0) {
         a.t += dt / a.stepDur;
@@ -752,48 +758,19 @@ export class Game {
           a.next = n;
           a.t = 0;
           const dx = w.nx(n) - w.nx(a.node), dz = w.ny(n) - w.ny(a.node);
-          a.stepDur = (dx && dz ? 1.41 : 1) * 0.9;
+          // a hare goes in quick hops, a deer at a walk
+          a.stepDur = (dx && dz ? 1.41 : 1) * (hare ? 0.34 : 0.9);
           a.heading = Math.atan2(dx, dz);
         } else a.path = null;
       }
       this.syncPos(a);
       a.wanderT -= dt;
       if (a.wanderT <= 0 && a.next < 0) {
-        a.wanderT = this.rng.range(4, 14);
-        // flee from settlers nearby / stay within territory-free land
-        const x = w.nx(a.node), y = w.ny(a.node);
-        for (let k = 0; k < 6; k++) {
-          const tx = x + this.rng.int(-4, 5), ty = y + this.rng.int(-4, 5);
-          if (!w.inBounds(tx, ty)) continue;
-          const ti = w.idx(tx, ty);
-          if (!w.walkable(ti)) continue;
-          const p = this.path.find(a.node, ti, false, 400);
-          if (p && p.length) {
-            a.path = p;
-            a.pathI = 0;
-            break;
-          }
-        }
+        a.wanderT = hare ? this.rng.range(2, 8) : this.rng.range(4, 14);
+        wander(this, a);
       }
     }
-    // respawn deer occasionally
-    this.deerT -= dt;
-    if (this.deerT <= 0) {
-      this.deerT = 45;
-      let alive = 0;
-      for (const a of this.animals.values()) if (a.alive) alive++;
-      if (alive < this.deerTarget) {
-        for (let k = 0; k < 40; k++) {
-          const i = this.rng.int(0, w.N);
-          if (!w.walkable(i) || w.owner[i] >= 0) continue;
-          const t = w.terrain[i];
-          if (t === T_ROCK || t === T_SNOW) continue;
-          const n = this.rng.int(1, 3);
-          for (let j = 0; j < n; j++) this.addAnimal(i, 999 + k);
-          break;
-        }
-      }
-    }
+    updateWild(this, dt);
   }
 
   updateExplored(force: boolean) {

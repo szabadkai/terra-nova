@@ -613,7 +613,8 @@ export class AIController {
           score = Math.min(10, n) - dHQ * 0.5;
           break;
         }
-        case 'hunter': score = -dHQ * 0.2 + g.rng.next() * 5; break;
+        // game lives in the woods
+        case 'hunter': score = this.countTrees(cx, cz, 10) * 0.3 - dHQ * 0.2 + g.rng.next() * 2; break;
         case 'coalmine': case 'ironmine': case 'goldmine': case 'stonemine': {
           const ore = MINE_ORE[def.mine!];
           let n = 0;

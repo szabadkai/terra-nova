@@ -2,10 +2,11 @@
 import * as THREE from 'three';
 import { GOODS, Good, T_FOREST, T_GRASS, T_MEADOW } from '../game/defs';
 import type { Game } from '../game/game';
-import type { Tree } from '../game/types';
+import type { Animal, Tree } from '../game/types';
+import { BURROW_TIME } from '../game/wildlife';
 import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
-import { DEER_HEAD, DEER_HIPS, DEER_KNEE, DEER_NECK, buildDeerGeos, buildGoodGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
+import { DEER_HEAD, DEER_HIPS, DEER_KNEE, DEER_NECK, buildDeerGeos, buildGoodGeos, buildHareGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
@@ -651,6 +652,12 @@ const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 /** a lateral walk: left fore, right fore, left hind, right hind a quarter stride apart */
 const DEER_GAIT = [Math.PI / 2, Math.PI * 1.5, 0, Math.PI];
 
+/** A hare's heading, how far it is tipped forward (grazing, +) or back (sat up, −), and its size. */
+interface HareLook { h: number; pitch: number; seed: number; size: number }
+const MAX_HARES = 1500;
+/** drawn a little larger than life, like the deer, so a hare reads at play size */
+const HARE_SCALE = 1.25;
+
 export class AnimalsRenderer {
   group = new THREE.Group();
   private body: THREE.InstancedMesh;
@@ -661,6 +668,9 @@ export class AnimalsRenderer {
   private upper: THREE.InstancedMesh;
   private lower: THREE.InstancedMesh;
   private looks = new Map<number, DeerLook>();
+  private hareSit: THREE.InstancedMesh;
+  private hareLeap: THREE.InstancedMesh;
+  private hares = new Map<number, HareLook>();
   private base = new THREE.Matrix4();
   private m = new THREE.Matrix4();
   private m2 = new THREE.Matrix4();
@@ -676,6 +686,10 @@ export class AnimalsRenderer {
     this.upper = inst(g.upper, mat, 2400);
     this.lower = inst(g.lower, mat, 2400);
     this.group.add(this.body, this.fawn, this.neck, this.head, this.stag, this.upper, this.lower);
+    const hg = buildHareGeos();
+    this.hareSit = inst(hg.sit, mat, MAX_HARES);
+    this.hareLeap = inst(hg.leap, mat, MAX_HARES);
+    this.group.add(this.hareSit, this.hareLeap);
   }
 
   private look(id: number, herd: number, heading: number): DeerLook {
@@ -695,9 +709,13 @@ export class AnimalsRenderer {
     dt = Math.min(dt, 0.1);
     let nb = 0, nf = 0, nn = 0, nh = 0, ns = 0, nu = 0, nl = 0;
     const ease = (v: number, t: number, k: number) => v + (t - v) * Math.min(1, dt * k);
+    this.nSit = this.nLeap = 0;
+    let deer = 0;
     for (const a of g.animals.values()) {
-      if (nn >= 600) break;
+      if (a.kind === 'deer') deer++;
       if (!w.explored[w.idx(Math.round(a.x), Math.round(a.z))]) continue;
+      if (a.kind === 'hare') { this.hare(a, dt, time); continue; }
+      if (nn >= 600) continue;
       const L = this.look(a.id, a.herd, a.heading);
       const y = w.heightAt(a.x, a.z);
       const moving = a.alive && a.next >= 0;
@@ -749,9 +767,55 @@ export class AnimalsRenderer {
         this.lower.setMatrixAt(nl++, this.m);
       }
     }
-    const counts: [THREE.InstancedMesh, number][] = [[this.body, nb], [this.fawn, nf], [this.neck, nn], [this.head, nh], [this.stag, ns], [this.upper, nu], [this.lower, nl]];
+    const counts: [THREE.InstancedMesh, number][] = [[this.body, nb], [this.fawn, nf], [this.neck, nn], [this.head, nh], [this.stag, ns], [this.upper, nu], [this.lower, nl],
+      [this.hareSit, this.nSit], [this.hareLeap, this.nLeap]];
     for (const [mesh, c] of counts) commitInstances(mesh, c);
-    if (this.looks.size > g.animals.size + 64) for (const id of this.looks.keys()) if (!g.animals.has(id)) this.looks.delete(id);
+    if (this.looks.size > deer + 64) for (const id of this.looks.keys()) if (!g.animals.has(id)) this.looks.delete(id);
+    if (this.hares.size > g.animals.size + 64) for (const id of this.hares.keys()) if (!g.animals.has(id)) this.hares.delete(id);
+  }
+
+  private nSit = 0;
+  private nLeap = 0;
+  /** A hare: crouched between hops and stretched out in the air, nibbling or sat up when still. */
+  private hare(a: Animal, dt: number, time: number) {
+    const g = this.game, w = g.world, V = lodView;
+    if (this.nSit >= MAX_HARES || this.nLeap >= MAX_HARES) return;
+    const y = w.heightAt(a.x, a.z);
+    // too small to make out, or out of view (its shadow is too small to matter)
+    if (V.cull(a.x, y + 0.08, a.z, 0.16) !== 2 || V.px(a.x, y, a.z) * 0.25 < 1.2) return;
+    let L = this.hares.get(a.id);
+    if (!L) {
+      L = { h: a.heading, pitch: 0, seed: hash2(a.id, 11, 3) * 100, size: (0.92 + hash2(a.id, 5, 9) * 0.16) * HARE_SCALE };
+      this.hares.set(a.id, L);
+    }
+    const moving = a.alive && !a.leave && a.next >= 0;
+    if (moving) L.h = wrapA(L.h + Math.max(-9 * dt, Math.min(9 * dt, wrapA(a.heading - L.h))));
+    // still: mostly nose down in the grass, now and then sat up on its haunches to look round
+    const up = Math.sin(time * 0.29 + L.seed * 1.3) + 0.7 * Math.sin(time * 0.71 + L.seed) > 1.1;
+    const pitch = moving ? 0 : up ? -0.42 : 0.2 + Math.sin(time * 5 + L.seed) * 0.03;
+    L.pitch += (pitch - L.pitch) * Math.min(1, dt * 6);
+    let s = L.size, lift = 0, sink = 0, leap = false;
+    if (moving) {
+      // one bound per step: up and over, stretched out in the middle of it
+      lift = Math.sin(Math.PI * a.t) * 0.075 * s;
+      leap = a.t > 0.18 && a.t < 0.82;
+    }
+    if (a.leave) {
+      // down into its burrow
+      const k = Math.min(1, (g.time - a.leave) / BURROW_TIME);
+      sink = k * 0.16;
+      s *= 1 - k * 0.5;
+    }
+    tmpQ.setFromEuler(tmpE.set(0, L.h, 0));
+    this.base.compose(tmpS.set(a.x, y + lift - sink, a.z), tmpQ, tmpV.set(s, s, s));
+    if (!a.alive) this.base.multiply(this.m.makeRotationZ(Math.PI / 2 * 0.95)).multiply(this.r.makeTranslation(0.04, 0, 0));
+    else if (moving) this.base.multiply(this.m.makeRotationX((a.t - 0.5) * 0.5));
+    else {
+      // tip about the hind feet
+      this.base.multiply(this.r.makeTranslation(0, 0, -0.02)).multiply(this.m.makeRotationX(L.pitch)).multiply(this.r.makeTranslation(0, 0, 0.02));
+    }
+    if (leap) this.hareLeap.setMatrixAt(this.nLeap++, this.base);
+    else this.hareSit.setMatrixAt(this.nSit++, this.base);
   }
 }
 

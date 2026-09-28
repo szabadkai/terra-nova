@@ -182,7 +182,7 @@ export interface Building {
 
 export interface Animal {
   id: number;
-  kind: 'deer';
+  kind: 'deer' | 'hare';
   node: number;
   next: number;
   t: number;
@@ -197,6 +197,10 @@ export interface Animal {
   deadT: number;
   wanderT: number;
   herd: number;
+  /** where it lives: it keeps within a few steps of here (see wildlife.ts) */
+  home: number;
+  /** game time it slipped away into its burrow, gone for good a moment later; 0 while it stays */
+  leave: number;
 }
 
 export type ShipState =

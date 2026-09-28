@@ -10,6 +10,7 @@
 // there too.
 import { BUILDINGS, GOODS, Good, emptyStock } from './defs';
 import { Game, type GameOptions, type PlayerState } from './game';
+import { populateWild } from './wildlife';
 import { AIController } from './ai';
 import type { Animal, Building, Field, Settler, Ship, Sign, Stone, Tree } from './types';
 import { plan } from './settlers';
@@ -186,7 +187,8 @@ export function restore(saved: SaveData): Game {
   for (const t of d.trees) g.trees.set(t.id, t);
   for (const s of d.stones) g.stones.set(s.id, s);
   for (const f of d.fields) g.fields.set(f.id, f);
-  for (const a of d.animals) g.animals.set(a.id, a);
+  // saves from before hares: every animal a deer, at home where it stands
+  for (const a of d.animals) g.animals.set(a.id, { ...a, kind: a.kind ?? 'deer', home: a.home ?? a.node, leave: a.leave ?? 0 });
   for (const sh of d.ships) g.ships.set(sh.id, { ...shipFields(sh.kind ?? 'trade'), ...sh, cargo: stockOf(sh.cargo) });
   for (const s of d.signs) g.signs.set(s.id, s);
   g.ai = d.ai.map((o) => {
@@ -200,6 +202,8 @@ export function restore(saved: SaveData): Game {
   // counters last: making the records above drew ids and random numbers
   Object.assign(g, d.scalars);
   g.rng.state = d.rng;
+  // a game saved before there were hares: the woods fill up with them as in a new game
+  if (!('wildT' in d.scalars)) populateWild(g, g.starts);
   settle(g);
   return g;
 }
@@ -276,7 +280,7 @@ function settle(g: Game) {
       if (work.type === 'shipyard' && (gd === 'board' || gd === 'iron')) { work.stock[gd]++; s.carrying = null; continue; }
     }
     if (s.job === 'carrier') { s.idle = false; storeCarried(g, s); continue; }
-    s.carrying = null;
+    s.carrying = s.pack = null;
   }
   reconcileLoads(g);
 }

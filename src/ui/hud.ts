@@ -33,6 +33,7 @@ import { stalled } from '../game/status';
 import { StallWatch, type Alert } from '../game/alerts';
 import { aName, causeLine, causeOf, causeSteps, rootCauses } from '../game/causes';
 import { FLOW_WINDOW, flowHistory, flowReport, trend } from '../game/flow';
+import { gameNear } from '../game/wildlife';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
 import { prefs, savePrefs } from './prefs';
@@ -1257,6 +1258,11 @@ export class HUD {
         body += `<div class="kv"><span>Produced</span><b>${b.prodCount}</b></div>`;
       }
       if (d.mine) body += `<div class="kv"><span>Deposit remaining</span><b>${g.mineOreLeft(b)}</b></div>`;
+      if (b.type === 'hunter') {
+        const n = gameNear(g, b.cx, b.cz, d.radius!, b.door);
+        const say = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+        body += `<div class="kv" title="Hares live in the woods, as many as the trees feed: they thin out where the woods are felled and come back where a forester plants new ones"><span>Game in range</span><b>${n.hares || n.deer ? `${say(n.hares, 'hare', 'hares')} · ${say(n.deer, 'deer', 'deer')}` : '<span class="bad">none</span>'}</b></div>`;
+      }
       if (d.residence) body += `<div class="kv"><span>Residents</span><b>${b.spawned}/${d.residence}</b></div>${pct(b.spawned / d.residence)}`;
       if (d.storage) {
         const cells = GOODS.filter((gd) => b.stock[gd] > 0).map((gd) => `<div class="gcell" title="${GOOD_NAMES[gd]}">${this.icon(gd)}<span>${b.stock[gd]}</span></div>`).join('');

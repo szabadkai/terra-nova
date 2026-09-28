@@ -7,6 +7,7 @@ import type { Building, Settler, Tree } from './types';
 import { DX8, DY8, WATER_LEVEL } from './world';
 import { shipwrightThink } from './sea';
 import { setStall, setStatus } from './status';
+import { huntable } from './wildlife';
 
 function outFull(b: Building) {
   let n = 0;
@@ -25,13 +26,15 @@ export function returnHome(g: Game, s: Settler, b: Building, deposit: boolean) {
       if (!alive(g, b) || b.owner !== s.owner) return false;
       enter(g, s, b);
       if (deposit && s.carrying) {
-        b.stock[s.carrying]++;
-        g.players[b.owner].produced[s.carrying]++;
-        b.prodCount++;
+        // a second of the same in his pack (a deer is two meat) goes on the pile too, if there is room
+        const k = s.pack === s.carrying && b.stock[s.carrying] < OUT_CAP - 1 ? 2 : 1;
+        b.stock[s.carrying] += k;
+        g.players[b.owner].produced[s.carrying] += k;
+        b.prodCount += k;
         b.lastProd = g.time;
         g.emit({ type: 'produced', b: b.id, good: s.carrying, x: b.cx, z: b.cz });
       }
-      s.carrying = null;
+      s.carrying = s.pack = null;
     }),
   ];
 }
@@ -262,10 +265,12 @@ function hunter(g: Game, s: Settler, b: Building) {
   const w = g.world;
   let best = null as import('./types').Animal | null, bd = Infinity;
   for (const a of g.animals.values()) {
-    if (!a.alive || a.reserved || w.region[a.node] !== w.region[b.door]) continue;
+    if (!huntable(a) || w.region[a.node] !== w.region[b.door]) continue;
     const d2 = (a.x - b.cx) ** 2 + (a.z - b.cz) ** 2;
     if (d2 > b.def.radius! ** 2) continue;
-    if (d2 < bd) { bd = d2; best = a; }
+    // the nearest, but a deer (two meat) is worth a longer walk
+    const score = a.kind === 'deer' ? d2 * 0.5 : d2;
+    if (score < bd) { bd = score; best = a; }
   }
   if (!best) { setStall(g, b, { kind: 'range', lack: 'game' }); plan(s, [A.wait(8)]); return; }
   const deer = best;
@@ -318,12 +323,13 @@ function hunter(g: Game, s: Settler, b: Building) {
     A.do(() => {
       g.animals.delete(deer.id);
       s.carrying = 'meat';
+      if (deer.kind === 'deer') s.pack = 'meat';
     }),
     ...returnHome(g, s, b, true),
     A.wait(3),
   ], () => {
     if (!shot) deer.reserved = false;
-    s.carrying = null;
+    s.carrying = s.pack = null;
   });
 }
 

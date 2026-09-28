@@ -50,7 +50,7 @@ const HINT_RANGE: Record<string, string> = {
   trees: 'Build a forester nearby, or a woodcutter by other woods',
   rocks: 'Build a stonecutter by other rocks, or a stone mine',
   fish: 'Build fishers by other waters',
-  game: 'Build a hunter by other woods, or a pig farm and a slaughterhouse',
+  game: 'Build a hunter by other woods, a forester to grow new ones, or a pig farm and a slaughterhouse',
   water: 'Build the waterworks by a lake or a river',
   space: 'Clear room around it, or build it elsewhere',
 };

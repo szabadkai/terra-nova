@@ -713,6 +713,119 @@ export function buildDeerGeos() {
   return { body, fawn, neck, head, stag, upper, lower };
 }
 
+// ------------------------------------------------------------------ hares
+/**
+ * A brown hare facing +z, the ground at y 0, in two poses drawn in turn as it goes: `sit`, crouched
+ * on its long hind feet with the rump high, the forelegs straight under the chest and the ears up,
+ * and `leap`, stretched out in mid-hop with the hind legs thrown back, the forelegs reaching forward
+ * and the ears laid along the back. The pivot for tilting it (grazing, sitting up) is the hind feet.
+ */
+export function buildHareGeos() {
+  const coat = lin(0x8d6c49), back = lin(0x6a5034), belly = lin(0xe2d6bf), cheek = lin(0xae9068);
+  const white = lin(0xf3f0ea), black = lin(0x1d1712), eyeC = lin(0x24160c), nose = lin(0x5a3e36);
+  const mix = (a: number[], b: number[], k: number): [number, number, number] => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const ramp = (e0: number, e1: number, v: number) => { const t = Math.max(0, Math.min(1, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+  const grain = (x: number, y: number, z: number) => 0.92 + hash2(Math.round(x * 160), Math.round(y * 160) + Math.round(z * 160) * 3, 23) * 0.16;
+  const shade = (c: [number, number, number], x: number, y: number, z: number): [number, number, number] => { const k = grain(x, y, z); return [c[0] * k, c[1] * k, c[2] * k]; };
+  const flat = (g: THREE.BufferGeometry, c: [number, number, number]) => colorize(g, (x, y, z) => shade(c, x, y, z));
+  const ell = (rx: number, ry: number, rz: number, w = 10, h = 7) => { const g = new THREE.SphereGeometry(1, w, h); g.scale(rx, ry, rz); return g; };
+
+  // the body turned along z, the rump fuller than the chest; coloured before it is tilted, so the
+  // pale belly and darker back follow the body
+  const key = [[0, -0.088], [0.034, -0.08], [0.052, -0.058], [0.057, -0.03], [0.054, 0.0], [0.047, 0.03], [0.038, 0.055], [0.022, 0.072], [0, 0.078]];
+  const prof = new THREE.SplineCurve(key.map(([r, a]) => new THREE.Vector2(r, a))).getPoints(12);
+  for (const v of prof) v.x = Math.max(0, v.x);
+  const torso = (stretch: number) => {
+    let g: THREE.BufferGeometry = new THREE.LatheGeometry(prof, 12);
+    g.rotateX(Math.PI / 2);
+    g.deleteAttribute('normal');
+    g.deleteAttribute('uv');
+    g = mergeVertices(g, 1e-5);
+    g.scale(0.9, 1, stretch);
+    g.computeVertexNormals();
+    return colorize(g, (x, y, z) => shade(mix(mix(coat, back, ramp(0.02, 0.05, y) * 0.7), belly, ramp(-0.012, -0.04, y)), x, y, z));
+  };
+  const head = (hx: number, hy: number, hz: number, tilt: number) => {
+    const parts: THREE.BufferGeometry[] = [];
+    const skull = colorize(ell(0.028, 0.029, 0.04, 12, 9), (x, y, z) => shade(mix(coat, cheek, ramp(0, -0.02, y) * 0.6 + ramp(0.01, 0.03, z) * 0.3), x, y, z));
+    const muzzle = ell(0.017, 0.015, 0.016, 8, 6);
+    muzzle.translate(0, -0.008, 0.03);
+    const tip = ell(0.0055, 0.0045, 0.004, 6, 4);
+    tip.translate(0, -0.002, 0.045);
+    parts.push(skull, colorize(muzzle, (x, y, z) => shade(mix(cheek, belly, ramp(-0.005, -0.02, y)), x, y, z)), flat(tip, nose));
+    for (const sd of [-1, 1]) {
+      const eye = ell(0.0075, 0.0085, 0.0075, 6, 5);
+      eye.translate(sd * 0.022, 0.008, 0.012);
+      parts.push(flat(eye, eyeC));
+    }
+    const g = merge(parts);
+    g.rotateX(tilt);
+    g.translate(hx, hy, hz);
+    return g;
+  };
+  /** long ears from the crown of the head: `lay` 0 upright, 1 laid back along the body */
+  const ears = (hx: number, hy: number, hz: number, lay: number) => {
+    const out: THREE.BufferGeometry[] = [];
+    for (const sd of [-1, 1]) {
+      const ear = ell(0.012, 0.066, 0.0045, 8, 6);
+      ear.translate(0, 0.062, 0);
+      // black tips, the fronts a little paler
+      colorize(ear, (x, y, z) => shade(mix(mix(coat, cheek, z > 0 ? 0.4 : 0), black, ramp(0.104, 0.116, y)), x, y, z));
+      ear.rotateX(-0.12 - lay * 1.25);
+      ear.rotateZ(-sd * (0.1 + lay * 0.1));
+      ear.translate(hx + sd * 0.011, hy + 0.018, hz - 0.008);
+      out.push(ear);
+    }
+    return out;
+  };
+  const tail = (tx: number, ty: number, tz: number) => {
+    const g = ell(0.016, 0.017, 0.012, 8, 6);
+    colorize(g, (x, y, z) => shade(y > 0.007 ? black : white, x, y, z));
+    g.translate(tx, ty, tz);
+    return g;
+  };
+  const leg = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number) => colorize(taperRod(a, b, r0, r1, 6), (x, y, z) => shade(mix(coat, belly, 0.08), x, y, z));
+  const foot = (x: number, y: number, z: number, len: number, pitch: number) => {
+    const g = ell(0.012, 0.009, len, 6, 5);
+    g.rotateX(pitch);
+    g.translate(x, y, z);
+    return colorize(g, (px, py, pz) => shade(mix(coat, belly, 0.2), px, py, pz));
+  };
+  /** the chest rising to the head, pale at the throat */
+  const chest = (x: number, y: number, z: number, rx: number) => {
+    const g = ell(0.03, 0.036, 0.03, 10, 7);
+    colorize(g, (px, py, pz) => shade(mix(coat, belly, ramp(0.005, 0.025, pz) * ramp(0.01, -0.02, py) * 0.8), px, py, pz));
+    g.rotateX(rx);
+    g.translate(x, y, z);
+    return g;
+  };
+  const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
+  // crouched: the body tilted rump up, the haunches bulging over long feet flat on the ground
+  const sitBody = torso(1);
+  sitBody.rotateX(0.32);
+  sitBody.translate(0, 0.062, -0.012);
+  const sit: THREE.BufferGeometry[] = [sitBody, chest(0, 0.078, 0.046, -0.5), head(0, 0.122, 0.074, 0.3), ...ears(0, 0.122, 0.074, 0), tail(0, 0.082, -0.094)];
+  for (const sd of [-1, 1]) {
+    const thigh = colorize(ell(0.022, 0.04, 0.048, 8, 6), (x, y, z) => shade(mix(coat, back, ramp(0.01, 0.04, y) * 0.5), x, y, z));
+    thigh.translate(sd * 0.036, 0.046, -0.04);
+    sit.push(thigh, foot(sd * 0.03, 0.008, -0.022, 0.05, 0));
+    sit.push(leg(V(sd * 0.017, 0.05, 0.042), V(sd * 0.018, 0.004, 0.055), 0.009, 0.007), foot(sd * 0.018, 0.004, 0.062, 0.012, 0));
+  }
+  // mid-hop: stretched out level, hind legs thrown back, forelegs reaching for the ground ahead
+  const leapBody = torso(1.16);
+  leapBody.rotateX(0.05);
+  leapBody.translate(0, 0.078, 0);
+  const leap: THREE.BufferGeometry[] = [leapBody, chest(0, 0.082, 0.07, -1.1), head(0, 0.104, 0.108, 0.12), ...ears(0, 0.104, 0.108, 1), tail(0, 0.092, -0.102)];
+  for (const sd of [-1, 1]) {
+    const thigh = colorize(ell(0.021, 0.036, 0.046, 8, 6), (x, y, z) => shade(mix(coat, back, ramp(0.01, 0.04, y) * 0.5), x, y, z));
+    thigh.translate(sd * 0.034, 0.07, -0.058);
+    leap.push(thigh, leg(V(sd * 0.03, 0.058, -0.08), V(sd * 0.03, 0.03, -0.13), 0.013, 0.008), foot(sd * 0.03, 0.026, -0.158, 0.034, -0.35));
+    leap.push(leg(V(sd * 0.018, 0.066, 0.06), V(sd * 0.019, 0.026, 0.118), 0.008, 0.006), foot(sd * 0.019, 0.024, 0.124, 0.011, 0.6));
+  }
+  return { sit: merge(sit), leap: merge(leap) };
+}
+
 // ------------------------------------------------------------------ pigs
 /** Where the head pivots on the body, and where the legs hang from it (x, z at PIG_HIP_Y). */
 export const PIG_NECK: [number, number, number] = [0, 0.2, 0.15];

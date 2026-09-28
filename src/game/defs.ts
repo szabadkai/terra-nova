@@ -112,7 +112,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   fisher: D({ type: 'fisher', name: "Fisher's Hut", size: 2, category: 'food', cost: { board: 2, stone: 0 },
     worker: 'fisher', outputs: ['fish'], radius: 9, desc: 'Catches fish in nearby waters.' }),
   hunter: D({ type: 'hunter', name: "Hunter's Hut", size: 2, category: 'food', cost: { board: 2, stone: 0 },
-    worker: 'hunter', outputs: ['meat'], radius: 16, desc: 'Hunts deer for meat.' }),
+    worker: 'hunter', outputs: ['meat'], radius: 16, desc: 'Hunts hares and deer in the woods nearby for meat. Game lives off the woods: it thins out as they are felled and comes back where a forester plants new ones.' }),
   farm: D({ type: 'farm', name: 'Grain Farm', size: 4, category: 'food', cost: { board: 4, stone: 2 },
     worker: 'farmer', outputs: ['grain'], radius: 5, desc: 'Sows and harvests fields of grain.' }),
   mill: D({ type: 'mill', name: 'Windmill', size: 3, category: 'food', cost: { board: 3, stone: 3 },
