@@ -560,40 +560,145 @@ export function buildGrassTuft(): THREE.BufferGeometry {
 }
 
 // ------------------------------------------------------------------ deer
+/** Joints of the deer, all at full size: the neck pivots at DEER_NECK on the body, the head at
+ * DEER_HEAD on the neck (neck space), the upper legs hang from DEER_HIPS (x, y, z) and the
+ * lower legs from DEER_KNEE below them. */
+export const DEER_NECK: [number, number, number] = [0, 0.47, 0.17];
+export const DEER_HEAD: [number, number, number] = [0, 0.235, 0.2];
+export const DEER_HIPS: [number, number, number][] = [[-0.052, 0.4, 0.15], [0.052, 0.4, 0.15], [-0.055, 0.395, -0.17], [0.055, 0.395, -0.17]];
+export const DEER_KNEE = 0.2;
+
+/** A small tapered rod from a to b (radius r0 at a, r1 at b). */
+function rod(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, seg = 6) {
+  const d = new THREE.Vector3().subVectors(b, a);
+  const g = new THREE.CylinderGeometry(r1, r0, d.length(), seg);
+  g.translate(0, d.length() / 2, 0);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()));
+  g.translate(a.x, a.y, a.z);
+  return g;
+}
+
+/**
+ * A red deer facing +z, the ground at y 0: `body` is the barrel with a deep chest, tucked belly,
+ * pale underside and the cream rump patch with its short tail, `fawn` the same with a fawn's
+ * white spots; `neck` rises forward from DEER_NECK; `head` (pivot DEER_HEAD) has the long muzzle,
+ * big ears and dark eyes, and `stag` adds branching antlers; `upper` and `lower` are the two
+ * halves of a slender leg, each hanging from its joint down to a dark hoof.
+ */
 export function buildDeerGeos() {
-  const body = new THREE.SphereGeometry(0.16, 10, 8);
-  body.scale(0.75, 0.7, 1.4);
-  body.translate(0, 0.4, 0);
-  const neck = new THREE.CylinderGeometry(0.045, 0.06, 0.22, 6);
-  neck.rotateX(-0.6);
-  neck.translate(0, 0.52, 0.2);
-  const head = new THREE.SphereGeometry(0.06, 8, 6);
-  head.scale(0.8, 0.8, 1.4);
-  head.translate(0, 0.62, 0.3);
-  const tail = new THREE.SphereGeometry(0.03, 6, 4);
-  tail.translate(0, 0.44, -0.23);
-  const antl: THREE.BufferGeometry[] = [];
+  const coat = lin(0x8c5634), back = lin(0x6a3f26), pale = lin(0xd9c6a2), cream = lin(0xeee2c8), dark = lin(0x1c1612);
+  const nose = lin(0x2a2220), antler = lin(0xc9b590), hoof = lin(0x2a221c);
+  const mix = (a: number[], b: number[], k: number): [number, number, number] => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const ramp = (e0: number, e1: number, v: number) => { const t = Math.max(0, Math.min(1, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+  const grain = (x: number, y: number, z: number) => 0.94 + hash2(Math.round(x * 80), Math.round(y * 80) + Math.round(z * 80) * 3, 11) * 0.12;
+  const shade = (c: [number, number, number], x: number, y: number, z: number): [number, number, number] => { const k = grain(x, y, z); return [c[0] * k, c[1] * k, c[2] * k]; };
+  const flat = (g: THREE.BufferGeometry, c: [number, number, number]) => colorize(g, (x, y, z) => shade(c, x, y, z));
+  const CY = 0.46;
+  const coatAt = (x: number, y: number, z: number, spots: boolean): [number, number, number] => {
+    let c = mix(coat, back, ramp(CY + 0.04, CY + 0.1, y));
+    c = mix(c, pale, ramp(CY - 0.04, CY - 0.09, y));
+    // the cream rump patch round the tail
+    c = mix(c, cream, 0.75 * ramp(-0.225, -0.25, z) * ramp(CY - 0.05, CY - 0.01, y) * ramp(0.06, 0.035, Math.abs(x)));
+    // a fawn's dapples: small pale dots in loose rows along the back and upper flanks
+    if (spots && y > CY + 0.01 && z > -0.19 && z < 0.17 && Math.abs(x) > 0.025) {
+      const u = Math.round(z * 32), v = Math.round((y + Math.abs(x)) * 26);
+      if (hash2(u, v, 5) > 0.8) c = mix(c, cream, 0.6);
+    }
+    return shade(c, x, y, z);
+  };
+
+  // the barrel, turned along z: narrow, a round haunch behind, the chest deeper than the belly
+  const key = [[0, -0.255], [0.055, -0.248], [0.088, -0.228], [0.106, -0.19], [0.11, -0.14], [0.098, -0.07], [0.094, -0.02],
+    [0.106, 0.05], [0.116, 0.11], [0.11, 0.17], [0.082, 0.222], [0, 0.245]];
+  const prof = new THREE.SplineCurve(key.map(([r, a]) => new THREE.Vector2(r, a))).getPoints(20);
+  for (const v of prof) v.x = Math.max(0, v.x);
+  const barrel = () => {
+    let g: THREE.BufferGeometry = new THREE.LatheGeometry(prof, 18);
+    g.rotateX(Math.PI / 2);
+    g.deleteAttribute('normal');
+    g.deleteAttribute('uv');
+    g = mergeVertices(g, 1e-5);
+    const p = g.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), z = p.getZ(i);
+      // the chest drops well below the tucked-up belly; the withers rise a little over the shoulders
+      const deep = 1 + 0.42 * ramp(-0.02, 0.13, z) - 0.12 * ramp(-0.16, -0.08, z) * ramp(0.06, -0.01, z);
+      const withers = 1 + 0.12 * ramp(0.02, 0.12, z) * ramp(0.24, 0.14, z);
+      p.setXYZ(i, p.getX(i) * 0.8, y > 0 ? y * 0.95 * withers : y * deep, z);
+    }
+    g.computeVertexNormals();
+    g.translate(0, CY, 0);
+    return g;
+  };
+  const tail = () => {
+    const g = new THREE.SphereGeometry(0.024, 8, 6);
+    g.scale(0.8, 1.6, 0.55);
+    g.rotateX(0.35);
+    g.translate(0, CY + 0.03, -0.258);
+    return colorize(g, (x, y, z) => shade(y > CY + 0.05 ? back : cream, x, y, z));
+  };
+  const body = merge([colorize(barrel(), (x, y, z) => coatAt(x, y, z, false)), tail()]);
+  const fawn = merge([colorize(barrel(), (x, y, z) => coatAt(x, y, z, true)), tail()]);
+
+  // the neck, in its own space from the pivot: rising forward, thick at the chest
+  const neckG = rod(new THREE.Vector3(0, -0.02, -0.02), new THREE.Vector3(DEER_HEAD[0], DEER_HEAD[1], DEER_HEAD[2]), 0.068, 0.042, 12);
+  // coat all round but a pale throat on its underside
+  const ax = new THREE.Vector3(...DEER_HEAD).normalize(), front = new THREE.Vector3(0, -ax.z, ax.y);
+  const neck = merge([colorize(neckG, (x, y, z) => {
+    const t = x * ax.x + y * ax.y + z * ax.z;
+    const ox = x - ax.x * t, oy = y - ax.y * t, oz = z - ax.z * t;
+    const f = (oy * front.y + oz * front.z) / Math.max(1e-5, Math.hypot(ox, oy, oz));
+    return shade(mix(mix(coat, back, ramp(-0.2, -0.8, f) * 0.6), pale, ramp(0.35, 0.8, f) * 0.75), x, y, z);
+  })]);
+
+  // the head, from the top of the neck: skull, a long muzzle angled down, a dark nose
+  const headParts = () => {
+    const skull = new THREE.SphereGeometry(0.058, 14, 10);
+    skull.scale(0.82, 0.86, 1.25);
+    skull.translate(0, 0.02, 0.035);
+    const muzzle = rod(new THREE.Vector3(0, 0.012, 0.06), new THREE.Vector3(0, -0.035, 0.155), 0.04, 0.026, 12);
+    const tip = new THREE.SphereGeometry(0.027, 10, 8);
+    tip.translate(0, -0.036, 0.155);
+    const parts = [flat(skull, coat), colorize(muzzle, (x, y, z) => shade(mix(coat, pale, 0.35), x, y, z)), flat(tip, nose)];
+    for (const s of [-1, 1]) {
+      const eye = new THREE.SphereGeometry(0.011, 8, 6);
+      eye.translate(s * 0.043, 0.033, 0.06);
+      // big leaf ears, set out to the sides and up
+      const ear = new THREE.SphereGeometry(0.036, 10, 6);
+      ear.scale(0.55, 1.35, 0.22);
+      ear.translate(0, 0.045, 0);
+      ear.rotateX(-0.25);
+      ear.rotateZ(-s * 1.05);
+      ear.translate(s * 0.035, 0.06, 0.0);
+      parts.push(flat(eye, dark), colorize(ear, (x, y, z) => shade(mix(back, pale, ramp(0.08, 0.13, Math.abs(x)) * 0.5), x, y, z)));
+    }
+    return parts;
+  };
+  const head = merge(headParts());
+  // antlers: a beam sweeping up and back with brow and bez tines forward and a fork at the top
+  const antlers: THREE.BufferGeometry[] = [];
   for (const s of [-1, 1]) {
-    const a = new THREE.CylinderGeometry(0.008, 0.01, 0.16, 4);
-    a.rotateZ(s * 0.4);
-    a.translate(s * 0.04, 0.72, 0.28);
-    antl.push(a);
-    const b = new THREE.CylinderGeometry(0.006, 0.008, 0.08, 4);
-    b.rotateZ(s * 1.1);
-    b.translate(s * 0.08, 0.76, 0.28);
-    antl.push(b);
+    const V = (x: number, y: number, z: number) => new THREE.Vector3(s * x, y, z);
+    const P = [V(0.028, 0.07, 0.02), V(0.07, 0.15, -0.005), V(0.1, 0.24, -0.03), V(0.105, 0.32, -0.06)];
+    for (let k = 0; k < 3; k++) antlers.push(rod(P[k], P[k + 1], 0.013 - k * 0.002, 0.011 - k * 0.002));
+    antlers.push(rod(V(0.045, 0.1, 0.01), V(0.06, 0.12, 0.1), 0.009, 0.004));
+    antlers.push(rod(P[2], V(0.12, 0.28, 0.05), 0.008, 0.004));
+    antlers.push(rod(P[3], V(0.08, 0.39, -0.05), 0.008, 0.003));
+    antlers.push(rod(P[3], V(0.15, 0.37, -0.08), 0.008, 0.003));
   }
-  const bodyG = merge([body, neck, head, tail, ...antl]);
-  colorize(bodyG, (x, y, z) => {
-    if (y > 0.66) return [0.75, 0.66, 0.5];
-    if (z < -0.2) return [0.95, 0.92, 0.85];
-    const under = y < 0.33 ? 0.85 : 1;
-    return [0.55 * under, 0.36 * under, 0.2 * under];
-  });
-  const leg = new THREE.BoxGeometry(0.035, 0.3, 0.035);
-  leg.translate(0, -0.15, 0);
-  colorize(leg, (_x, y) => (y < -0.26 ? [0.1, 0.08, 0.06] : [0.5, 0.34, 0.2]));
-  return { body: prep(bodyG), leg: prep(leg) };
+  const stag = merge([...headParts(), ...antlers.map((g) => colorize(g, (x, y, z) => shade(mix(back, antler, ramp(0.08, 0.2, y)), x, y, z)))]);
+
+  // a slender leg in two halves, each hanging from its joint
+  const upperG = new THREE.CylinderGeometry(0.042, 0.018, DEER_KNEE, 8);
+  upperG.translate(0, -DEER_KNEE / 2, 0);
+  const upper = merge([colorize(upperG, (x, y, z) => shade(mix(coat, back, ramp(-0.05, -0.18, y) * 0.35), x, y, z))]);
+  const lowerLen = 0.4 - DEER_KNEE;
+  const lowerG = new THREE.CylinderGeometry(0.015, 0.012, lowerLen, 6);
+  lowerG.translate(0, -lowerLen / 2, 0);
+  const hoofG = new THREE.CylinderGeometry(0.014, 0.017, 0.03, 6);
+  hoofG.translate(0, -lowerLen + 0.015, 0);
+  const lower = merge([colorize(lowerG, (x, y, z) => shade(mix(back, coat, 0.4), x, y, z)), flat(hoofG, hoof)]);
+  return { body, fawn, neck, head, stag, upper, lower };
 }
 
 // ------------------------------------------------------------------ pigs
