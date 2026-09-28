@@ -164,10 +164,7 @@ function setupGlobalInput() {
     if (state !== 'play' || !hud) return;
     if (k === 'F10') { e.preventDefault(); openGameMenu(); return; }
     if (k === 'Escape') {
-      if (gr.placing) hud.startPlacing(null);
-      else if (gr.casting) hud.startCasting(null);
-      else if (gr.expedition) hud.startExpedition(0);
-      else if (gr.prospecting) hud.startProspecting(false);
+      if (hud.cancelMode()) { /* left the targeting mode */ }
       else if (gr.selected) hud.select(null);
       else openGameMenu();
       return;
@@ -216,7 +213,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (e.pointerType === 'touch') return;
     // hover tooltip for buildings (throttled)
     const now = performance.now();
-    if (!hud || gr.placing || gr.casting || gr.expedition || gr.prospecting || e.buttons) { hud?.hideTip(); return; }
+    if (!hud || gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering || e.buttons) { hud?.hideTip(); return; }
     if (now - tipT < 90) { hud.moveTip(e.clientX, e.clientY); return; }
     tipT = now;
     const shipId = gr.pickShip(e.clientX, e.clientY);
@@ -247,11 +244,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (moved || e.button !== downBtn) return;
     if (e.button === 0) onClick(e);
     else if (e.button === 2) {
-      if (gr.placing) hud.startPlacing(null);
-      else if (gr.casting) hud.startCasting(null);
-      else if (gr.expedition) hud.startExpedition(0);
-      else if (gr.prospecting) hud.startProspecting(false);
-      else hud.select(null);
+      if (!hud.cancelMode()) hud.select(null);
     }
   };
   c.addEventListener('pointerup', up);
@@ -273,6 +266,11 @@ function onClick(e: PointerEvent) {
   if (gr.prospecting) {
     const p = gr.pickGround(e.clientX, e.clientY);
     if (p) hud.prospectAt(p.x, p.z, e.shiftKey);
+    return;
+  }
+  if (gr.pioneering) {
+    const p = gr.pickGround(e.clientX, e.clientY);
+    if (p) hud.pioneerAt(p.x, p.z, e.shiftKey);
     return;
   }
   if (gr.placing) {

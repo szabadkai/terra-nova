@@ -489,7 +489,7 @@ export function findToolSource(g: Game, owner: number, tool: Good, x: number, z:
 }
 
 /** Carrier walks to `src`, picks up a tool and becomes `job`; then optionally walks to `home`. */
-function equip(g: Game, s: Settler, src: Building, tool: Good, job: Job, home: Building | null) {
+export function equip(g: Game, s: Settler, src: Building, tool: Good, job: Job, home: Building | null) {
   claim(g, s);
   src.outgoing[tool]++;
   if (home) home.workerIncoming = s.id;

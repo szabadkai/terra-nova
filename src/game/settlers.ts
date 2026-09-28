@@ -4,6 +4,7 @@ import type { Action, Anim, Building, Settler } from './types';
 import { workerThink } from './work';
 import { soldierUpdate, isSoldier } from './military';
 import { builderThink, diggerThink } from './economy';
+import { pioneerThink } from './pioneers';
 
 const BASE_STEP = 0.52;
 
@@ -224,6 +225,7 @@ function think(g: Game, s: Settler, dt: number) {
   if (s.job === 'carrier') return idleWander(g, s, dt);
   if (s.job === 'builder') return builderThink(g, s, dt);
   if (s.job === 'digger') return diggerThink(g, s, dt);
+  if (s.job === 'pioneer') return pioneerThink(g, s, dt);
   // specialist worker
   if (s.home) {
     const b = g.buildings.get(s.home);
@@ -276,5 +278,6 @@ export function idleWander(g: Game, s: Settler, dt: number) {
 export function claim(g: Game, s: Settler) {
   if (s.actions.length) abortPlan(g, s);
   s.idle = false;
+  s.order = -1;
   if (s.inside) exit(g, s);
 }

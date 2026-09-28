@@ -30,7 +30,7 @@ export type Job =
   | 'woodcutter' | 'forester' | 'stonecutter' | 'sawyer'
   | 'fisher' | 'hunter' | 'farmer' | 'miller' | 'baker' | 'butcher' | 'pigfarmer' | 'waterman'
   | 'miner' | 'smelter' | 'toolsmith' | 'weaponsmith'
-  | 'vintner' | 'priest' | 'shipwright' | 'geologist'
+  | 'vintner' | 'priest' | 'shipwright' | 'geologist' | 'pioneer'
   | 'swordsman' | 'bowman';
 
 export const JOB_NAMES: Record<Job, string> = {
@@ -38,12 +38,12 @@ export const JOB_NAMES: Record<Job, string> = {
   stonecutter: 'Stonecutter', sawyer: 'Sawyer', fisher: 'Fisher', hunter: 'Hunter', farmer: 'Farmer',
   miller: 'Miller', baker: 'Baker', butcher: 'Butcher', pigfarmer: 'Pig Farmer', waterman: 'Water Carrier',
   miner: 'Miner', smelter: 'Smelter', toolsmith: 'Toolsmith', weaponsmith: 'Weaponsmith',
-  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', geologist: 'Geologist', swordsman: 'Swordsman', bowman: 'Bowman',
+  vintner: 'Vintner', priest: 'Priest', shipwright: 'Shipwright', geologist: 'Geologist', pioneer: 'Pioneer', swordsman: 'Swordsman', bowman: 'Bowman',
 };
 
 export const JOB_TOOL: Partial<Record<Job, Good>> = {
   builder: 'hammer', digger: 'shovel', woodcutter: 'axe', stonecutter: 'pickaxe', sawyer: 'saw',
-  fisher: 'rod', hunter: 'bow', farmer: 'scythe', miner: 'pickaxe', weaponsmith: 'hammer', shipwright: 'hammer',
+  fisher: 'rod', hunter: 'bow', farmer: 'scythe', miner: 'pickaxe', weaponsmith: 'hammer', shipwright: 'hammer', pioneer: 'shovel',
 };
 
 export type BuildingType =

@@ -5,6 +5,8 @@ import { attackableSoldiers, launchAttack } from './military';
 import { SPELLS, castSpell, faithStatus } from './faith';
 import { colonySite, startExpedition } from './sea';
 import { PROBE_RADIUS, geologistsAtWork, prospectError, sendGeologist } from './geology';
+import { pioneerError, pioneersAtWork, sendPioneer } from './pioneers';
+import { DX8, DY8 } from './world';
 import type { Building } from './types';
 
 interface Want { type: BuildingType; n: number; cond?: () => boolean; }
@@ -27,6 +29,7 @@ export class AIController {
   private castT = 8;
   private seaT = 60;
   private geoT = 30;
+  private pioneerT = 240;
   private unmannedSince = new Map<number, number>();
 
   update(dt: number) {
@@ -54,6 +57,11 @@ export class AIController {
     if (this.geoT <= 0) {
       this.geoT = [60, 40, 30][this.level] ?? 40;
       this.prospectStep();
+    }
+    this.pioneerT -= dt;
+    if (this.pioneerT <= 0) {
+      this.pioneerT = [120, 75, 50][this.level] ?? 75;
+      this.pioneerStep();
     }
     if (this.t > 0) return;
     this.t = this.interval;
@@ -282,6 +290,51 @@ export class AIController {
     }
     if (best < 0) return;
     sendGeologist(g, this.p, w.nx(best), w.ny(best));
+  }
+
+  /** Pioneers stake out free land beside the border where it holds what the realm is short of. */
+  private pioneerStep() {
+    const g = this.g, w = g.world;
+    if (this.level === 0 || pioneersAtWork(g, this.p) >= 2) return;
+    const pop = g.population(this.p);
+    const shovels = g.totalStock(this.p).shovel;
+    if (shovels < 1 || (shovels < 2 && pop.diggers < 3)) return; // diggers come first
+    if (pop.idle < 8) return;
+    const coal = this.oreInTerritory('coal'), iron = this.oreInTerritory('iron');
+    const wantRock = coal < 10 || iron < 10;
+    const wantStone = this.stonesInTerritory() < 4;
+    let trees = 0;
+    for (const t of g.trees.values()) if (w.owner[t.node] === this.p) trees++;
+    const wantTrees = trees < 30;
+    if (!wantRock && !wantStone && !wantTrees) return;
+    // free land touching the border
+    const front: number[] = [];
+    for (let i = 0; i < w.N; i++) {
+      if (w.owner[i] >= 0 || w.isWater(i)) continue;
+      const x = w.nx(i), y = w.ny(i);
+      if (x < 4 || y < 4 || x >= w.W - 4 || y >= w.H - 4) continue;
+      for (let d = 0; d < 4; d++) if (w.owner[w.idx(x + DX8[d], y + DY8[d])] === this.p) { front.push(i); break; }
+    }
+    if (!front.length) return;
+    let best = -1, bs = 8;
+    for (let k = 0; k < 40; k++) {
+      const i = front[g.rng.int(0, front.length)];
+      // step a little outwards from the border
+      let sc = 0, foreign = false;
+      w.forRadius(w.nx(i), w.ny(i), 10, (j, _x, _y, d2) => {
+        if (w.owner[j] >= 0 && w.owner[j] !== this.p) foreign = true;
+        if (d2 > 25 || w.owner[j] >= 0) return;
+        if (wantRock && w.isMountain(j) && !w.known(j, this.p)) sc += 1;
+        if (wantStone && w.stone[j]) sc += 3;
+        if (wantTrees && w.tree[j]) sc += 0.6;
+      });
+      if (foreign || sc <= bs) continue;
+      if (pioneerError(g, this.p, w.nx(i), w.ny(i))) continue;
+      bs = sc;
+      best = i;
+    }
+    if (best < 0) return;
+    for (let k = 0; k < Math.min(2, shovels); k++) if (sendPioneer(g, this.p, w.nx(best), w.ny(best))) break;
   }
 
   /** Interior towers keep a single guard; towers facing an enemy get a full garrison. */

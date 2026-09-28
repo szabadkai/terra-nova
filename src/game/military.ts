@@ -38,6 +38,15 @@ export function recomputeTerritory(g: Game) {
     if (!b.colony || b.occupied || b.state === 'burning') continue;
     w.forRadius(b.cx, b.cz, 5.5, (i) => { if (w.owner[i] < 0 && !w.isWater(i)) w.owner[i] = b.owner; });
   }
+  // land staked out by pioneers is kept where no stronghold claims it; a foreign one takes it for good
+  const claim = w.claim;
+  for (let i = 0; i < w.N; i++) {
+    const c = claim[i];
+    if (c < 0) continue;
+    const o = w.owner[i];
+    if (o < 0 && g.players[c]?.alive) w.owner[i] = c;
+    else if (o !== c) claim[i] = -1;
+  }
   w.ownerDirty = true;
   g.ownerVersion++;
   // buildings on foreign land burn down

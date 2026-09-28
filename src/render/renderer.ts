@@ -1,6 +1,6 @@
 // Main renderer: owns the three.js scene and all visual subsystems.
 import * as THREE from 'three';
-import { BUILDINGS, BuildingType } from '../game/defs';
+import { BUILDINGS, BuildingType, PLAYER_COLORS } from '../game/defs';
 import type { Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
 import { WATER_LEVEL } from '../game/world';
@@ -27,6 +27,7 @@ import { ShipsRenderer } from './ships';
 import { findDock } from '../game/sea';
 import { SignsRenderer } from './signs';
 import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
+import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -150,6 +151,8 @@ export class GameRenderer {
   /** Picking a mountain to send a geologist to. */
   prospecting = false;
   private prospectOk = true;
+  /** Picking free land beside the border to send a pioneer to. */
+  pioneering = false;
   private castCheckT = 0;
   private castOk = true;
   hoverNode = -1;
@@ -386,6 +389,7 @@ export class GameRenderer {
     const w = g.world;
     const U = this.terrain.uniforms;
     if (!this.placing && this.expedition) { this.updateExpedition(dt); return; }
+    if (!this.placing && this.pioneering) { if (this.ghost) this.ghost.visible = false; this.updatePioneering(dt); return; }
     if (!this.placing) {
       if (this.ghost) this.ghost.visible = false;
       this.markers.count = 0;
@@ -515,8 +519,39 @@ export class GameRenderer {
     if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
   }
 
+  /** Pioneer targeting: the circle they would claim, with markers on the free land inside it. */
+  private updatePioneering(dt: number) {
+    const g = this.game;
+    const w = g.world;
+    const U = this.terrain.uniforms;
+    const p = this.hoverPoint;
+    if (!p) { U.uRange.value.w = 0; this.markers.count = 0; return; }
+    (U.uRange.value as THREE.Vector4).set(p.x, 0, p.z, PIONEER_RADIUS);
+    this.markerT -= dt;
+    if (this.markerT > 0) return;
+    this.markerT = 0.15;
+    const ok = pioneerError(g, g.local, p.x, p.z) === null;
+    (U.uRangeCol.value as THREE.Color).setRGB(...(ok ? [1.0, 0.62, 0.25] : [1, 0.3, 0.2]) as [number, number, number]);
+    let n = 0;
+    const m = new THREE.Matrix4();
+    const col = new THREE.Color(1.0, 0.6, 0.2);
+    if (ok) {
+      w.forRadius(p.x, p.z, PIONEER_RADIUS, (i, x, y) => {
+        if ((x + y) & 1 || w.owner[i] >= 0 || w.isWater(i) || !w.explored[i]) return;
+        m.makeTranslation(x, w.h[i] + 0.04, y);
+        this.markers.setMatrixAt(n, m);
+        this.markers.setColorAt(n, col);
+        n++;
+      });
+    }
+    this.markers.count = n;
+    this.markers.instanceMatrix.needsUpdate = true;
+    if (this.markers.instanceColor) this.markers.instanceColor.needsUpdate = true;
+  }
+
   private updateCasting(dt: number) {
     const U = this.terrain.uniforms;
+    if (this.pioneering && !this.placing) return;
     if (this.prospecting && this.hoverPoint && !this.placing && !this.casting) {
       const p = this.hoverPoint;
       this.castCheckT -= dt;
@@ -574,6 +609,13 @@ export class GameRenderer {
         }
         case 'stonehit': P.sparks(x, y + 0.3, z, 4); P.dust(x, y + 0.2, z, 3, [0.62, 0.6, 0.58]); snd('pick'); break;
         case 'dig': P.dust(x, y, z, 5); snd('dig', 0.6); break;
+        case 'staked': {
+          const c = new THREE.Color(PLAYER_COLORS[e.owner ?? 0]);
+          P.dust(x, y, z, 8, [0.5, 0.4, 0.3]);
+          P.sparkle(x, y + 0.5, z, 12, [c.r * 1.8, c.g * 1.8, c.b * 1.8]);
+          snd('hammer', 0.5);
+          break;
+        }
         case 'dirt': P.dust(x, y, z, 4); break;
         case 'hammer': snd('hammer', 0.7); P.dust(x, y + 0.3, z, 1, [0.6, 0.55, 0.45]); break;
         case 'buildstep': P.dust(x, y + 0.3, z, 6, [0.62, 0.55, 0.45]); break;

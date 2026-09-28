@@ -13,6 +13,7 @@ import { cancelExpedition, cargoCount, colonySite, harbourTraffic, scoutSeas, st
 import type { Ship } from '../game/types';
 import { MAX_SHIPS } from '../game/defs';
 import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
+import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
@@ -213,6 +214,18 @@ export class HUD {
       card.onclick = () => this.startProspecting(!this.gr.prospecting);
       grid.appendChild(card);
     }
+    if (this.cat === 'military') {
+      // not a building either: pioneers stake out free land beside the border
+      const busy = pioneersAtWork(this.game, this.game.local);
+      const card = h('button', 'bcard geo' + (this.gr.pioneering ? ' on' : ''));
+      card.innerHTML = `<div class="geoicon">⚑</div>
+        <div class="bname">Pioneer</div>
+        <div class="bcost">${busy ? `${busy} at work` : 'Claim land'}</div>`;
+      card.onmouseenter = (e) => this.showTip(e as MouseEvent, `<b>Send a pioneer</b><br>Click free land just beyond your border. He digs in at the edge nearest the spot and stakes out the land around it, patch by patch — no tower or soldier needed. Staked land can be built on, but a foreign stronghold's borders take it for good.<br><span class="muted">A free carrier takes a shovel and becomes a pioneer; send several to work faster.</span>`);
+      card.onmouseleave = () => this.hideTip();
+      card.onclick = () => this.startPioneering(!this.gr.pioneering);
+      grid.appendChild(card);
+    }
     c.appendChild(grid);
     c.appendChild(h('p', 'note', 'Pick a building, then click a green marker on your land. <b>Shift</b>+click to place several. Right-click or <b>Esc</b> cancels.'));
   }
@@ -228,7 +241,7 @@ export class HUD {
   }
 
   startPlacing(t: BuildingType | null) {
-    if (t) { this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; }
+    if (t) { this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; this.gr.pioneering = false; }
     this.gr.placing = t;
     if (t && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
@@ -337,7 +350,7 @@ export class HUD {
 
   startCasting(id: SpellId | null) {
     this.gr.casting = id;
-    if (id) { this.gr.placing = null; this.gr.expedition = 0; this.gr.prospecting = false; }
+    if (id) { this.gr.placing = null; this.gr.expedition = 0; this.gr.prospecting = false; this.gr.pioneering = false; }
     if (id && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (id) {
@@ -423,13 +436,13 @@ export class HUD {
   /** Geologist targeting: click a mountain inside the borders. */
   startProspecting(on: boolean) {
     this.gr.prospecting = on;
-    if (on) { this.gr.placing = null; this.gr.casting = null; this.gr.expedition = 0; }
+    if (on) { this.gr.placing = null; this.gr.casting = null; this.gr.expedition = 0; this.gr.pioneering = false; }
     if (on && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (on) {
       this.hint.innerHTML = `Send a <b>geologist</b> — click a mountain inside your borders · <b>Shift</b> sends several · <b>Esc</b>/right-click cancels`;
       this.hint.classList.remove('hidden');
-    } else if (!this.gr.placing && !this.gr.casting && !this.gr.expedition) this.hint.classList.add('hidden');
+    } else if (!this.gr.placing && !this.gr.casting && !this.gr.expedition && !this.gr.pioneering) this.hint.classList.add('hidden');
     if (this.tab === 'build') this.renderTab();
   }
 
@@ -443,12 +456,47 @@ export class HUD {
     else if (this.tab === 'build') this.renderTab();
   }
 
+  /** Pioneer targeting: click free land beside the border. */
+  startPioneering(on: boolean) {
+    this.gr.pioneering = on;
+    if (on) { this.gr.placing = null; this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; }
+    if (on && window.innerWidth <= 700) this.left.classList.remove('open');
+    this.audio.play('ui');
+    if (on) {
+      this.hint.innerHTML = `Send a <b>pioneer</b> — click free land just beyond your border · <b>Shift</b> sends several · <b>Esc</b>/right-click cancels`;
+      this.hint.classList.remove('hidden');
+    } else if (!this.gr.placing && !this.gr.casting && !this.gr.expedition && !this.gr.prospecting) this.hint.classList.add('hidden');
+    if (this.tab === 'build') this.renderTab();
+  }
+
+  pioneerAt(x: number, z: number, keep: boolean) {
+    const g = this.game;
+    const err = sendPioneer(g, g.local, x, z);
+    if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+    this.message('A pioneer sets out to stake out the land', x, z, 'good');
+    this.audio.play('place');
+    if (!keep) this.startPioneering(false);
+    else if (this.tab === 'build') this.renderTab();
+  }
+
+  /** Leave whichever targeting mode is on. Returns false when none was. */
+  cancelMode(): boolean {
+    if (this.gr.placing) this.startPlacing(null);
+    else if (this.gr.casting) this.startCasting(null);
+    else if (this.gr.expedition) this.startExpedition(0);
+    else if (this.gr.prospecting) this.startProspecting(false);
+    else if (this.gr.pioneering) this.startPioneering(false);
+    else return false;
+    return true;
+  }
+
   /** Expedition targeting: pick a free coast for a colony founded from harbour `from`. */
   startExpedition(from: number) {
     this.gr.expedition = from;
     this.gr.placing = null;
     this.gr.casting = null;
     this.gr.prospecting = false;
+    this.gr.pioneering = false;
     if (window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (from) {
@@ -664,13 +712,16 @@ export class HUD {
     } else {
       body += `<div class="kv"><span>Doing</span><b>${s.task || (s.idle ? 'Idle' : s.anim === 'walk' ? 'Walking' : 'Working')}</b></div>`;
     }
-    const key = `s${s.id}|${body}`;
+    const recall = s.job === 'pioneer' && s.order >= 0 && s.owner === g.local;
+    const key = `s${s.id}|${body}|${recall}`;
     if (key === this.lastInfoKey) return;
     this.lastInfoKey = key;
     this.info.innerHTML = `
-      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[s.owner])}">${soldier ? '⚔' : '☺'}</div><div><h2>${JOB_NAMES[s.job]}</h2><div class="owner">${g.players[s.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
-      <div class="ibody">${body}</div>`;
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[s.owner])}">${soldier ? '⚔' : s.job === 'pioneer' ? '⚑' : '☺'}</div><div><h2>${JOB_NAMES[s.job]}</h2><div class="owner">${g.players[s.owner].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ibody">${body}</div>${recall ? '<div class="ibtns"><button data-act="recall">↩ Call back</button></div>' : ''}`;
     this.info.querySelector<HTMLElement>('[data-act=close]')!.onclick = () => this.select(null);
+    const rb = this.info.querySelector<HTMLElement>('[data-act=recall]');
+    if (rb) rb.onclick = () => { this.audio.play('ui'); recallPioneer(g, s); this.lastInfoKey = ''; this.refreshInfo(); };
   }
 
   // ------------------------------------------------------------ messages / tooltip

@@ -92,6 +92,9 @@ export interface Settler {
   voyage: number; // destination harbour id (or -expedition id) while travelling by sea, 0 otherwise
   voyageFrom: number; // harbour the settler waits at for a ship
   aboard: number; // ship id while on board, 0 otherwise
+  // standing orders (pioneers)
+  order: number; // node the settler was sent to work around, -1 none
+  fails: number; // consecutive failed attempts at the current order
 }
 
 export type BState = 'leveling' | 'building' | 'done' | 'burning';
