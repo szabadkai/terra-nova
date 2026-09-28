@@ -48,6 +48,10 @@ export class Sky {
   private skyMat: THREE.ShaderMaterial;
   private pmrem: THREE.PMREMGenerator;
   private envRT: THREE.WebGLRenderTarget | null = null;
+  // the sky is drawn into a cube once per refresh and filtered into the same environment texture,
+  // so no target is reallocated and no material has to re-check its program for a new texture
+  private cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+  private cubeCam = new THREE.CubeCamera(0.1, 100, this.cubeRT);
   private envT = 0;
   private lastEnvTod = -1;
   weather = 0; // 0 clear .. 1 overcast/rain
@@ -239,11 +243,10 @@ export class Sky {
       (u.uGround.value as THREE.Color).setRGB(ground[0] * 0.8, ground[1] * 0.8, ground[2] * 0.8);
       (u.uSunDir.value as THREE.Vector3).copy(sunVec);
       (u.uSunCol.value as THREE.Color).setRGB(sunC[0], sunC[1], sunC[2]).multiplyScalar(isNight ? 0 : horizonDip);
-      const old = this.envRT;
-      this.envRT = this.pmrem.fromScene(this.skyScene, 0, 0.1, 100);
+      this.cubeCam.update(this.renderer, this.skyScene);
+      this.envRT = this.envRT ? this.pmrem.fromCubemap(this.cubeRT.texture, this.envRT) : this.pmrem.fromCubemap(this.cubeRT.texture);
       this.scene.environment = this.envRT.texture;
       this.scene.environmentIntensity = 0.55 * (isNight ? 0.6 : 1);
-      if (old) old.dispose();
     }
   }
 }

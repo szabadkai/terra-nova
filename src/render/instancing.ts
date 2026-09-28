@@ -22,3 +22,15 @@ export function commitInstances(mesh: THREE.InstancedMesh, n: number, ...extra: 
   uploadFirst(mesh.instanceColor, n);
   for (const a of extra) uploadFirst(a, n);
 }
+
+/**
+ * Give a mesh its per-instance colours from the start. three adds them on the first setColorAt,
+ * which changes the shader: the program would compile then, in the middle of play.
+ */
+export function withInstanceColor<T extends THREE.InstancedMesh>(mesh: T): T {
+  if (!mesh.instanceColor) {
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(mesh.instanceMatrix.count * 3).fill(1), 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  }
+  return mesh;
+}

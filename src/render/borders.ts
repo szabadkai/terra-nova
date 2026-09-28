@@ -6,7 +6,7 @@ import type { Game } from '../game/game';
 import { hash2 } from '../core/rng';
 import { BANNER_COLORS } from './materials';
 import { patchMaterial } from './shaderPatch';
-import { uploadFirst } from './instancing';
+import { uploadFirst, withInstanceColor } from './instancing';
 
 export class BordersRenderer {
   posts: THREE.InstancedMesh;
@@ -33,7 +33,7 @@ export class BordersRenderer {
       key: 'bordercap',
       fragEmissive: 'totalEmissiveRadiance = diffuseColor.rgb * (0.15 + uNight * 1.6);',
     });
-    this.caps = new THREE.InstancedMesh(cap, capMat, 6000);
+    this.caps = withInstanceColor(new THREE.InstancedMesh(cap, capMat, 6000));
     this.caps.castShadow = false;
     this.caps.frustumCulled = false;
     this.caps.count = 0;

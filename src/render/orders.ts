@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { Game } from '../game/game';
 import type { GameEvent, Settler } from '../game/types';
 import { commandable } from '../game/orders';
-import { commitInstances } from './instancing';
+import { commitInstances, withInstanceColor } from './instancing';
 
 const MAX_RINGS = 256;
 const PULSE_COLORS: Record<string, number> = { move: 0xffd36a, attack: 0xff5a40, garrison: 0x7ac8ff };
@@ -27,7 +27,7 @@ export class OrdersFX {
     ring.rotateX(-Math.PI / 2);
     // drawn over trees and roofs, so the chosen men can always be told apart
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false, depthTest: false, toneMapped: false });
-    this.rings = new THREE.InstancedMesh(ring, mat, MAX_RINGS);
+    this.rings = withInstanceColor(new THREE.InstancedMesh(ring, mat, MAX_RINGS));
     this.rings.count = 0;
     this.rings.frustumCulled = false;
     this.rings.renderOrder = 20;

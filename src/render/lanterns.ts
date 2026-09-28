@@ -7,7 +7,7 @@ import type { Game } from '../game/game';
 import type { Building } from '../game/types';
 import type { BuildingsRenderer } from './buildings';
 import { patchMaterial } from './shaderPatch';
-import { commitInstances } from './instancing';
+import { commitInstances, withInstanceColor } from './instancing';
 
 const MAX = 600;
 /** height of the lantern glass above the ground, and how far it hangs out from the post */
@@ -93,7 +93,7 @@ export class LanternsRenderer {
     });
     const gg = new THREE.BoxGeometry(0.058, 0.086, 0.058);
     gg.translate(ARM, GLASS_Y, 0);
-    this.glass = new THREE.InstancedMesh(gg, gm, MAX);
+    this.glass = withInstanceColor(new THREE.InstancedMesh(gg, gm, MAX));
     for (const m of [this.frames, this.glass]) {
       m.frustumCulled = false;
       m.count = 0;

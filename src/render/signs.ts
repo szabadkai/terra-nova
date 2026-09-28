@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type { Game } from '../game/game';
 import { signLife } from '../game/geology';
 import { patchMaterial } from './shaderPatch';
-import { commitInstances } from './instancing';
+import { commitInstances, withInstanceColor } from './instancing';
 
 const ORE_COL = [0xf2eee6, 0x1e1e22, 0xa0522d, 0xf0c040, 0x9a968e];
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3(), tmpS = new THREE.Vector3(), tmpC = new THREE.Color();
@@ -63,11 +63,11 @@ export class SignsRenderer {
     flag.computeVertexNormals();
     this.posts = inst(post, mat({ color: 0x7a5a38, roughness: 0.9 }, 'signpost'), 400);
     this.boards = inst(board, mat({ color: 0xd2b88c, roughness: 0.85 }, 'signboard'), 400);
-    this.flags = inst(flag, mat({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide }, 'signflag'), 400);
+    this.flags = withInstanceColor(inst(flag, mat({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide }, 'signflag'), 400));
     const pole = new THREE.CylinderGeometry(0.008, 0.008, 0.2, 4);
     pole.translate(0, 0.78, 0);
     this.posts.geometry = mergePost(post, pole);
-    this.lumps = inst(lump, mat({ color: 0xffffff, roughness: 0.55 }, 'signlump'), 1200);
+    this.lumps = withInstanceColor(inst(lump, mat({ color: 0xffffff, roughness: 0.55 }, 'signlump'), 1200));
     this.gold = inst(lump, mat({ color: 0xf0c040, roughness: 0.25, metalness: 1, emissive: new THREE.Color(0.35, 0.22, 0.02) }, 'signgold'), 1200);
     this.crosses = inst(cross, mat({ color: 0x8a1c14, roughness: 0.7 }, 'signx'), 800);
     this.group.add(this.posts, this.boards, this.lumps, this.gold, this.crosses, this.flags);

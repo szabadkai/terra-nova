@@ -20,7 +20,7 @@ import { Seasons } from './seasons';
 import { PostFX } from './postfx';
 import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
-import { setWindowGlow } from './materials';
+import { getClipMaterial, getMaterial, setWindowGlow } from './materials';
 import { PlanarReflection } from './reflection';
 import { BordersRenderer } from './borders';
 import { SpellFX } from './spells';
@@ -34,7 +34,7 @@ import { OrdersFX } from './orders';
 import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
-import { commitInstances } from './instancing';
+import { commitInstances, withInstanceColor } from './instancing';
 import { lodView } from './lod';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
@@ -273,7 +273,7 @@ export class GameRenderer {
     this.ghostMat = new THREE.MeshStandardMaterial({ color: 0x66ff88, transparent: true, opacity: 0.55, emissive: new THREE.Color(0x114422), roughness: 0.6, depthWrite: false });
     const mg = new THREE.CylinderGeometry(0.13, 0.17, 0.05, 8);
     const mm = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, toneMapped: true });
-    this.markers = new THREE.InstancedMesh(mg, mm, 4000);
+    this.markers = withInstanceColor(new THREE.InstancedMesh(mg, mm, 4000));
     this.markers.count = 0;
     this.markers.frustumCulled = false;
     this.scene.add(this.markers);
@@ -304,6 +304,44 @@ export class GameRenderer {
   }
 
   private onResize = () => this.resize();
+
+  /**
+   * Compile every shader the world can need while the loading screen is up: each kind of building
+   * for every player (and as a construction site), and everything that is hidden for now. Otherwise
+   * the first building of a new kind stalls the game for a tenth of a second or more while its
+   * shaders compile. Gives up waiting after `maxMs` (the programs keep compiling in the background).
+   */
+  async warmUp(maxMs = 5000) {
+    const extra = new THREE.Group();
+    const t = this.cam.target;
+    extra.position.set(t.x, t.y, t.z);
+    const clip = new Map<string, THREE.Material>();
+    for (const type of Object.keys(BUILDINGS) as BuildingType[]) {
+      for (const p of this.game.players) {
+        const mb = buildingBuilder(type, p.id);
+        extra.add(mb.build((k) => getMaterial(k)));
+        extra.add(mb.build((k) => { let m = clip.get(k); if (!m) { m = getClipMaterial(k); clip.set(k, m); } return m; }));
+      }
+    }
+    this.scene.add(extra);
+    this.demolition.makePools();
+    const hidden: THREE.Object3D[] = [];
+    this.scene.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    try {
+      // compiled for the target the world really renders into (linear, not tone mapped)
+      const rt = this.renderer.getRenderTarget();
+      this.renderer.setRenderTarget(this.fx.sceneRT);
+      const ready = this.renderer.compileAsync(this.scene, this.cam.camera);
+      this.renderer.setRenderTarget(rt);
+      await Promise.race([ready, new Promise((r) => setTimeout(r, maxMs))]);
+      // one frame with it all in view compiles the shadow-map variants too
+      this.frame(0, 0);
+    } finally {
+      for (const o of hidden) o.visible = false;
+      this.scene.remove(extra);
+      for (const m of clip.values()) m.dispose();
+    }
+  }
 
   /** Release GPU resources and listeners so a new world can be created on a fresh canvas. */
   dispose() {

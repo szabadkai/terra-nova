@@ -194,6 +194,7 @@ async function buildWorld(from?: SaveData) {
   if (!iconsReady) { generateIcons(game.local); iconsReady = true; }
   (window as any).game = game;
   (window as any).gr = gr;
+  await gr.warmUp();
   loading.remove();
 }
 

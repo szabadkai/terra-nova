@@ -10,7 +10,7 @@ import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
 import { LOD_PIXELS, LodPair, lodView, simplify } from './lod';
-import { commitInstances, uploadFirst } from './instancing';
+import { commitInstances, uploadFirst, withInstanceColor } from './instancing';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
@@ -458,7 +458,7 @@ export class FieldsRenderer {
   private version = -1;
   constructor(private game: Game) {
     const mat = vcMat({ roughness: 0.9 }, 'grass', 0.25, { snow: 0.6, key: 'wheat' });
-    this.mesh = inst(buildWheatGeo(), mat, 1500, true);
+    this.mesh = withInstanceColor(inst(buildWheatGeo(), mat, 1500, true));
   }
   update() {
     const g = this.game;
@@ -491,8 +491,8 @@ export class VinesRenderer {
   private version = -1;
   constructor(private game: Game) {
     const geos = buildVineGeos();
-    this.plants = inst(geos.plant, vcMat({ roughness: 0.85 }, 'grass', 0.12, { snow: 0.5, key: 'vine' }), 1200, true);
-    this.grapes = inst(geos.grapes, vcMat({ roughness: 0.35 }, 'grass', 0.1, { key: 'grape' }), 1200, true);
+    this.plants = withInstanceColor(inst(geos.plant, vcMat({ roughness: 0.85 }, 'grass', 0.12, { snow: 0.5, key: 'vine' }), 1200, true));
+    this.grapes = withInstanceColor(inst(geos.grapes, vcMat({ roughness: 0.35 }, 'grass', 0.1, { key: 'grape' }), 1200, true));
     this.group.add(this.plants, this.grapes);
   }
   update() {
@@ -526,12 +526,23 @@ export class VinesRenderer {
 }
 
 // ------------------------------------------------------------------ grass tufts
+/** Grass is kept in square patches of this many nodes: the view culls the ones it cannot see. */
+const GRASS_CHUNK = 32;
+
 export class GrassRenderer {
-  mesh: THREE.InstancedMesh;
-  private t = 0;
+  /** one instanced mesh per patch of land */
+  mesh = new THREE.Group();
   enabled = true;
+  private t = 6;
+  private geo: THREE.BufferGeometry;
+  private mat: THREE.Material;
+  private cols: number;
+  private chunks: { mesh: THREE.InstancedMesh | null; sig: number }[] = [];
+  /** patches whose ground changed and wait for their tufts */
+  private queue: number[] = [];
+
   constructor(private game: Game) {
-    const mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, {
+    this.mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, {
       key: 'tuft', snow: 1,
       // same seasonal grass tint as the terrain underneath
       fragRough: `{
@@ -542,50 +553,91 @@ export class GrassRenderer {
         diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 1.12, 0.8), uSeasonA.z * 0.7);
       }`,
     });
-    this.mesh = inst(buildGrassTuft(), mat, 60000, false);
-    this.rebuild();
+    this.geo = buildGrassTuft();
+    const w = game.world;
+    this.cols = Math.ceil(w.W / GRASS_CHUNK);
+    const rows = Math.ceil(w.H / GRASS_CHUNK);
+    for (let c = 0; c < this.cols * rows; c++) this.chunks.push({ mesh: null, sig: NaN });
+    this.scan();
+    while (this.queue.length) this.build(this.queue.pop()!);
   }
-  rebuild() {
-    const g = this.game;
-    const w = g.world;
-    let n = 0;
-    const cap = 60000;
-    const colors: Record<number, number[]> = { [T_GRASS]: [0.07, 0.19, 0.03], [T_MEADOW]: [0.1, 0.23, 0.04], [T_FOREST]: [0.06, 0.14, 0.03] };
-    for (let i = 0; i < w.N && n < cap; i++) {
-      const t = w.terrain[i];
-      const col = colors[t];
-      if (!col) continue;
-      if (w.building[i] || w.reserve[i] || w.field[i] || w.stone[i] || w.wear[i] > 0.25) continue;
-      if (w.h[i] < WATER_LEVEL + 0.25) continue;
-      if (w.slopeAt(i) > 0.6) continue;
-      const x0 = w.nx(i), z0 = w.ny(i);
-      const per = t === T_MEADOW ? 4 : t === T_FOREST ? 2 : 3;
-      for (let k = 0; k < per && n < cap; k++) {
-        if (hash2(i, k, 91) < 0.25) continue;
-        const x = x0 + (hash2(i, k, 1) - 0.5), z = z0 + (hash2(i, k, 2) - 0.5);
-        const y = w.heightAt(x, z) - 0.01;
-        const s = 0.55 + hash2(i, k, 3) * 0.6;
-        tmpQ.setFromAxisAngle(UP, hash2(i, k, 4) * 6.28);
-        tmpM.compose(tmpS.set(x, y, z), tmpQ, tmpV.set(s, s * (1 - w.wear[i] * 2), s));
-        this.mesh.setMatrixAt(n, tmpM);
-        const v = 0.8 + hash2(i, k, 5) * 0.4;
-        tmpC.setRGB(col[0] * v, col[1] * v, col[2] * v * 0.9);
-        this.mesh.setColorAt(n, tmpC);
-        n++;
+
+  /** What the tufts of a patch depend on, hashed: ground type, what stands there, wear and height. */
+  private signature(c: number): number {
+    const w = this.game.world;
+    const x0 = (c % this.cols) * GRASS_CHUNK, y0 = Math.floor(c / this.cols) * GRASS_CHUNK;
+    let h = 0x811c9dc5 | 0;
+    for (let y = y0; y < Math.min(w.H, y0 + GRASS_CHUNK); y++)
+      for (let x = x0; x < Math.min(w.W, x0 + GRASS_CHUNK); x++) {
+        const i = y * w.W + x;
+        const taken = w.building[i] || w.reserve[i] || w.field[i] || w.stone[i] ? 1 : 0;
+        const code = w.terrain[i] | (taken << 4) | (Math.min(15, Math.floor(w.wear[i] * 16)) << 5) | ((Math.round(w.h[i] * 32) & 0xffff) << 9);
+        h = Math.imul(h ^ code, 16777619);
       }
-    }
-    // (visibility belongs to the grass setting)
-    this.mesh.count = n;
-    uploadFirst(this.mesh.instanceMatrix, n);
-    uploadFirst(this.mesh.instanceColor, n);
+    return h;
   }
+
+  private scan() {
+    for (let c = 0; c < this.chunks.length; c++) {
+      const s = this.signature(c);
+      if (s === this.chunks[c].sig) continue;
+      this.chunks[c].sig = s;
+      if (!this.queue.includes(c)) this.queue.push(c);
+    }
+  }
+
+  private build(c: number) {
+    const w = this.game.world;
+    const x0 = (c % this.cols) * GRASS_CHUNK, y0 = Math.floor(c / this.cols) * GRASS_CHUNK;
+    const colors: Record<number, number[]> = { [T_GRASS]: [0.07, 0.19, 0.03], [T_MEADOW]: [0.1, 0.23, 0.04], [T_FOREST]: [0.06, 0.14, 0.03] };
+    const ch = this.chunks[c];
+    // at most four tufts a node
+    const cap = GRASS_CHUNK * GRASS_CHUNK * 4;
+    if (!ch.mesh) {
+      ch.mesh = withInstanceColor(inst(this.geo, this.mat, cap, false));
+      ch.mesh.frustumCulled = true;
+      this.mesh.add(ch.mesh);
+    }
+    const m = ch.mesh;
+    let n = 0;
+    for (let y = y0; y < Math.min(w.H, y0 + GRASS_CHUNK); y++)
+      for (let x = x0; x < Math.min(w.W, x0 + GRASS_CHUNK); x++) {
+        const i = y * w.W + x;
+        const t = w.terrain[i];
+        const col = colors[t];
+        if (!col) continue;
+        if (w.building[i] || w.reserve[i] || w.field[i] || w.stone[i] || w.wear[i] > 0.25) continue;
+        if (w.h[i] < WATER_LEVEL + 0.25) continue;
+        if (w.slopeAt(i) > 0.6) continue;
+        const per = t === T_MEADOW ? 4 : t === T_FOREST ? 2 : 3;
+        for (let k = 0; k < per; k++) {
+          if (hash2(i, k, 91) < 0.25) continue;
+          const px = x + (hash2(i, k, 1) - 0.5), pz = y + (hash2(i, k, 2) - 0.5);
+          const py = w.heightAt(px, pz) - 0.01;
+          const s = 0.55 + hash2(i, k, 3) * 0.6;
+          tmpQ.setFromAxisAngle(UP, hash2(i, k, 4) * 6.28);
+          tmpM.compose(tmpS.set(px, py, pz), tmpQ, tmpV.set(s, s * (1 - w.wear[i] * 2), s));
+          m.setMatrixAt(n, tmpM);
+          const v = 0.8 + hash2(i, k, 5) * 0.4;
+          tmpC.setRGB(col[0] * v, col[1] * v, col[2] * v * 0.9);
+          m.setColorAt(n, tmpC);
+          n++;
+        }
+      }
+    commitInstances(m, n);
+    m.computeBoundingSphere();
+  }
+
   update(dt: number) {
     this.mesh.visible = this.enabled;
+    if (!this.enabled) return;
     this.t -= dt;
     if (this.t <= 0) {
       this.t = 6;
-      if (this.enabled) this.rebuild();
+      this.scan();
     }
+    // a few patches a frame, so a change never costs one long frame
+    for (let k = 0; k < 2 && this.queue.length; k++) this.build(this.queue.shift()!);
   }
 }
 

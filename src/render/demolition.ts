@@ -9,7 +9,7 @@ import { box } from './geom';
 import { getMaterial } from './materials';
 import type { Particles } from './particles';
 import { patchMaterial } from './shaderPatch';
-import { commitInstances } from './instancing';
+import { commitInstances, withInstanceColor } from './instancing';
 
 /** Seconds a building burns before the game removes it (economy.ts). */
 export const BURN_TIME = 12;
@@ -155,11 +155,17 @@ export class Demolition {
     this.particles.emit({ x, y, z, vy: 0.9 * big, spread: 0.25, vspread: 0.3, life: 5 * big, size: 0.5 * big, grow: 3.0, color: [g, g * 0.95, g * 0.9], color2: [g + 0.2, g + 0.2, g + 0.2], alpha: 0.7, drag: 0.35, jitter: 0.3 * big });
   }
 
+  /** Every rubble pool, made up front so their shaders compile with the rest (see GameRenderer.warmUp). */
+  makePools() {
+    for (const keys of Object.values(KIND_KEYS)) for (const k of keys) this.pool(k);
+  }
+
   private pool(key: string): Pool {
     let p = this.pools.get(key);
     if (!p) {
-      const mesh = new THREE.InstancedMesh(this.chunkGeo, getMaterial(key), CAP);
+      const mesh = withInstanceColor(new THREE.InstancedMesh(this.chunkGeo, getMaterial(key), CAP));
       mesh.count = 0;
+      mesh.visible = false;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.frustumCulled = false;

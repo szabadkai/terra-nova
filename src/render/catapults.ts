@@ -7,7 +7,7 @@ import type { Game } from '../game/game';
 import type { Settler } from '../game/types';
 import { buildCatapultGeos } from './models';
 import { patchMaterial } from './shaderPatch';
-import { commitInstances } from './instancing';
+import { commitInstances, withInstanceColor } from './instancing';
 
 const SCALE = 1.1;
 const MAX = 64;
@@ -60,7 +60,7 @@ export class CatapultsRenderer {
     this.stones = inst(g.stone, mat, MAX);
     const flagMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide });
     patchMaterial(flagMat, { key: 'catapultflag' });
-    this.flags = inst(g.flag, flagMat, MAX);
+    this.flags = withInstanceColor(inst(g.flag, flagMat, MAX));
     this.flags.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3);
     this.group.add(this.frame, this.wheels, this.arms, this.stones, this.flags);
   }

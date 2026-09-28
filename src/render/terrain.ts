@@ -443,6 +443,9 @@ const TERRAIN_NORMAL = /* glsl */ `
   }
 `;
 
+const DIR_X = Array.from({ length: 8 }, (_, d) => Math.cos((d / 8) * Math.PI * 2));
+const DIR_Y = Array.from({ length: 8 }, (_, d) => Math.sin((d / 8) * Math.PI * 2));
+
 export class TerrainRenderer {
   mesh: THREE.Mesh;
   geo: THREE.BufferGeometry;
@@ -455,6 +458,12 @@ export class TerrainRenderer {
   uniforms: Record<string, THREE.IUniform>;
   private aoT = 0;
   private wearT = 0;
+  // horizon occlusion only depends on the heights: kept, and redone around height changes
+  private horizon: Float32Array | null = null;
+  private horizonDirty: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  // the terrain types the splat was last blurred from, so an unchanged map costs nothing
+  private splatFrom: Uint8Array | null = null;
+  private splatTmp: Float32Array | null = null;
 
   constructor(private game: Game) {
     const w = game.world;
@@ -565,7 +574,7 @@ export class TerrainRenderer {
         arr[i * 3 + 1] = ny / l;
         arr[i * 3 + 2] = nz / l;
       }
-    nrm.needsUpdate = true;
+    this.uploadRows(nrm, y0, y1);
   }
 
   updateHeights() {
@@ -581,48 +590,70 @@ export class TerrainRenderer {
         const i = y * W + x;
         arr[i * 3 + 1] = w.h[i];
       }
-    pos.needsUpdate = true;
+    this.uploadRows(pos, d.y0 - 1, d.y1 + 1);
     this.computeNormals(d.x0 - 1, d.y0 - 1, d.x1 + 1, d.y1 + 1);
-    this.updateHeightTex();
+    this.updateHeightTex(d.y0, d.y1);
+    // the horizon occlusion reaches 8 nodes, so everything that can see the change is redone
+    const r = this.horizonDirty;
+    const R = 9;
+    this.horizonDirty = r
+      ? { x0: Math.min(r.x0, d.x0 - R), y0: Math.min(r.y0, d.y0 - R), x1: Math.max(r.x1, d.x1 + R), y1: Math.max(r.y1, d.y1 + R) }
+      : { x0: d.x0 - R, y0: d.y0 - R, x1: d.x1 + R, y1: d.y1 + R };
     this.aoT = 0;
   }
 
-  updateHeightTex() {
+  /** Upload map rows y0..y1 of a per-node vertex attribute. */
+  private uploadRows(attr: THREE.BufferAttribute, y0: number, y1: number) {
+    const W = this.game.world.W, H = this.game.world.H;
+    y0 = Math.max(0, y0); y1 = Math.min(H - 1, y1);
+    attr.addUpdateRange(y0 * W * attr.itemSize, (y1 - y0 + 1) * W * attr.itemSize);
+    attr.needsUpdate = true;
+  }
+
+  updateHeightTex(y0 = 0, y1 = this.game.world.H - 1) {
     const w = this.game.world;
     const d = this.heightTex.image.data as Uint16Array;
-    for (let i = 0; i < w.N; i++) d[i] = THREE.DataUtils.toHalfFloat(w.h[i]);
+    const a = Math.max(0, y0) * w.W, b = (Math.min(w.H - 1, y1) + 1) * w.W;
+    for (let i = a; i < b; i++) d[i] = THREE.DataUtils.toHalfFloat(w.h[i]);
     this.heightTex.needsUpdate = true;
   }
 
-  updateSplat() {
+  /** Returns whether any terrain type changed (fields and mined ore also ask for a splat, but change none). */
+  updateSplat(): boolean {
     const w = this.game.world;
     const W = w.W, H = w.H;
     const A = this.splatA.image.data as Uint8Array;
     const B = this.splatB.image.data as Uint8Array;
-    const tmp = new Float32Array(W * H * 8);
-    for (let i = 0; i < w.N; i++) {
-      const t = w.terrain[i];
-      tmp[i * 8 + t] = 1;
+    // only the nodes around changed terrain types need blurring again
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    const from = this.splatFrom;
+    if (!from) { x0 = 0; y0 = 0; x1 = W - 1; y1 = H - 1; }
+    else for (let i = 0; i < w.N; i++) {
+      if (from[i] === w.terrain[i]) continue;
+      const x = i % W, y = (i - x) / W;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
     }
+    if (x1 < 0) return false;
+    this.splatFrom = w.terrain.slice();
+    x0 = Math.max(0, x0 - 1); y0 = Math.max(0, y0 - 1); x1 = Math.min(W - 1, x1 + 1); y1 = Math.min(H - 1, y1 + 1);
+    const tmp = (this.splatTmp ??= new Float32Array(9));
     // gentle blur so the shader has gradients to blend with
-    for (let y = 0; y < H; y++)
-      for (let x = 0; x < W; x++) {
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
         const i = y * W + x;
-        const acc = [0, 0, 0, 0, 0, 0, 0, 0];
-        let wsum = 0;
+        tmp.fill(0);
         for (let dy = -1; dy <= 1; dy++)
           for (let dx = -1; dx <= 1; dx++) {
             const xx = Math.min(W - 1, Math.max(0, x + dx)), yy = Math.min(H - 1, Math.max(0, y + dy));
-            const j = yy * W + xx;
-            const wt = dx === 0 && dy === 0 ? 2 : 0.6;
-            wsum += wt;
-            for (let c = 0; c < 8; c++) acc[c] += tmp[j * 8 + c] * wt;
+            tmp[w.terrain[yy * W + xx]] += dx === 0 && dy === 0 ? 2 : 0.6;
           }
-        for (let c = 0; c < 4; c++) A[i * 4 + c] = (acc[c] / wsum) * 255;
-        for (let c = 0; c < 4; c++) B[i * 4 + c] = (acc[c + 4] / wsum) * 255;
+        // weights sum to 2 + 8 x 0.6
+        for (let c = 0; c < 4; c++) A[i * 4 + c] = (tmp[c] / 6.8) * 255;
+        for (let c = 0; c < 4; c++) B[i * 4 + c] = (tmp[c + 4] / 6.8) * 255;
       }
     this.splatA.needsUpdate = true;
     this.splatB.needsUpdate = true;
+    return true;
   }
 
   updateOwner() {
@@ -666,22 +697,23 @@ export class TerrainRenderer {
     void H;
   }
 
-  /** Horizon-based ambient occlusion + contact darkening under buildings and trees. */
-  bakeAO() {
-    const g = this.game;
-    const w = g.world;
+  /** Horizon occlusion per node (0 open .. 1 walled in), recomputed only where the heights changed. */
+  private horizonAO(): Float32Array {
+    const w = this.game.world;
     const W = w.W, H = w.H;
-    const M = this.misc.image.data as Uint8Array;
+    let r = this.horizonDirty;
+    if (!this.horizon) { this.horizon = new Float32Array(w.N); r = { x0: 0, y0: 0, x1: W - 1, y1: H - 1 }; }
+    this.horizonDirty = null;
+    if (!r) return this.horizon;
+    const occ = this.horizon;
     const dirs = 8;
-    const occ = new Float32Array(w.N);
-    for (let y = 0; y < H; y++)
-      for (let x = 0; x < W; x++) {
+    for (let y = Math.max(0, r.y0); y <= Math.min(H - 1, r.y1); y++)
+      for (let x = Math.max(0, r.x0); x <= Math.min(W - 1, r.x1); x++) {
         const i = y * W + x;
         const h0 = Math.max(w.h[i], WATER_LEVEL - 0.5);
         let sum = 0;
         for (let d = 0; d < dirs; d++) {
-          const a = (d / dirs) * Math.PI * 2;
-          const cx = Math.cos(a), cy = Math.sin(a);
+          const cx = DIR_X[d], cy = DIR_Y[d];
           let maxSlope = 0;
           for (let s = 1; s <= 6; s++) {
             const xx = Math.round(x + cx * s * 1.3), yy = Math.round(y + cy * s * 1.3);
@@ -694,6 +726,16 @@ export class TerrainRenderer {
         }
         occ[i] = sum / dirs;
       }
+    return occ;
+  }
+
+  /** Horizon-based ambient occlusion + contact darkening under buildings and trees. */
+  bakeAO() {
+    const g = this.game;
+    const w = g.world;
+    const W = w.W, H = w.H;
+    const M = this.misc.image.data as Uint8Array;
+    const occ = this.horizonAO();
     // contact occlusion from buildings and trees
     const extra = new Float32Array(w.N);
     for (const b of g.buildings.values()) {
@@ -728,9 +770,10 @@ export class TerrainRenderer {
     this.updateHeights();
     if (w.splatDirty) {
       w.splatDirty = false;
-      this.updateSplat();
+      if (this.updateSplat()) this.aoT = Math.min(this.aoT, 0.3);
+      // fields and mined-out ore raise the flag too: show them soon
       w.oreDirty = true;
-      this.aoT = Math.min(this.aoT, 0.3);
+      this.wearT = Math.min(this.wearT, 0.3);
     }
     if (w.oreDirty) {
       w.oreDirty = false;
