@@ -35,8 +35,20 @@ varying vec3 vWNormal;
 
 #define C(r,g,b) pow(vec3(float(r),float(g),float(b))/255.0, vec3(2.2))
 
+// triplanar noise; w3 are the projection weights with the negligible ones (under 1%) already
+// dropped (see triW), so flat rock and sheer cliffs take one lookup instead of three
 vec4 triN(vec3 wp, vec3 w3, float scale, vec2 off) {
-  return texture2D(tNoise, wp.zy * scale + off) * w3.x + texture2D(tNoise, wp.xz * scale + off) * w3.y + texture2D(tNoise, wp.xy * scale + off) * w3.z;
+  vec4 r = vec4(0.0);
+  if (w3.x > 0.0) r += texture2D(tNoise, wp.zy * scale + off) * w3.x;
+  if (w3.y > 0.0) r += texture2D(tNoise, wp.xz * scale + off) * w3.y;
+  if (w3.z > 0.0) r += texture2D(tNoise, wp.xy * scale + off) * w3.z;
+  return r;
+}
+vec3 triW(vec3 n) {
+  vec3 tw = pow(abs(n), vec3(4.0));
+  tw /= (tw.x + tw.y + tw.z);
+  tw *= step(0.01, tw);
+  return tw / (tw.x + tw.y + tw.z);
 }
 
 float tBump;
@@ -56,9 +68,12 @@ float dMix;
 void detailAt(float layer, out vec4 A, out vec4 M) {
   vec4 a1 = textureGrad(tDetail, vec3(dUv1, layer), dD1x, dD1y);
   vec4 a2 = textureGrad(tDetail, vec3(dUv2, layer), dD2x, dD2y);
-  vec4 m1 = textureGrad(tDetailN, vec3(dUv1, layer), dD1x, dD1y);
-  vec4 m2 = textureGrad(tDetailN, vec3(dUv2, layer), dD2x, dD2y);
   float b = clamp(0.5 + ((a2.a - a1.a) * 0.6 + dMix - 0.5) * 5.0, 0.0, 1.0);
+  // the two lookups only mix in a thin band along the height contour: elsewhere one of them shows
+  // alone, and its normal map is the only one worth reading
+  vec4 m1 = vec4(0.5, 0.5, 1.0, 0.5), m2 = m1;
+  if (b < 1.0) m1 = textureGrad(tDetailN, vec3(dUv1, layer), dD1x, dD1y);
+  if (b > 0.0) m2 = textureGrad(tDetailN, vec3(dUv2, layer), dD2x, dD2y);
   A = mix(a1, a2, b);
   vec2 g1 = m1.rg * 2.0 - 1.0;
   vec2 g2 = (m2.rg * 2.0 - 1.0) * DROT; // back into world orientation
@@ -96,8 +111,9 @@ const TERRAIN_MAP = /* glsl */ `
   vec2 pr1 = mat2(0.8, -0.6, 0.6, 0.8) * p;
   vec2 pr2 = mat2(0.28, -0.96, 0.96, 0.28) * p;
   vec4 n4 = texture2D(tNoise, pr1 * 1.73 + vec2(0.47, 0.29));
-  vec4 n5 = texture2D(tNoise, pr2 * 4.9 + vec2(0.77, 0.19));
   float farFade = (1.0 - smoothstep(30.0, 90.0, camDist));
+  // the finest noise only shades the middle distance (and the bump, which is off beyond 80)
+  vec4 n5 = farFade > 0.0 ? texture2D(tNoise, pr2 * 4.9 + vec2(0.77, 0.19)) : vec4(0.5);
 
   float slope = 1.0 - clamp(vWNormal.y, 0.0, 1.0);
   float wh = vWPos.y - uWaterLevel;
@@ -114,25 +130,6 @@ const TERRAIN_MAP = /* glsl */ `
   float pathM = smoothstep(0.22, 0.55, wear + (n3.r - 0.5) * 0.3);
   w[3] += pathM * 1.5 * (w[0] + w[1] + w[2] + w[7]);
 
-  // ---- close-up detail
-  float detK = 1.0 - smoothstep(24.0, 66.0, camDist);
-  dUv1 = p * 0.5;
-  dUv2 = DROT * p * 0.43 + vec2(0.37, 0.71);
-  dD1x = dFdx(dUv1); dD1y = dFdy(dUv1); dD2x = dFdx(dUv2); dD2y = dFdy(dUv2);
-  vec3 wpx = dFdx(vWPos), wpy = dFdy(vWPos);
-  dMix = smoothstep(0.3, 0.7, n2.r * 0.6 + n1.g * 0.4);
-  vec4 dA0 = vec4(0.4, 0.4, 0.4, 0.5), dA1 = dA0, dA2 = dA0, dA3 = dA0, dA5 = dA0;
-  vec4 dM0 = vec4(0.0, 0.0, 1.0, 0.5), dM1 = dM0, dM2 = dM0, dM3 = dM0, dM5 = dM0;
-  if (detK > 0.001) {
-    if (w[0] + w[1] > 0.001) detailAt(0.0, dA0, dM0);
-    if (w[2] > 0.001) detailAt(1.0, dA1, dM1);
-    if (w[3] > 0.001 || misc.a > 0.01) detailAt(2.0, dA2, dM2);
-    if (w[4] + w[6] > 0.001) detailAt(3.0, dA3, dM3);
-    if (w[7] > 0.001) detailAt(5.0, dA5, dM5);
-  }
-  vec3 dg = vec3(0.0);
-  float dCav = 0.0, dRough = 0.0;
-
   float hts[8];
   hts[0] = n3.r * 0.55 + n4.g * 0.45;
   hts[1] = n3.g * 0.55 + n4.r * 0.45;
@@ -142,16 +139,54 @@ const TERRAIN_MAP = /* glsl */ `
   hts[5] = n1.r * 0.55 + n2.r * 0.55;
   hts[6] = n1.g * 0.4 + 0.35;
   hts[7] = n2.a * 0.25;
-  // fine detail relief makes transitions ragged up close (blades poking through soil)
+
+  // ---- which layers show here. The height blend keeps only those within 0.22 of the strongest,
+  // and the close-up relief below moves a layer by at most 0.0825 * dhK (none beyond the detail
+  // range): anything further behind can never show, so only the (at most three) layers that can
+  // still win get their detail looked up and their colour worked out, however far the blurred
+  // splat weights reach.
+  float detK = 1.0 - smoothstep(24.0, 66.0, camDist);
   float dhK = detK * (1.0 - smoothstep(10.0, 30.0, camDist) * 0.6);
+  float v[8];
+  float mx = 0.0;
+  for (int i = 0; i < 8; i++) { v[i] = w[i] > 0.001 ? w[i] + hts[i] * 0.55 : -1.0; mx = max(mx, v[i]); }
+  int k0 = 0;
+  for (int i = 1; i < 8; i++) if (v[i] > v[k0]) k0 = i;
+  int k1 = k0 == 0 ? 1 : 0;
+  for (int i = 0; i < 8; i++) if (i != k0 && v[i] > v[k1]) k1 = i;
+  int k2 = -1;
+  float b2 = -1.0;
+  for (int i = 0; i < 8; i++) if (i != k0 && i != k1 && v[i] > b2) { b2 = v[i]; k2 = i; }
+  float cut = mx - 0.22 - 0.165 * dhK - 1e-4;
+  bool keep[8];
+  for (int i = 0; i < 8; i++) keep[i] = (i == k0 || i == k1 || i == k2) && v[i] > cut;
+
+  // ---- close-up detail
+  dUv1 = p * 0.5;
+  dUv2 = DROT * p * 0.43 + vec2(0.37, 0.71);
+  dD1x = dFdx(dUv1); dD1y = dFdy(dUv1); dD2x = dFdx(dUv2); dD2y = dFdy(dUv2);
+  vec3 wpx = dFdx(vWPos), wpy = dFdy(vWPos);
+  dMix = smoothstep(0.3, 0.7, n2.r * 0.6 + n1.g * 0.4);
+  vec4 dA0 = vec4(0.4, 0.4, 0.4, 0.5), dA1 = dA0, dA2 = dA0, dA3 = dA0, dA5 = dA0;
+  vec4 dM0 = vec4(0.0, 0.0, 1.0, 0.5), dM1 = dM0, dM2 = dM0, dM3 = dM0, dM5 = dM0;
+  if (detK > 0.001) {
+    if (keep[0] || keep[1]) detailAt(0.0, dA0, dM0);
+    if (keep[2]) detailAt(1.0, dA1, dM1);
+    if (keep[3] || misc.a > 0.01) detailAt(2.0, dA2, dM2);
+    if (keep[4] || keep[6]) detailAt(3.0, dA3, dM3);
+    if (keep[7]) detailAt(5.0, dA5, dM5);
+  }
+  vec3 dg = vec3(0.0);
+  float dCav = 0.0, dRough = 0.0;
+
+  // fine detail relief makes transitions ragged up close (blades poking through soil)
   hts[0] += (dA0.a - 0.5) * 0.3 * dhK; hts[1] += (dA0.a - 0.5) * 0.3 * dhK;
   hts[2] += (dA1.a - 0.5) * 0.26 * dhK; hts[3] += (dA2.a - 0.5) * 0.26 * dhK;
   hts[4] += (dA3.a - 0.5) * 0.2 * dhK; hts[7] += (dA5.a - 0.5) * 0.2 * dhK;
-  float mx = 0.0;
-  float v[8];
-  for (int i = 0; i < 8; i++) { v[i] = w[i] > 0.001 ? w[i] + hts[i] * 0.55 : 0.0; mx = max(mx, v[i]); }
+  mx = 0.0;
+  for (int i = 0; i < 8; i++) { v[i] = keep[i] ? w[i] + hts[i] * 0.55 : 0.0; mx = max(mx, v[i]); }
   float wsum = 0.0;
-  for (int i = 0; i < 8; i++) { v[i] = w[i] > 0.001 ? max(v[i] - mx + 0.22, 0.0) : 0.0; wsum += v[i]; }
+  for (int i = 0; i < 8; i++) { v[i] = keep[i] ? max(v[i] - mx + 0.22, 0.0) : 0.0; wsum += v[i]; }
   for (int i = 0; i < 8; i++) v[i] /= max(wsum, 1e-4);
 
   vec3 col = vec3(0.0);
@@ -250,12 +285,12 @@ const TERRAIN_MAP = /* glsl */ `
   }
   // rock (triplanar so cliffs don't stretch)
   if (v[5] > 0.0) {
-    vec3 tw = pow(abs(vWNormal), vec3(4.0));
-    tw /= (tw.x + tw.y + tw.z);
+    vec3 tw = triW(vWNormal);
     vec4 r1 = triN(vWPos, tw, 0.047, vec2(0.31, 0.17));
     vec4 r2 = triN(vWPos, tw, 0.17, vec2(0.63, 0.41));
     vec4 r3 = triN(vWPos, tw, 0.61, vec2(0.11, 0.87));
-    vec4 r4 = triN(vWPos, tw, 1.73, vec2(0.47, 0.29));
+    // the finest octave only shades the middle distance: close up the detail layer takes over
+    vec4 r4 = farFade * (1.0 - detK) > 0.0 ? triN(vWPos, tw, 1.73, vec2(0.47, 0.29)) : vec4(0.5);
     float strata = sin(vWPos.y * 3.6 + r1.r * 4.0 + r2.g * 1.5) * 0.5 + 0.5;
     vec3 c = mix(C(96,90,82), C(128,120,108), strata * 0.45 + r2.b * 0.35 + r3.r * 0.2);
     c = mix(c, C(80,76,72), smoothstep(0.55, 0.8, r1.g) * 0.45);
@@ -272,12 +307,18 @@ const TERRAIN_MAP = /* glsl */ `
       vec3 q = vWPos * 0.3333, qx = wpx * 0.3333, qy = wpy * 0.3333;
       ra = vec4(0.0); rc = 0.0; rr = 0.0;
       vec4 a, m;
-      a = textureGrad(tDetail, vec3(q.zy, 4.0), qx.zy, qy.zy); m = textureGrad(tDetailN, vec3(q.zy, 4.0), qx.zy, qy.zy);
-      ra += a * tw.x; rgW += vec3(0.0, m.g * 2.0 - 1.0, m.r * 2.0 - 1.0) * tw.x; rc += m.b * tw.x; rr += m.a * tw.x;
-      a = textureGrad(tDetail, vec3(q.xz, 4.0), qx.xz, qy.xz); m = textureGrad(tDetailN, vec3(q.xz, 4.0), qx.xz, qy.xz);
-      ra += a * tw.y; rgW += vec3(m.r * 2.0 - 1.0, 0.0, m.g * 2.0 - 1.0) * tw.y; rc += m.b * tw.y; rr += m.a * tw.y;
-      a = textureGrad(tDetail, vec3(q.xy, 4.0), qx.xy, qy.xy); m = textureGrad(tDetailN, vec3(q.xy, 4.0), qx.xy, qy.xy);
-      ra += a * tw.z; rgW += vec3(m.r * 2.0 - 1.0, m.g * 2.0 - 1.0, 0.0) * tw.z; rc += m.b * tw.z; rr += m.a * tw.z;
+      if (tw.x > 0.0) {
+        a = textureGrad(tDetail, vec3(q.zy, 4.0), qx.zy, qy.zy); m = textureGrad(tDetailN, vec3(q.zy, 4.0), qx.zy, qy.zy);
+        ra += a * tw.x; rgW += vec3(0.0, m.g * 2.0 - 1.0, m.r * 2.0 - 1.0) * tw.x; rc += m.b * tw.x; rr += m.a * tw.x;
+      }
+      if (tw.y > 0.0) {
+        a = textureGrad(tDetail, vec3(q.xz, 4.0), qx.xz, qy.xz); m = textureGrad(tDetailN, vec3(q.xz, 4.0), qx.xz, qy.xz);
+        ra += a * tw.y; rgW += vec3(m.r * 2.0 - 1.0, 0.0, m.g * 2.0 - 1.0) * tw.y; rc += m.b * tw.y; rr += m.a * tw.y;
+      }
+      if (tw.z > 0.0) {
+        a = textureGrad(tDetail, vec3(q.xy, 4.0), qx.xy, qy.xy); m = textureGrad(tDetailN, vec3(q.xy, 4.0), qx.xy, qy.xy);
+        ra += a * tw.z; rgW += vec3(m.r * 2.0 - 1.0, m.g * 2.0 - 1.0, 0.0) * tw.z; rc += m.b * tw.z; rr += m.a * tw.z;
+      }
     }
     c *= dMod(ra, detK);
     dg += rgW * 1.1 * v[5]; dCav += rc * v[5]; dRough += rr * v[5];
