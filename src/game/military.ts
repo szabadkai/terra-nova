@@ -2,7 +2,7 @@
 import type { Game } from './game';
 import { A, abortPlan, book, claim, enter, exit, freeSpotNear, plan, turnTo } from './settlers';
 import type { Building, Settler } from './types';
-import { GUARD_RANGE, LEASH } from './orders';
+import { FIRM_LEASH, GUARD_RANGE, LEASH } from './orders';
 import { CATAPULT_RANGE } from './defs';
 import { siegeHit } from './siege';
 import { shipArrowLands, shipStoneLands, towerShootShip } from './naval';
@@ -328,8 +328,8 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
       s.engaged = 0;
     } else {
       if (s.next >= 0) return true; // finish step
-      // a guard lets a fleeing foe go once the chase leads too far from his post
-      if (s.sstate === 'hold' && s.order >= 0 && Math.hypot(e.x - g.world.nx(s.order), e.z - g.world.ny(s.order)) > LEASH) {
+      // a guard lets a fleeing foe go once the chase leads too far from his post (not far at all when he stands firm)
+      if (s.sstate === 'hold' && s.order >= 0 && Math.hypot(e.x - g.world.nx(s.order), e.z - g.world.ny(s.order)) > (s.firm ? FIRM_LEASH : LEASH)) {
         s.engaged = 0;
         if (e.engaged === s.id) e.engaged = 0;
         return false;
@@ -397,9 +397,10 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
       } else if (d <= MELEE_RANGE + 1.4 && regS(g, near) === regS(g, s)) {
         engage(g, s, near);
         return true;
-      } else if (guard && regS(g, near) === regS(g, s) && s.order >= 0
+      } else if (guard && !s.firm && regS(g, near) === regS(g, s) && s.order >= 0
         && Math.hypot(near.x - g.world.nx(s.order), near.z - g.world.ny(s.order)) < LEASH) {
-        // a guard charges a foe that comes near his post
+        // a guard charges a foe that comes near his post (unless he stands firm)
+        s.pace = 1;
         if (!s.actions.length || s.actions[0].k !== 'walk') {
           s.actions.length = 0;
           s.actions.push(A.walk(near.next >= 0 ? near.next : near.node, true));
@@ -414,7 +415,10 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
   switch (s.sstate) {
     case 'attack': return thinkAttack(g, s);
     case 'defend': return thinkDefend(g, s);
-    case 'hold': return thinkHold(g, s);
+    case 'hold':
+      // at his post he turns the way his formation faces
+      if (s.face !== null && s.node === s.order && s.next < 0) s.heading = turnTo(s.heading, s.face, dt * 4);
+      return thinkHold(g, s);
     case 'return':
     case 'idle': {
       // go home if we have one
@@ -460,6 +464,7 @@ function engage(g: Game, s: Settler, e: Settler) {
   s.actions.length = 0;
   s.path = null;
   s.engaged = e.id;
+  s.pace = 1;
   if (!e.engaged && !e.hidden) {
     e.engaged = s.id;
     e.actions.length = 0;
@@ -521,7 +526,7 @@ function thinkAttack(g: Game, s: Settler): boolean {
 function thinkHold(g: Game, s: Settler): boolean {
   const w = g.world;
   if (s.order < 0) { s.sstate = 'idle'; return false; }
-  if (s.node === s.order) { s.fails = 0; return false; }
+  if (s.node === s.order) { s.fails = 0; s.pace = 1; return false; }
   // the post may have been built over, or be out of reach: stand where he is
   if (!w.walkable(s.order) || s.fails > 3) { s.order = s.node; s.fails = 0; return false; }
   plan(s, [A.walk(s.order)], () => { s.fails++; });

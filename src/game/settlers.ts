@@ -72,6 +72,8 @@ function startStep(g: Game, s: Settler): boolean {
   else if (s.job === 'catapult') dur *= 1.75; // hauled along on its wheels
   else if (s.carrying) dur *= 1.06;
   if (isSoldier(s) && s.sstate === 'attack') dur *= 0.92;
+  // marching to a post in step with a slower group
+  else if (s.pace > 1 && s.sstate === 'hold') dur *= s.pace;
   s.stepDur = dur;
   s.next = n;
   s.t = 0;

@@ -97,7 +97,17 @@ export interface Settler {
   fails: number; // consecutive failed attempts at the current order
   // donkeys carry a second good beside `carrying`; `target` holds the market they are bound for
   pack: Good | null;
+  // drill (soldiers and catapults): the formation the man forms up in, whether he stands firm
+  // instead of charging foes that come near his post, the way he faces there, and how much slower
+  // than his own pace he marches so that his group arrives together
+  drill: Formation;
+  firm: boolean;
+  face: number | null;
+  pace: number;
 }
+
+/** How a group of soldiers forms up: a wide line, a square block, a wedge or a ring facing out. */
+export type Formation = 'line' | 'block' | 'wedge' | 'ring';
 
 export type BState = 'leveling' | 'building' | 'done' | 'burning';
 
