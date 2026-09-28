@@ -75,16 +75,19 @@ export class HUD {
     this.buildLeft();
     this.info = h('div', 'panel info hidden');
     this.root.appendChild(this.info);
+    // The chronicle and the messages share one column, so messages always sit below the chronicle however tall it grows.
+    const rcol = h('div', 'rcol');
+    this.root.appendChild(rcol);
+    this.objectives = new Objectives(this.game, rcol, (text) => {
+      this.message(`✔ Objective complete: ${text}`, undefined, undefined, 'good');
+      this.audio.play('built');
+    });
     this.msgs = h('div', 'msgs');
-    this.root.appendChild(this.msgs);
+    rcol.appendChild(this.msgs);
     this.tip = h('div', 'tip hidden');
     this.root.appendChild(this.tip);
     this.hint = h('div', 'hint hidden');
     this.root.appendChild(this.hint);
-    this.objectives = new Objectives(this.game, this.root, (text) => {
-      this.message(`✔ Objective complete: ${text}`, undefined, undefined, 'good');
-      this.audio.play('built');
-    });
     this.renderTab();
   }
 
@@ -969,7 +972,7 @@ export class HUD {
 
   // ------------------------------------------------------------ messages / tooltip
   message(text: string, x?: number, z?: number, kind = 'info') {
-    const m = h('div', `msg ${kind}`, text);
+    const m = h('div', `msg msg-${kind}`, text); // prefixed: a bare 'info' class would pick up the selection panel's fixed layout
     if (x !== undefined && z !== undefined) {
       m.classList.add('link');
       m.onclick = () => this.gr.cam.jumpTo(x, z + 2);
