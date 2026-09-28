@@ -4,7 +4,7 @@
 // harbours gather what another landmass lacks, ships carry the goods and settlers over, and the
 // receiving harbour hands them to that island's carriers like any storehouse would.
 import {
-  BUILDINGS, GOODS, Good, JOB_TOOL, Job, MAX_SHIPS, SHIP_BOARDS, SHIP_CARGO, SHIP_PASSENGERS, emptyStock,
+  BUILDINGS, GOODS, Good, JOB_TOOL, MAX_SHIPS, SHIP_BOARDS, SHIP_CARGO, SHIP_PASSENGERS, emptyStock,
 } from './defs';
 import type { Game } from './game';
 import { A, abortPlan, claim, enter, plan } from './settlers';
@@ -618,7 +618,6 @@ function failExpedition(g: Game, sh: Ship, ex: Expedition, why: string) {
 }
 
 function landExpedition(g: Game, sh: Ship, ex: Expedition) {
-  const w = g.world;
   const err = g.placeError('harbour', sh.owner, ex.x, ex.y, true);
   if (err) { failExpedition(g, sh, ex, `The expedition could not land: ${err.toLowerCase()}`); return; }
   const b = g.addBuilding('harbour', sh.owner, ex.x, ex.y);
@@ -640,7 +639,6 @@ function landExpedition(g: Game, sh: Ship, ex: Expedition) {
   g.territoryDirty = true;
   g.emit({ type: 'landed', b: b.id, x: b.cx, z: b.cz, owner: sh.owner });
   g.message(sh.owner, 'The expedition has landed — a colony harbour is being built', b.cx, b.cz, 'good');
-  void w;
 }
 
 /** A ship sails a loop through unexplored waters and back. */
