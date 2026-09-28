@@ -401,6 +401,8 @@ function setupGlobalInput() {
       if (n) hud.message(`Music: track ${n} of ${audio.trackCount}`);
     } else if (e.code === 'Period' || k === '.') {
       hud.nextStall(e.shiftKey);
+    } else if ((k === 'b' || k === 'B') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      hud.cycleStallBadges();
     } else if (k === 'h' || k === 'H') {
       const hq = game.buildings.get(game.players[game.local].hq);
       if (hq) gr.cam.jumpTo(hq.cx, hq.cz + 3);

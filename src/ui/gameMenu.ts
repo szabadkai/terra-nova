@@ -77,6 +77,7 @@ const KEYS_VIEW: [string, string][] = [
   ['<kbd>Q</kbd> <kbd>E</kbd> · <kbd>+</kbd> <kbd>−</kbd>', 'Turn · zoom'],
   ['<kbd>H</kbd>', 'Jump to your headquarters'],
   ['<kbd>.</kbd> or ⚠ in the top bar', 'Go to the next stalled building (<kbd>Shift</kbd>: the one before)'],
+  ['<kbd>B</kbd>', 'Stall badges: the three that hold up the most, all of them, or none'],
   ['Click or drag on the minimap', 'Jump there'],
 ];
 const KEYS_ORDERS: [string, string][] = [
@@ -438,9 +439,12 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Interface'));
     c.appendChild(this.toggle('Territory borders', 'Border posts and tinted realm edges', () => s.borders, set('borders')));
     c.appendChild(this.toggle('Frame rate counter', 'Shown at the end of the top bar', () => prefs.showFps, (v) => { prefs.showFps = v; }));
+    c.appendChild(this.seg('Stall badges', 'Over buildings that have stopped: the three that hold up the most (each about something different), all of them, or none. ⚠ in the top bar counts them all. B switches it.',
+      [['top', 'Top 3'], ['all', 'All'], ['off', 'Off']], () => prefs.stallBadges, (v) => { prefs.stallBadges = v as typeof prefs.stallBadges; }));
+    c.appendChild(this.toggle('Stall alerts', 'A message when a mine runs dry, nobody is free for a job or a worker has no tool', () => prefs.stallAlerts, (v) => { prefs.stallAlerts = v; }));
     this.resetButton(c, 'Reset graphics to defaults', () => {
       const d = defaultPrefs();
-      Object.assign(prefs, { render: d.render, season: d.season, dayLength: d.dayLength, showFps: d.showFps });
+      Object.assign(prefs, { render: d.render, season: d.season, dayLength: d.dayLength, showFps: d.showFps, stallBadges: d.stallBadges, stallAlerts: d.stallAlerts });
       applyRenderPrefs(gr);
     });
   }

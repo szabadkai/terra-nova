@@ -1,8 +1,9 @@
 // Alerts for the failures that used to be silent: a mine that has worked out its deposit, a building
 // that no settler is free to take on, a workshop whose worker has no tool, a toolsmith with no iron or
 // coal. Each is raised once per stall, when it has lasted past the grace time (the same moment its
-// badge appears), and a kind that keeps coming up is held back for a while so a burst of new
-// buildings brings one alert, not ten. The HUD turns them into toasts. Read-only, like the badges.
+// badge appears), a building isn't raised again for the same thing for ten minutes, and a kind that
+// keeps coming up is held back for a while so a burst of new buildings brings one alert, not ten.
+// The HUD turns them into toasts. Read-only, like the badges.
 import { GOOD_NAMES, ORE_NAMES, MINE_ORE, type BuildingType } from './defs';
 import type { Game } from './game';
 import { chainText, causeOf, rootCauses, type Cause } from './causes';
@@ -28,7 +29,9 @@ export interface Alert {
 }
 
 /** Game seconds a kind of alert is held back after it was raised (the badges and the ⚠ list still show every stall). */
-const HOLD: Record<AlertKind, number> = { exhausted: 0, settlers: 90, tool: 60, toolsmith: 120 };
+const HOLD: Record<AlertKind, number> = { exhausted: 0, settlers: 180, tool: 180, toolsmith: 300 };
+/** Game seconds before the same building is alerted for the same thing again: a toolsmith that gets one bar of iron and runs dry again is old news. */
+const REPEAT = 600;
 
 function kindOf(b: Building): AlertKind | null {
   const st = b.stall;
@@ -46,6 +49,8 @@ export class StallWatch {
   /** the stall (by its start time) each building was last alerted for */
   private seen = new Map<number, number>();
   private last = new Map<AlertKind, number>();
+  /** when each building was last alerted, by kind */
+  private told = new Map<string, number>();
   private primed = false;
 
   constructor(private owner: number) {}
@@ -61,6 +66,7 @@ export class StallWatch {
       this.seen.set(b.id, b.stallT);
       const k = kindOf(b);
       if (!k || !this.primed) continue;
+      if (g.time - (this.told.get(`${b.id}|${k}`) ?? -Infinity) < REPEAT) continue;
       const arr = fresh.get(k) ?? [];
       arr.push(b);
       fresh.set(k, arr);
@@ -74,6 +80,7 @@ export class StallWatch {
       // one alert per kind, except worked-out mines: each is its own news
       for (const b of kind === 'exhausted' ? bs : bs.slice(0, 1)) {
         this.last.set(kind, g.time);
+        this.told.set(`${b.id}|${kind}`, g.time);
         out.push(this.alert(g, kind, b, list.filter((o) => kindOf(o) === kind).length));
       }
     }

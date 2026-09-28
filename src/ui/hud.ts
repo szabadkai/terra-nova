@@ -28,14 +28,14 @@ import {
 } from '../game/orders';
 import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder, placeOrder } from '../game/trade';
 import { buildingIcons, goodIcons } from './icons';
-import { StallBadges } from './stallBadges';
+import { StallBadges, TOP_BADGES } from './stallBadges';
 import { stalled } from '../game/status';
 import { StallWatch, type Alert } from '../game/alerts';
 import { aName, causeLine, causeOf, causeSteps, rootCauses } from '../game/causes';
 import { FLOW_WINDOW, flowHistory, flowReport, trend } from '../game/flow';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
-import { prefs } from './prefs';
+import { prefs, savePrefs } from './prefs';
 import { immersiveAvailable, isImmersive, leaveHint, toggleImmersive } from './immersive';
 
 // corner brackets pointing out (fill the screen) and in (leave it) for the top-bar button
@@ -73,6 +73,8 @@ const DRILLS: Record<Formation, { name: string; tip: string; svg: string }> = {
     svg: dots([...Array.from({ length: 8 }, (_, i) => [11 + Math.sin(i * Math.PI / 4) * 5.6, 8 - Math.cos(i * Math.PI / 4) * 5.6] as [number, number]), [11, 8]]),
   },
 };
+/** Alert toasts shown at once (the newest). */
+const MAX_ALERTS = 3;
 /** The number keys of the control groups, in keyboard order. */
 const GROUP_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
 
@@ -1568,6 +1570,19 @@ export class HUD {
     return `<div class="causes">${rows}${tips}${build}</div>`;
   }
 
+  /** B: badges over the few stalls that hold up the most → over all of them → none. */
+  cycleStallBadges() {
+    const next = { top: 'all', all: 'off', off: 'top' } as const;
+    prefs.stallBadges = next[prefs.stallBadges];
+    savePrefs();
+    this.audio.play('ui');
+    this.message({
+      top: `Stall badges: the ${TOP_BADGES} that hold up the most (B: all)`,
+      all: 'Stall badges: every stalled building (B: none)',
+      off: `Stall badges off — ⚠ still counts them (B: the ${TOP_BADGES} that matter most)`,
+    }[prefs.stallBadges]);
+  }
+
   /** Go to the next stalled building (Shift: the one before) and open it, like an RTS's idle-worker button. */
   nextStall(back = false) {
     const list = this.stalls.stalled;
@@ -1604,7 +1619,7 @@ export class HUD {
     };
     const rows = [...by].sort((a, b) => b[1].length - a[1].length).slice(0, 8)
       .map(([why, names]) => `${why}: <span class="muted">${named(names)}</span>${root.get(why) ? `<br><span class="troot">↳ ${root.get(why)}</span>` : ''}`);
-    return `<b>⚠ ${list.length} stalled building${list.length > 1 ? 's' : ''}</b><br>${rows.join('<br>')}${by.size > 8 ? '<br>…' : ''}<br><span class="muted">Click or press <b>.</b> to go to the next (Shift: back)</span>`;
+    return `<b>⚠ ${list.length} stalled building${list.length > 1 ? 's' : ''}</b><br>${rows.join('<br>')}${by.size > 8 ? '<br>…' : ''}<br><span class="muted">Click or press <b>.</b> to go to the next (Shift: back) · <b>B</b>: badges for ${prefs.stallBadges === 'top' ? `the ${TOP_BADGES} that matter most` : prefs.stallBadges === 'all' ? 'all' : 'none'}</span>`;
   }
 
   // ------------------------------------------------------------ messages / toasts / tooltip
@@ -1614,10 +1629,13 @@ export class HUD {
   }
 
   /** A toast: slides in, fades after `ttl` seconds unless the pointer rests on it, goes to its place when clicked. */
-  toast(o: { title: string; detail?: string; hint?: string; icon?: string; kind?: string; x?: number; z?: number; b?: number; action?: { label: string; run: () => void }; ttl?: number }) {
+  toast(o: { title: string; detail?: string; hint?: string; icon?: string; kind?: string; x?: number; z?: number; b?: number; action?: { label: string; run: () => void }; ttl?: number; key?: string }) {
     const rich = !!(o.detail || o.hint || o.icon || o.action);
+    // one toast per key: a newer alert of the same kind takes the older one's place
+    if (o.key) for (const x of [...this.msgs.children] as HTMLElement[]) if (x.dataset.key === o.key) x.remove();
     // prefixed: a bare 'info' class would pick up the selection panel's fixed layout
     const m = h('div', `msg msg-${o.kind ?? 'info'}${rich ? ' toast' : ''}`, rich ? '' : o.title);
+    if (o.key) m.dataset.key = o.key;
     if (rich) {
       m.innerHTML = `${o.icon ? `<img class="ticon" src="${o.icon}" alt="">` : ''}<div class="ttext"><div class="ttitle">${o.title}</div>${o.detail ? `<div class="tdetail">${o.detail}</div>` : ''}${o.hint ? `<div class="thint">${o.hint}</div>` : ''}${o.action ? `<button class="tact">${o.action.label}</button>` : ''}</div><button class="tclose" aria-label="Dismiss" title="Dismiss">✕</button>`;
       m.querySelector<HTMLElement>('.tclose')!.onclick = (e) => { e.stopPropagation(); m.remove(); };
@@ -1644,7 +1662,9 @@ export class HUD {
     m.onmouseleave = () => arm(3);
     arm(o.ttl ?? 7);
     this.msgs.prepend(m);
-    // six at most: routine news makes room before an alert does
+    // three alerts at most, six messages in all: routine news makes room before an alert does
+    const toasts = [...this.msgs.children].filter((x) => x.classList.contains('toast'));
+    for (const x of toasts.slice(MAX_ALERTS)) x.remove();
     while (this.msgs.children.length > 6) {
       const plain = [...this.msgs.children].reverse().find((x) => !x.classList.contains('toast'));
       (plain ?? this.msgs.lastElementChild)?.remove();
@@ -1673,7 +1693,7 @@ export class HUD {
     else if (a.kind === 'settlers') action = { label: `⚒ Build a ${BUILDINGS.residence_s.name}`, run: () => this.startPlacing('residence_s') };
     else if (a.build && BUILDINGS[a.build].buildable !== false) { const t = a.build; action = { label: `⚒ Build ${BUILDINGS[t].name}`, run: () => this.startPlacing(t) }; }
     const hint = a.build && a.hint === `Build ${aName(BUILDINGS[a.build].name)}` ? '' : a.hint; // the button says it
-    this.toast({ title: a.title, detail: a.detail, hint, icon: buildingIcons.get(b.type), kind: 'bad', x: b.cx, z: b.cz, b: b.id, action, ttl: 14 });
+    this.toast({ title: a.title, detail: a.detail, hint, icon: buildingIcons.get(b.type), kind: 'bad', x: b.cx, z: b.cz, b: b.id, action, ttl: 14, key: `alert:${a.kind === 'exhausted' ? `exhausted:${b.id}` : a.kind}` });
     this.audio.play('warn');
   }
 
@@ -1734,7 +1754,8 @@ export class HUD {
     this.stalls.update(dt);
     if (this.t <= 0) {
       this.t = 0.5;
-      for (const a of this.watch.poll(this.game)) this.raiseAlert(a);
+      // polled even when alerts are off, so switching them on doesn't bring a burst of old news
+      for (const a of this.watch.poll(this.game)) if (prefs.stallAlerts) this.raiseAlert(a);
       this.refreshTop();
       if (this.tab === 'build') {
         // refresh affordability without re-rendering on hover

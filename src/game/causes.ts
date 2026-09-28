@@ -7,7 +7,7 @@
 import { BUILDINGS, GOOD_NAMES, type BuildingType, type Good } from './defs';
 import type { Game } from './game';
 import { availableAt } from './economy';
-import { stallText } from './status';
+import { stallText, stalledBuildings } from './status';
 import type { Building } from './types';
 
 export interface Cause {
@@ -192,3 +192,34 @@ export function causeSteps(c: Cause): { c: Cause; depth: number }[] {
   walk(c, 0);
   return out;
 }
+
+/** How much a kind of stall matters on its own: a building with no worker, tool or ore is lost to the economy; a full pile sorts itself out. */
+const KIND_WEIGHT: Record<string, number> = { settlers: 4, tool: 4, exhausted: 4, input: 3, market: 2, range: 1, full: 0 };
+
+/**
+ * The stalls that matter most, at most `n`, each about something different: a building counts
+ * itself and every other stalled building whose chain runs through it (a bakery with no water that
+ * starves the mines outranks five hunters with no game); then whether its chain ends in a real cause
+ * rather than goods already on their way; then the kind of stall and how long it has lasted.
+ * `list` defaults to all the player's stalled buildings.
+ */
+export function topStalls(g: Game, owner: number, n: number, list = stalledBuildings(g, owner)): Building[] {
+  const impact = new Map<number, number>(), real = new Set<number>();
+  for (const b of list) impact.set(b.id, 1);
+  for (const b of list) {
+    const c = causeOf(g, b);
+    if (!c) continue;
+    if (rootCauses(c).some((r) => r.bad)) real.add(b.id);
+    const upstream = new Set<number>();
+    for (const { c: step } of causeSteps(c)) for (const id of step.ids) if (id !== b.id) upstream.add(id);
+    for (const id of upstream) if (impact.has(id)) impact.set(id, impact.get(id)! + 1);
+  }
+  const score = (b: Building) => impact.get(b.id)! * 10 + (real.has(b.id) ? 4 : 0) + (KIND_WEIGHT[b.stall!.kind] ?? 0) + Math.min(2, (g.time - b.stallT) / 300);
+  const ranked = [...list].sort((a, b) => score(b) - score(a) || a.id - b.id);
+  // one badge per thing missing first; the same again only if there is room left
+  const out: Building[] = [], reasons = new Set<string>();
+  for (const b of ranked) if (out.length < n && !reasons.has(b.status)) { reasons.add(b.status); out.push(b); }
+  for (const b of ranked) if (out.length < n && !out.includes(b)) out.push(b);
+  return out;
+}
+

@@ -4,7 +4,8 @@
 // a save, and clears once logs arrive or it is paused. Cause chains: the walk upstream finds the
 // missing maker, the maker that is stuck in turn, and a circle of two waiting on each other. Alerts:
 // a worked-out mine, buildings no settler is free for, a toolsmith with no coal and a worker with no
-// tool are each raised once, a burst of the same kind only once. Goods flow: what is made and used is
+// tool are each raised once, a burst of the same kind only once, the same building not again soon
+// after. Badges: the three that hold up the most, each about something different. Goods flow: what is made and used is
 // counted, sampled once a minute and kept through a save. Then an AI town is sampled for what stalls
 // it, with the chains behind it.
 // Usage: npx tsx scripts/stalls.ts [seed] [aiMinutes]
@@ -13,7 +14,7 @@ import { Game } from '../src/game/game';
 import { FOODS, type BuildingType } from '../src/game/defs';
 import { decodeSave, encodeSave, restore, snapshot } from '../src/game/save';
 import { STALL_GRACE, stallText, stalled, stalledBuildings } from '../src/game/status';
-import { causeLine, causeOf, chainText, rootCauses, type Cause } from '../src/game/causes';
+import { causeLine, causeOf, chainText, rootCauses, topStalls, type Cause } from '../src/game/causes';
 import { StallWatch, type Alert } from '../src/game/alerts';
 import { FLOW_EVERY, flowReport } from '../src/game/flow';
 import type { Building } from '../src/game/types';
@@ -170,6 +171,13 @@ const flat = (c: Cause | null) => (c ? chainText(c) : '(not stalled)');
   const sc = c?.next[0];
   check(sc?.type === 'ironsmelter' && sc.text === 'waiting for iron ore' && causeLine(sc.next[0] ?? { type: null, ids: [], text: '', bad: true, next: [] }) === 'No Iron Mine', 'three steps: toolsmith → iron smelter waiting for ore → no iron mine');
   check(rootCauses(c!).length === 1 && rootCauses(c!)[0].type === 'ironmine', 'the root cause is the missing iron mine');
+  // the badges go to what holds up the most: the woodcutter the sawmill waits on, the smelter the toolsmith waits on
+  run(h, STALL_GRACE + 1);
+  const top = topStalls(h, P, 3);
+  log('top stalls:', top.map((b) => `${b.def.name} (${b.status})`).join(', '));
+  check(top.length === Math.min(3, stalledBuildings(h, P).length) && top[0] && (top[0].id === wc.id || top[0].id === sm.id), 'the first badge goes to a building others wait on');
+  check(top.slice(0, 2).every((b) => b.id === wc.id || b.id === sm.id), 'both makers that others wait on outrank the buildings waiting on them');
+  check(new Set(top.map((b) => b.status)).size === top.length, 'each badge is about something different');
 
   // a circle: the toolsmith waits for coal, the only coal mine waits for a pickaxe only the toolsmith can make
   hh.stock.iron = 6;
@@ -213,6 +221,10 @@ const flat = (c: Cause | null) => (c ? chainText(c) : '(not stalled)');
   poll(STALL_GRACE + 2);
   const ex = alerts.filter((a) => a.kind === 'exhausted');
   check(ex.length === 1 && ex[0].b.id === cm.id && /coal is worked out/.test(ex[0].title) && /geologist/.test(ex[0].hint), `a worked-out mine raises one alert, pointing at the mine (${ex[0]?.title})`);
+  // the stall clears for a moment and sets in again: old news, no second alert for ten minutes
+  cm.stall = null;
+  poll(STALL_GRACE + 4);
+  check(cm.stall?.kind === 'exhausted' && stalledBuildings(h, P).includes(cm) && alerts.filter((a) => a.kind === 'exhausted').length === 1, 'the same mine stalling again soon after is not raised again');
   // nobody free: every carrier turned digger, then two new huts
   for (const s of h.settlers.values()) if (s.owner === P && s.job === 'carrier') s.job = 'digger';
   const f1 = force(h, 'fisher', 'fisher', hh.cx + 6, hh.cz - 6), f2 = force(h, 'fisher', 'fisher', hh.cx - 5, hh.cz - 8);
@@ -240,6 +252,7 @@ for (const p of ai.players) {
   const chains = new Map<string, number>();
   for (const b of list) { const t = chainText(causeOf(ai, b)!); chains.set(t, (chains.get(t) ?? 0) + 1); }
   for (const [t, k] of chains) console.log(`   ${k > 1 ? `${k}× ` : ''}${t}`);
+  console.log(`   badges (top 3): ${topStalls(ai, p.id, 3).map((b) => `${b.def.name} — ${b.status}`).join('; ')}`);
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall ok');

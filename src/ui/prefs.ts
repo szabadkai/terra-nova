@@ -27,6 +27,10 @@ export interface Prefs {
   /** fill the screen (fullscreen) whenever a game starts; follows what the user last chose */
   immersive: boolean;
   showFps: boolean;
+  /** badges over stalled buildings: only the few that hold up the most, all of them, or none */
+  stallBadges: 'top' | 'all' | 'off';
+  /** a toast when a mine runs dry, nobody is free for a job or a tool is missing */
+  stallAlerts: boolean;
 }
 
 const KEY = 'terra-nova.prefs.v1';
@@ -48,6 +52,8 @@ export const defaultPrefs = (): Prefs => ({
   rightDrag: 'pan',
   immersive: false,
   showFps: true,
+  stallBadges: 'top',
+  stallAlerts: true,
 });
 
 /** Copy saved values over the defaults, skipping anything of the wrong type (old or hand-edited saves). */

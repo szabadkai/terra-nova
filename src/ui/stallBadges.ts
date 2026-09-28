@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import type { Game } from '../game/game';
 import { stallGoods, stalledBuildings } from '../game/status';
+import { topStalls } from '../game/causes';
+import { prefs } from './prefs';
 import type { Building } from '../game/types';
 import type { GameRenderer } from '../render/renderer';
 import { buildingIcons, goodIcons } from './icons';
@@ -16,6 +18,8 @@ const DOT_PPU = 22;
 const LACK_GLYPH: Record<string, string> = { trees: '🌲', game: '🦌', space: '🌱' };
 /** How long each good shows when a stall is about several (food: bread, fish, meat). */
 const CYCLE = 1.1;
+/** Badges shown when only the most important are (prefs.stallBadges 'top'). */
+export const TOP_BADGES = 3;
 
 interface Badge {
   el: HTMLElement;
@@ -31,7 +35,11 @@ export class StallBadges {
   readonly layer: HTMLElement;
   private badges = new Map<number, Badge>();
   private list: Building[] = [];
+  /** the ones with a badge: all of them, the few that matter most, or none */
+  private shown: Building[] = [];
   private t = 0;
+  private rankT = 0;
+  private mode = prefs.stallBadges;
   private clock = 0;
 
   constructor(private game: Game, private gr: GameRenderer, private open: (b: Building) => void) {
@@ -47,17 +55,24 @@ export class StallBadges {
   update(dt: number) {
     this.clock += dt;
     this.t -= dt;
+    if (this.mode !== prefs.stallBadges) { this.mode = prefs.stallBadges; this.t = this.rankT = 0; }
     if (this.t <= 0) {
       this.t = 0.25;
       this.list = stalledBuildings(this.game, this.game.local);
-      const keep = new Set(this.list.map((b) => b.id));
+      // ranking walks every chain, so it is redone once a second
+      this.rankT -= 0.25;
+      if (this.mode === 'top' && this.rankT <= 0) { this.rankT = 1; this.shown = topStalls(this.game, this.game.local, TOP_BADGES, this.list); }
+      if (this.mode === 'all') this.shown = this.list;
+      else if (this.mode === 'off') this.shown = [];
+      else this.shown = this.shown.filter((b) => this.list.includes(b));
+      const keep = new Set(this.shown.map((b) => b.id));
       for (const [id, bd] of this.badges) if (!keep.has(id)) { bd.el.remove(); this.badges.delete(id); }
     }
     const cam = this.gr.cam.camera;
     const W = this.layer.clientWidth, H = this.layer.clientHeight;
     // one size for all: by the zoom, not each building's depth, or near and far ones would mix
     const dot = H / (2 * Math.tan((cam.fov * Math.PI) / 360)) / this.gr.cam.dist < DOT_PPU;
-    for (const b of this.list) {
+    for (const b of this.shown) {
       // the list is a quarter of a second old: at speed a stall can clear (or the building go) in between
       if (!b.stall || !this.game.buildings.has(b.id)) { const bd = this.badges.get(b.id); if (bd) bd.el.style.display = 'none'; continue; }
       const view = this.gr.buildings.views.get(b.id);
