@@ -527,18 +527,6 @@ function sailBlades(b: MB, n = 4, len = 1.35) {
   }
 }
 
-function pigModel(b: MB, x: number, z: number, ry: number) {
-  const body = sphere(0.11, 10, 8);
-  body.scale(0.85, 0.8, 1.25);
-  b.add('pig', body, x, 0.13, z, ry);
-  b.add('pig', sphere(0.07, 8, 6), x + Math.sin(ry) * 0.14, 0.14, z + Math.cos(ry) * 0.14);
-  b.add('pig', cyl(0.03, 0.035, 0.03, 8), x + Math.sin(ry) * 0.2, 0.125, z + Math.cos(ry) * 0.2, ry, Math.PI / 2, 0);
-  for (const [dx, dz] of [[-0.05, -0.07], [0.05, -0.07], [-0.05, 0.07], [0.05, 0.07]]) {
-    const c = Math.cos(ry), s = Math.sin(ry);
-    b.add('pig', box(0.03, 0.08, 0.03), x + c * dx + s * dz, 0.04, z - s * dx + c * dz);
-  }
-}
-
 /** A donkey standing in a paddock, facing `ry`. */
 function donkeyModel(b: MB, x: number, z: number, ry: number) {
   const c = Math.cos(ry), s = Math.sin(ry);
@@ -948,7 +936,8 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.anchors.piles.push(new THREE.Vector3(-0.75, 0, 0.62));
   },
   pigfarm(mb) {
-    // long thatched sty with a lean-to, a round wattle pen full of pigs, a trough
+    // long thatched sty with a lean-to, a round wattle pen and a trough; the herd in it is drawn
+    // live by pigs.ts, which keeps its pigs inside this pen and feeds them at this trough
     house(mb, { w: 1.9, d: 0.95, wallH: 0.72, roofH: 0.62, x: -0.25, z: -1.05, roofMat: 'thatch', door: -0.45, wins: [0.3], chim: [0.55, -0.1] });
     shed(mb, 1.2, -1.05, 0.95, 0.55, 0.5, 0.72, 'thatch', 'x');
     const pen: [number, number][] = [];
@@ -961,11 +950,6 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.add('soil', new THREE.CircleGeometry(1.25, 20).scale(1, 0.63, 1), 0.05, 0.015, 0.55, 0, -Math.PI / 2, 0);
     mb.add('wood', box(0.7, 0.1, 0.16, 3), -0.7, 0.05, 0.2, 0.3);
     mb.add('hay', sphere(0.2, 8, 6, Math.PI * 2, Math.PI / 2), 0.8, 0, 0.1);
-    const pigs = mb.mover('pigs', 0, 0, 0, 'y');
-    pigModel(pigs, 0.5, 0.55, 0.6);
-    pigModel(pigs, -0.35, 0.85, 2.4);
-    pigModel(pigs, 0.85, 0.75, 4.0);
-    pigModel(pigs, -0.8, 0.5, 1.2);
     mb.anchors.piles.push(new THREE.Vector3(1.55, 0, 1.3));
   },
   slaughter(mb) {
@@ -984,7 +968,7 @@ const designs: Partial<Record<BuildingType, Design>> = {
       const a = -0.4 + (k / 12) * Math.PI * 1.35;
       pen.push([0.72 + Math.cos(a) * 0.62, 0.55 + Math.sin(a) * 0.55]);
     }
-    fence(mb, pen, 0, 0.28);
+    fence(mb, pen, 0, 0.28); // pigs waiting for the butcher stand in here (pigs.ts)
     mb.add('wood', cyl(0.14, 0.15, 0.24, 10, 3), -0.9, 0, 0.62);
     mb.add('metal', box(0.14, 0.08, 0.015), -0.85, 0.3, 0.62, 0.4, 0, 0.3);
     barrel(mb, -0.55, 0, 0.72, 0.85);

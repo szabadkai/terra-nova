@@ -13,6 +13,7 @@ import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, Projecti
 import { SettlersRenderer } from './settlers';
 import { DonkeysRenderer } from './donkeys';
 import { CatapultsRenderer } from './catapults';
+import { PigsRenderer } from './pigs';
 import { BuildingsRenderer } from './buildings';
 import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
@@ -136,6 +137,8 @@ export class GameRenderer {
   settlers: SettlersRenderer;
   donkeys: DonkeysRenderer;
   catapults: CatapultsRenderer;
+  /** the herds in the pig farms' pens and the pigs waiting at the slaughterhouses */
+  pigs: PigsRenderer;
   animals: AnimalsRenderer;
   arrows: ProjectilesRenderer;
   piles: PilesRenderer;
@@ -244,6 +247,8 @@ export class GameRenderer {
     this.scene.add(this.buildings.group);
     this.lanterns = new LanternsRenderer(game, this.buildings);
     this.scene.add(this.lanterns.group);
+    this.pigs = new PigsRenderer(game, this.buildings, (n, x, z, v) => this.sound?.(n, x, z, v));
+    this.scene.add(this.pigs.group);
     this.particles = new Particles();
     this.scene.add(this.particles.group);
     this.ships = new ShipsRenderer(game, this.piles, this.particles);
@@ -923,6 +928,7 @@ export class GameRenderer {
     this.settlers.update(dt, this.time, this.cam.camera);
     this.donkeys.update(dt, this.time, this.cam.camera);
     this.catapults.update(dt, this.time, this.cam.camera);
+    this.pigs.update(dt, this.time, this.cam.camera);
     this.animals.update(dt, this.time);
     this.arrows.update();
     this.birds.update(dt, night);

@@ -596,6 +596,118 @@ export function buildDeerGeos() {
   return { body: prep(bodyG), leg: prep(leg) };
 }
 
+// ------------------------------------------------------------------ pigs
+/** Where the head pivots on the body, and where the legs hang from it (x, z at PIG_HIP_Y). */
+export const PIG_NECK: [number, number, number] = [0, 0.2, 0.15];
+export const PIG_HIP_Y = 0.14;
+export const PIG_HIPS: [number, number][] = [[-0.07, 0.105], [0.07, 0.105], [-0.07, -0.11], [0.07, -0.11]];
+
+/**
+ * A farm pig facing +z at full size, the ground at y 0. `body` is the barrel with its curly tail
+ * and mud splashed up the belly, `spotted` the same barrel with the black patches of an Old Spot;
+ * `head` pivots at PIG_NECK (its origin) with the jowls, the snout and the flaps of ears; `leg`
+ * hangs from the hip at its origin down to a muddy trotter. `good` is a whole pig in one piece
+ * for carriers' shoulders and ships' decks.
+ */
+export function buildPigGeos() {
+  const skin = lin(0xeaa597), belly = lin(0xdc988a), snout = lin(0xe28c86), mud = lin(0x5a4230);
+  const spot = lin(0x2c2527), hoof = lin(0x3a2f29), dark = lin(0x151011);
+  const mix = (a: number[], b: number[], k: number): [number, number, number] => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const ramp = (e0: number, e1: number, v: number) => { const t = Math.max(0, Math.min(1, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+  const skinAt = (x: number, y: number, z: number, spotted: boolean): [number, number, number] => {
+    let c = mix(skin, belly, ramp(0.19, 0.1, y));
+    if (spotted) c = mix(c, spot, 0.92 * ramp(0.22, 0.55, Math.sin(x * 24 + 1.7) * Math.sin(y * 21 + 0.4) * Math.sin(z * 17 + 2.3) + 0.45 * Math.sin(z * 9 + x * 6 + 0.5)));
+    c = mix(c, mud, ramp(0.12, 0.065, y) * 0.6);
+    const k = 0.95 + hash2(Math.round(x * 70), Math.round(y * 70) + Math.round(z * 70) * 3, 3) * 0.1;
+    return [c[0] * k, c[1] * k, c[2] * k];
+  };
+  const flat = (g: THREE.BufferGeometry, c: [number, number, number]) => colorize(g, () => c);
+
+  // the barrel, turned along z: a big round ham, a deep belly, shoulders narrowing to the neck
+  const key = [[0, -0.232], [0.06, -0.224], [0.098, -0.2], [0.122, -0.16], [0.134, -0.105], [0.137, -0.04],
+    [0.134, 0.03], [0.126, 0.09], [0.112, 0.14], [0.092, 0.178], [0.066, 0.2], [0, 0.212]];
+  const prof = new THREE.SplineCurve(key.map(([r, a]) => new THREE.Vector2(r, a))).getPoints(22);
+  for (const v of prof) v.x = Math.max(0, v.x);
+  const barrel = () => {
+    let g: THREE.BufferGeometry = new THREE.LatheGeometry(prof, 24);
+    g.rotateX(Math.PI / 2);
+    g.deleteAttribute('normal');
+    g.deleteAttribute('uv');
+    g = mergeVertices(g, 1e-5);
+    const p = g.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), z = p.getZ(i);
+      // flatter along the back and a little raised over the ham, deeper in the belly, narrower in the flanks
+      const ny = y > 0 ? y * 0.9 + 0.012 * Math.max(0, Math.cos((z + 0.12) * 9)) * (y / 0.14) : y * 1.06;
+      p.setXYZ(i, p.getX(i) * 0.88, ny, z);
+    }
+    g.computeVertexNormals();
+    g.translate(0, 0.205, 0);
+    return g;
+  };
+  const tail = () => {
+    const g = new THREE.TorusGeometry(0.024, 0.0078, 5, 12, Math.PI * 1.6);
+    g.rotateZ(0.6);
+    g.translate(0, 0.258, -0.228);
+    return g;
+  };
+  const skinned = (g: THREE.BufferGeometry, spotted = false) => colorize(g, (x, y, z) => skinAt(x, y, z, spotted));
+  const body = merge([skinned(barrel()), skinned(tail())]);
+  const spotted = merge([skinned(barrel(), true), skinned(tail())]);
+
+  const headParts = () => {
+    const N = PIG_NECK;
+    const skinHead = (g: THREE.BufferGeometry, k = 1) => colorize(g, (x, y, z) => {
+      const c = skinAt(x + N[0], y + N[1], z + N[2], false);
+      return [c[0] * k, c[1] * k * 0.98, c[2] * k * 0.98];
+    });
+    const skull = new THREE.SphereGeometry(0.095, 16, 12);
+    skull.scale(1, 0.92, 1.12);
+    skull.translate(0, 0.012, 0.075);
+    const jowl = new THREE.SphereGeometry(0.072, 12, 9);
+    jowl.scale(1.12, 0.8, 1);
+    jowl.translate(0, -0.036, 0.078);
+    const muzzle = new THREE.CylinderGeometry(0.045, 0.052, 0.07, 16);
+    muzzle.rotateX(Math.PI / 2);
+    muzzle.translate(0, -0.012, 0.19);
+    const disc = new THREE.CircleGeometry(0.045, 16);
+    disc.translate(0, -0.012, 0.2255);
+    const parts = [skinHead(skull), skinHead(jowl), skinHead(muzzle), flat(disc, snout)];
+    for (const s of [-1, 1]) {
+      const nostril = new THREE.CircleGeometry(0.009, 8);
+      nostril.translate(s * 0.017, -0.014, 0.2265);
+      const eye = new THREE.SphereGeometry(0.012, 8, 6);
+      eye.translate(s * 0.058, 0.045, 0.15);
+      // a thin rounded flap hinged on the crown, pricked forward, up and out
+      const ear = new THREE.SphereGeometry(0.045, 12, 6);
+      ear.scale(0.8, 0.22, 1.3);
+      ear.translate(0, 0, 0.052);
+      ear.rotateX(-0.55);
+      ear.rotateY(s * 0.35);
+      ear.rotateZ(-s * 0.3);
+      ear.translate(s * 0.05, 0.075, 0.035);
+      parts.push(flat(nostril, dark), flat(eye, dark), skinHead(ear, 0.94));
+    }
+    return parts;
+  };
+  const head = merge(headParts());
+
+  const legParts = () => {
+    const g = new THREE.CylinderGeometry(0.036, 0.03, PIG_HIP_Y, 8);
+    g.translate(0, -PIG_HIP_Y / 2, 0);
+    return colorize(g, (x, y, z) => (y < -PIG_HIP_Y + 0.024 ? hoof : mix(skinAt(x, y + PIG_HIP_Y, z, false), mud, ramp(-0.04, -0.105, y) * 0.8)));
+  };
+  const leg = prep(legParts());
+
+  // one piece: legs hanging straight, a little smaller than the herd's pigs
+  const whole: THREE.BufferGeometry[] = [skinned(barrel()), skinned(tail())];
+  for (const hp of headParts()) whole.push(hp.translate(PIG_NECK[0], PIG_NECK[1], PIG_NECK[2]));
+  for (const [hx, hz] of PIG_HIPS) whole.push(legParts().translate(hx, PIG_HIP_Y, hz));
+  const good = merge(whole);
+  good.scale(0.55, 0.55, 0.55);
+  return { body, spotted, head, leg, good };
+}
+
 // ------------------------------------------------------------------ donkeys
 /** A pack donkey facing +z: barrel body with head, ears, mane and tail; legs pivot at the hip
  *  (y = 0.34); the pack saddle is drawn on top only while it carries something. */
@@ -781,11 +893,6 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
   const bone = new THREE.CylinderGeometry(0.012, 0.012, 0.12, 5);
   bone.rotateZ(Math.PI / 2);
   bone.translate(0.1, 0.06, 0);
-  const pig = new THREE.SphereGeometry(0.09, 8, 6);
-  pig.scale(0.9, 0.8, 1.3);
-  pig.translate(0, 0.09, 0);
-  const pigHead = new THREE.SphereGeometry(0.055, 8, 6);
-  pigHead.translate(0, 0.1, 0.12);
   const bucket = new THREE.CylinderGeometry(0.07, 0.055, 0.12, 10);
   bucket.translate(0, 0.06, 0);
   const waterTop = new THREE.CircleGeometry(0.065, 10);
@@ -832,7 +939,7 @@ export function buildGoodGeos(): Record<Good, THREE.BufferGeometry> {
     log: logG, board: c(prep(board), 0xc8a070), stone: c(prep(stone), 0x8a867e, 0.2),
     grain: sack(0xd8c070), flour: sack(0xf0ece0), bread: c(prep(bread), 0xb07030),
     fish: merge([c(fish, 0xa8b8c0), c(fishTail, 0x8898a0)]), meat: merge([c(meat, 0xb03a30), c(bone, 0xf0e8d8)]),
-    pig: merge([c(pig, 0xe8a898), c(pigHead, 0xe8a090)]), water: merge([c(bucket, 0x8a6a48), c(waterTop, 0x4a8ab0, 0.02)]),
+    pig: buildPigGeos().good, water: merge([c(bucket, 0x8a6a48), c(waterTop, 0x4a8ab0, 0.02)]),
     coal: lump(0x222224, 0), ironore: lump(0x8a4a30, 1), goldore: lump(0xc8a040, 2),
     iron: bar(0x5a5e64), gold: bar(0xe8b840), sword, bow, wine: amphora,
     axe, pickaxe, saw, hammer, shovel, scythe, rod,

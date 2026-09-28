@@ -455,6 +455,30 @@ export class Audio {
         this.tone(t, 110, 0.18, 'triangle', 0.35, out, 55);
         this.noise(t + 0.08, 0.35, 'bandpass', 1800, 1.2, 0.09, out, 700);
         break;
+      case 'grunt': {
+        // a pig: one to three short snorts, a buzzing low voice through a narrow snout
+        const ctx = this.ctx;
+        const n = 1 + Math.floor(Math.random() * 3);
+        const f0 = 90 + Math.random() * 50;
+        for (let k = 0; k < n; k++) {
+          const t0 = t + k * (0.15 + Math.random() * 0.07);
+          const o = ctx.createOscillator();
+          o.type = 'sawtooth';
+          o.frequency.setValueAtTime(f0 * 1.3, t0);
+          o.frequency.exponentialRampToValueAtTime(f0 * 0.8, t0 + 0.13);
+          const bp = ctx.createBiquadFilter();
+          bp.type = 'bandpass';
+          bp.frequency.value = 480 + Math.random() * 220;
+          bp.Q.value = 2.4;
+          const gn = ctx.createGain();
+          this.env(gn, t0, 0.012, 0.55, 0.12);
+          o.connect(bp).connect(gn).connect(out);
+          o.start(t0);
+          o.stop(t0 + 0.2);
+          this.noise(t0, 0.09, 'bandpass', 380, 1.5, 0.12, out);
+        }
+        break;
+      }
       case 'crash':
         // a stone comes down on masonry
         this.noise(t, 0.4, 'lowpass', 340, 1, 0.65, out, 110);
