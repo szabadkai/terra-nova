@@ -34,7 +34,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <button class="wide primary big" id="start">Found your settlement</button>
         <div class="row"><button class="wide" id="help">How to play</button><button class="wide" id="options">Options</button></div>
       </div>
-      <div class="menu-foot">All graphics, sounds and music are generated procedurally in your browser.</div>
+      <div class="menu-foot">All graphics and most sounds are generated procedurally in your browser.</div>
     </div>
     <div class="panel help hidden" id="helpbox">
       <h2>How to play</h2>

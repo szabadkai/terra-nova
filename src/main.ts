@@ -148,7 +148,7 @@ function setupGlobalInput() {
   const startAudio = () => {
     try {
       if (!audio.started) audio.start();
-      else if (audio.ctx?.state === 'suspended') void audio.ctx.resume();
+      else audio.unlock();
     } catch { /* audio unavailable */ }
   };
   window.addEventListener('pointerdown', startAudio);

@@ -281,7 +281,7 @@ export class GameMenu {
     c.appendChild(this.slider('Effects', 'Work, building and battle sounds', 0, 1, 0.01, () => prefs.sfx, (v) => { prefs.sfx = v; apply(); }, pct, () => a.play('built')));
     c.appendChild(this.slider('Ambience', 'Wind, rain and birdsong', 0, 1, 0.01, () => prefs.ambience, (v) => { prefs.ambience = v; apply(); }, pct));
     c.appendChild(h('h3', '', 'Music'));
-    c.appendChild(this.toggle('Play music', 'A generative lute over a drone', () => prefs.musicOn, (v) => { prefs.musicOn = v; apply(); }));
+    c.appendChild(this.toggle('Play music', a.soundtrack ? 'The soundtrack, shuffled' : 'A generative lute over a drone', () => prefs.musicOn, (v) => { prefs.musicOn = v; apply(); }));
     c.appendChild(this.slider('Music volume', '', 0, 1, 0.01, () => prefs.music, (v) => { prefs.music = v; apply(); }, pct));
     this.resetButton(c, 'Reset sound to defaults', () => {
       const d = defaultPrefs();

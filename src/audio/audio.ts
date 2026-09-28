@@ -1,5 +1,6 @@
-// Audio: ambience, positional sound effects and generative music. Effects that have an
-// original Settlers III sample use it; everything else is synthesised.
+// Audio: ambience, positional sound effects and music. Effects that have an original
+// Settlers III sample use it; everything else is synthesised. Music is the recorded
+// soundtrack when it can be loaded, otherwise a generative lute.
 
 // The original samples are served by the Vite dev server straight from the local reference
 // extraction. It is gitignored and never bundled, so builds fall back to the synth versions.
@@ -17,6 +18,30 @@ const SAMPLES: Record<string, { files: string[]; gain: number }> = {
   harvest: { files: ['09_gras_0', '09_gras_1'], gain: 0.4 },
   bird: { files: ['11_bird_0', '11_bird_1', '11_bird_2', '11_bird_3', '11_bird_4'], gain: 0.2 },
 };
+
+// The soundtrack streams from public/music, served next to the page. Loudness is each track's
+// measured gated RMS in dBFS; playback pulls tracks most of the way towards a common level so
+// quiet pieces stay quieter without dropping out. If the first track will not load (a build
+// without the files, or no AAC decoder) the generative lute plays instead.
+const MUSIC_DIR = 'music/';
+const TRACKS: { file: string; loudness: number }[] = [
+  { file: '01.m4a', loudness: -22.4 },
+  { file: '02.m4a', loudness: -22.8 },
+  { file: '03.m4a', loudness: -25.8 },
+  { file: '04.m4a', loudness: -24.7 },
+  { file: '05.m4a', loudness: -24.7 },
+  { file: '06.m4a', loudness: -22.3 },
+  { file: '07.m4a', loudness: -22.6 },
+  { file: '08.m4a', loudness: -27.8 },
+  { file: '09.m4a', loudness: -19.8 },
+  { file: '10.m4a', loudness: -30.1 },
+  { file: '11.m4a', loudness: -28.8 },
+  { file: '12.m4a', loudness: -24.3 },
+];
+type Track = (typeof TRACKS)[number];
+/** a track at -24 dBFS plays at this gain, under the effects */
+const TRACK_LEVEL = 0.5;
+const trackLevel = (tr: Track) => TRACK_LEVEL * 10 ** (((-24 - tr.loudness) * 0.6) / 20);
 
 // Level-match samples: scale to a common short-term loudness (loudest 50 ms RMS) without clipping.
 function normalize(buf: AudioBuffer) {
@@ -43,6 +68,17 @@ export class Audio {
   private sfx!: GainNode;
   private amb!: GainNode;
   private musicGain!: GainNode;
+  private synthGain!: GainNode;
+  private trackGain!: GainNode;
+  private track: HTMLAudioElement | null = null;
+  /** tracks believed playable; empty once the soundtrack failed to load */
+  private tracks = TRACKS.slice();
+  private queue: Track[] = [];
+  private current: Track | null = null;
+  private trackOk = false;
+  /** the browser refused play() without a gesture: retry on the next one */
+  private trackBlocked = false;
+  private trackTimer = 0;
   private noiseBuf!: AudioBuffer;
   private windGain!: GainNode;
   private rainGain!: GainNode;
@@ -80,13 +116,17 @@ export class Audio {
     this.amb.connect(this.master);
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = this.musicLevel();
-    // simple reverb for music
+    this.musicGain.connect(this.master);
+    // the generative lute, with a simple reverb
+    this.synthGain = ctx.createGain();
+    this.synthGain.gain.value = 0.22;
     const conv = ctx.createConvolver();
     conv.buffer = this.impulse(2.4);
     const wet = ctx.createGain();
     wet.gain.value = 0.35;
-    this.musicGain.connect(this.master);
-    this.musicGain.connect(conv).connect(wet).connect(this.master);
+    this.synthGain.connect(this.musicGain);
+    this.synthGain.connect(conv).connect(wet).connect(this.musicGain);
+    this.startSoundtrack();
     // noise buffer
     const len = ctx.sampleRate * 2;
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -121,6 +161,52 @@ export class Audio {
     rain.connect(rf).connect(this.rainGain).connect(this.amb);
     rain.start();
     if (import.meta.env.DEV) void this.loadSamples();
+  }
+
+  private startSoundtrack() {
+    const ctx = this.ctx!;
+    const el = document.createElement('audio');
+    el.preload = 'auto';
+    this.trackGain = ctx.createGain();
+    ctx.createMediaElementSource(el).connect(this.trackGain).connect(this.musicGain);
+    el.onplaying = () => { this.trackOk = true; };
+    // a short breath of ambience between tracks
+    el.onended = () => { this.trackTimer = window.setTimeout(() => this.nextTrack(), 4000 + Math.random() * 8000); };
+    el.onerror = () => {
+      // the first track failing means this build has no soundtrack; later ones are just skipped
+      this.tracks = this.trackOk ? this.tracks.filter((tr) => tr !== this.current) : [];
+      this.queue = this.queue.filter((tr) => this.tracks.includes(tr));
+      this.nextTrack();
+    };
+    this.track = el;
+    this.nextTrack();
+  }
+
+  private nextTrack() {
+    clearTimeout(this.trackTimer);
+    const el = this.track;
+    if (!el || !this.tracks.length) return;
+    if (!this.queue.length) {
+      const q = this.tracks.slice();
+      for (let i = q.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [q[i], q[j]] = [q[j], q[i]];
+      }
+      // no repeat across the reshuffle
+      if (q.length > 1 && q[0] === this.current) q.push(q.shift()!);
+      this.queue = q;
+    }
+    this.current = this.queue.shift()!;
+    this.trackGain.gain.value = trackLevel(this.current);
+    el.src = MUSIC_DIR + this.current.file;
+    if (this.musicOn) this.playTrack();
+  }
+
+  private playTrack() {
+    this.trackBlocked = false;
+    this.track?.play().catch((e: DOMException) => {
+      if (e.name === 'NotAllowedError') this.trackBlocked = true;
+    });
   }
 
   private async loadSamples() {
@@ -167,7 +253,7 @@ export class Audio {
   }
 
   private musicLevel() {
-    return this.musicOn ? 0.22 * this.musicVol : 0;
+    return this.musicOn ? this.musicVol : 0;
   }
   private ambLevel() {
     return 0.5 * this.ambVol * (this.paused ? 0.3 : 1);
@@ -183,6 +269,20 @@ export class Audio {
   setMusic(on: boolean) {
     this.musicOn = on;
     this.ramp(this.musicGain, this.musicLevel());
+    const el = this.track;
+    if (!el) return;
+    // stop streaming once faded out; pick up where it left off (not mid-gap between tracks)
+    if (!on) setTimeout(() => { if (!this.musicOn) el.pause(); }, 300);
+    else if (el.paused && !el.ended && el.src) this.playTrack();
+  }
+  /** a user gesture: wake a suspended context and any music the browser held back */
+  unlock() {
+    if (this.ctx?.state === 'suspended') void this.ctx.resume();
+    if (this.trackBlocked && this.musicOn) this.playTrack();
+  }
+  /** whether music is the recorded soundtrack (false once it failed and the lute took over) */
+  get soundtrack() {
+    return this.tracks.length > 0;
   }
   setMix(music: number, sfx: number, ambience: number) {
     this.musicVol = music;
@@ -529,8 +629,8 @@ export class Audio {
       src.start(t, Math.random() * 1.5);
       src.stop(t + 3.3);
     }
-    // generative music: lute arpeggios over a drone, dorian mode
-    if (!this.musicOn) return;
+    // generative music: lute arpeggios over a drone, dorian mode, when there is no soundtrack
+    if (!this.musicOn || this.soundtrack) return;
     this.musicT -= dt;
     if (this.musicT <= 0) {
       const beat = 0.36;
@@ -539,17 +639,17 @@ export class Audio {
       if (this.step % 16 === 0) {
         this.chord = (this.chord + 1) % prog.length;
         // drone
-        this.tone(t, this.scale[prog[this.chord][0]] / 2, beat * 16, 'triangle', 0.08, this.musicGain, undefined, 1.2);
+        this.tone(t, this.scale[prog[this.chord][0]] / 2, beat * 16, 'triangle', 0.08, this.synthGain, undefined, 1.2);
       }
       const ch = prog[this.chord];
       const pattern = [0, 1, 2, 1, 2, 0, 1, 2];
       if (Math.random() < 0.85) {
         const deg = ch[pattern[this.step % 8]] + (this.step % 16 >= 8 && Math.random() < 0.3 ? 2 : 0);
         const f = this.scale[deg % this.scale.length] * (Math.random() < 0.15 ? 2 : 1);
-        this.pluck(t, f, 1.6, 0.5, this.musicGain);
+        this.pluck(t, f, 1.6, 0.5, this.synthGain);
       }
       if (this.step % 4 === 2 && Math.random() < 0.3) {
-        this.tone(t, this.scale[ch[2] % this.scale.length] * 2, beat * 2, 'sine', 0.05, this.musicGain, undefined, 0.1);
+        this.tone(t, this.scale[ch[2] % this.scale.length] * 2, beat * 2, 'sine', 0.05, this.synthGain, undefined, 0.1);
       }
       this.step++;
     }
