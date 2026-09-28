@@ -2,6 +2,7 @@
 import type { Game } from './game';
 import { A, abortPlan, claim, enter, exit, plan, turnTo } from './settlers';
 import type { Building, Settler } from './types';
+import { GUARD_RANGE, LEASH } from './orders';
 
 export function isSoldier(s: Settler) {
   return s.job === 'swordsman' || s.job === 'bowman';
@@ -316,6 +317,12 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
       s.engaged = 0;
     } else {
       if (s.next >= 0) return true; // finish step
+      // a guard lets a fleeing foe go once the chase leads too far from his post
+      if (s.sstate === 'hold' && s.order >= 0 && Math.hypot(e.x - g.world.nx(s.order), e.z - g.world.ny(s.order)) > LEASH) {
+        s.engaged = 0;
+        if (e.engaged === s.id) e.engaged = 0;
+        return false;
+      }
       s.path = null;
       const tgt = Math.atan2(e.x - s.x, e.z - s.z);
       s.heading = turnTo(s.heading, tgt, dt * 8);
@@ -346,10 +353,11 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
   }
   // scan for enemies
   s.scanT -= dt;
-  const combatant = s.sstate === 'attack' || s.sstate === 'defend' || s.sstate === 'moving' || s.sstate === 'idle' || s.sstate === 'return';
+  const combatant = s.sstate === 'attack' || s.sstate === 'defend' || s.sstate === 'moving' || s.sstate === 'idle' || s.sstate === 'return' || s.sstate === 'hold';
   if (combatant && s.scanT <= 0) {
     s.scanT = 0.25;
-    const near = enemySoldierNear(g, s, s.job === 'bowman' ? BOW_RANGE : MELEE_RANGE + 1.4);
+    const guard = s.sstate === 'hold';
+    const near = enemySoldierNear(g, s, s.job === 'bowman' ? BOW_RANGE : guard ? GUARD_RANGE : MELEE_RANGE + 1.4);
     if (near) {
       const d = Math.hypot(near.x - s.x, near.z - s.z);
       if (s.job === 'bowman' && d > MELEE_RANGE + 0.2) {
@@ -367,6 +375,14 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
       } else if (d <= MELEE_RANGE + 1.4 && regS(g, near) === regS(g, s)) {
         engage(g, s, near);
         return true;
+      } else if (guard && regS(g, near) === regS(g, s) && s.order >= 0
+        && Math.hypot(near.x - g.world.nx(s.order), near.z - g.world.ny(s.order)) < LEASH) {
+        // a guard charges a foe that comes near his post
+        if (!s.actions.length || s.actions[0].k !== 'walk') {
+          s.actions.length = 0;
+          s.actions.push(A.walk(near.next >= 0 ? near.next : near.node, true));
+        }
+        return false;
       }
     }
   }
@@ -376,6 +392,7 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
   switch (s.sstate) {
     case 'attack': return thinkAttack(g, s);
     case 'defend': return thinkDefend(g, s);
+    case 'hold': return thinkHold(g, s);
     case 'return':
     case 'idle': {
       // go home if we have one
@@ -457,6 +474,17 @@ function thinkAttack(g: Game, s: Settler): boolean {
     }
   }
   plan(s, [A.anim('idle', 0.6)]);
+  return false;
+}
+
+/** A guard goes back to his post and stands there. */
+function thinkHold(g: Game, s: Settler): boolean {
+  const w = g.world;
+  if (s.order < 0) { s.sstate = 'idle'; return false; }
+  if (s.node === s.order) { s.fails = 0; return false; }
+  // the post may have been built over, or be out of reach: stand where he is
+  if (!w.walkable(s.order) || s.fails > 3) { s.order = s.node; s.fails = 0; return false; }
+  plan(s, [A.walk(s.order)], () => { s.fails++; });
   return false;
 }
 

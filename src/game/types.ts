@@ -45,7 +45,7 @@ export type Action =
   | { k: 'do'; fn: () => boolean | void }
   | { k: 'wait'; dur: number; t?: number };
 
-export type SoldierState = 'garrison' | 'idle' | 'moving' | 'attack' | 'defend' | 'fight' | 'return' | 'ship';
+export type SoldierState = 'garrison' | 'idle' | 'moving' | 'attack' | 'defend' | 'fight' | 'return' | 'ship' | 'hold';
 
 export interface Settler {
   id: number;

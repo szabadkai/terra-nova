@@ -338,3 +338,6 @@ label.opt-switch { cursor: pointer; }
   .keys-grid { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .keys-grid dd { margin-bottom: 8px; }
 }
+
+/* box selection of soldiers */
+.selbox { position: fixed; z-index: 30; pointer-events: none; border: 1px solid rgba(255, 224, 150, 0.9); background: rgba(255, 214, 120, 0.12); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); border-radius: 2px; }

@@ -73,6 +73,13 @@ const KEYS_ORDERS: [string, string][] = [
   ['Right-click', 'Cancel placing, casting or the selection'],
   ['<kbd>Del</kbd>', 'Demolish the selected building'],
 ];
+const KEYS_ARMY: [string, string][] = [
+  ['Left-drag', 'Draw a box around your soldiers to pick them (<kbd>Shift</kbd> adds)'],
+  ['Double-click a soldier', 'Pick all of his kind in view'],
+  ['Right-click the ground', 'March the picked soldiers there to stand guard'],
+  ['Right-click a stronghold', 'Storm an enemy one, or man one of yours'],
+  ['<kbd>R</kbd>', 'Send the picked soldiers back to duty'],
+];
 const KEYS_GAME: [string, string][] = [
   ['<kbd>Esc</kbd>', 'Cancel or deselect, then open this menu'],
   ['<kbd>F10</kbd>', 'Open or close this menu'],
@@ -302,6 +309,7 @@ export class GameMenu {
     };
     keys('View', KEYS_VIEW);
     keys('Orders', KEYS_ORDERS);
+    keys('Soldiers', KEYS_ARMY);
     keys('Game', KEYS_GAME);
     keys('Touch', KEYS_TOUCH);
     this.resetButton(c, 'Reset controls to defaults', () => {

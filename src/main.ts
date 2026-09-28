@@ -165,6 +165,7 @@ function setupGlobalInput() {
     if (k === 'F10') { e.preventDefault(); openGameMenu(); return; }
     if (k === 'Escape') {
       if (hud.cancelMode()) { /* left the targeting mode */ }
+      else if (gr.orders.chosen.length) hud.selectSoldiers([]);
       else if (gr.selected) hud.select(null);
       else openGameMenu();
       return;
@@ -175,6 +176,7 @@ function setupGlobalInput() {
     else if (k === '2') speed = pausedSpeed = 2;
     else if (k === '3') speed = pausedSpeed = 3;
     else if (k === '4') speed = pausedSpeed = 4;
+    else if ((k === 'r' || k === 'R') && gr.orders.chosen.length) hud.returnToDuty();
     else if (k === 'n' || k === 'N') {
       const n = audio.skipTrack(e.shiftKey ? -1 : 1);
       if (n) hud.message(`Music: track ${n} of ${audio.trackCount}`);
@@ -194,7 +196,11 @@ function setupGlobalInput() {
 function bindCanvas(c: HTMLCanvasElement) {
   let downX = 0, downY = 0, downBtn = -1, multiTouch = false;
   const active = new Set<number>();
+  // left-drag with the mouse draws a box around soldiers to pick
+  let box: HTMLElement | null = null;
+  const boxEnd = () => { box?.remove(); box = null; };
   c.addEventListener('pointerdown', (e) => {
+    boxEnd();
     active.add(e.pointerId);
     if (active.size > 1) multiTouch = true;
     if (active.size === 1) { downX = e.clientX; downY = e.clientY; downBtn = e.button; multiTouch = false; }
@@ -207,6 +213,16 @@ function bindCanvas(c: HTMLCanvasElement) {
   let tipT = 0;
   c.addEventListener('pointermove', (e) => {
     if (state !== 'play') return;
+    if (e.pointerType === 'mouse' && (e.buttons & 1) && downBtn === 0 && hud && !gr.placing && !gr.casting && !gr.expedition && !gr.prospecting && !gr.pioneering
+      && (box || Math.hypot(e.clientX - downX, e.clientY - downY) > 8)) {
+      if (!box) { box = document.createElement('div'); box.className = 'selbox'; uiRoot.appendChild(box); }
+      box.style.left = `${Math.min(downX, e.clientX)}px`;
+      box.style.top = `${Math.min(downY, e.clientY)}px`;
+      box.style.width = `${Math.abs(e.clientX - downX)}px`;
+      box.style.height = `${Math.abs(e.clientY - downY)}px`;
+      hud.hideTip();
+      return;
+    }
     const p = gr.pickGround(e.clientX, e.clientY);
     gr.hoverNode = gr.pickNode(p);
     gr.hoverPoint = p;
@@ -228,7 +244,10 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))]) {
       const owner = game.players[b.owner];
       const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
-      hud.showTip(e, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}`);
+      // with soldiers picked: what a right-click would have them do
+      const n = gr.orders.chosen.length;
+      const act = n && b.def.military && b.state === 'done' ? (b.owner !== game.local ? `<br><b class="bad">Right-click: storm it with ${n}</b>` : '<br><b>Right-click: man it</b>') : '';
+      hud.showTip(e, `<b>${b.def.name}</b><br><span class="muted">${owner.name}</span>${st ? `<br>${st}` : ''}${act}`);
       c.style.cursor = 'pointer';
     } else {
       hud.hideTip();
@@ -238,21 +257,42 @@ function bindCanvas(c: HTMLCanvasElement) {
   c.addEventListener('pointerleave', () => hud?.hideTip());
   const up = (e: PointerEvent) => {
     active.delete(e.pointerId);
+    if (box) {
+      const r = box.getBoundingClientRect();
+      boxEnd();
+      if (hud && state === 'play') hud.selectSoldiers(gr.orders.inRect(gr.cam.camera, c, r.left, r.top, r.right, r.bottom), e.shiftKey);
+      return;
+    }
     if (state !== 'play' || !hud) return;
     if (multiTouch) { if (active.size === 0) multiTouch = false; return; }
     const moved = Math.hypot(e.clientX - downX, e.clientY - downY) > (e.pointerType === 'touch' ? 12 : 6);
     if (moved || e.button !== downBtn) return;
     if (e.button === 0) onClick(e);
     else if (e.button === 2) {
-      if (!hud.cancelMode()) hud.select(null);
+      if (hud.cancelMode()) return;
+      // with soldiers picked, a right-click gives them their orders
+      if (gr.orders.chosen.length) hud.commandAt(e.clientX, e.clientY);
+      else hud.select(null);
     }
   };
   c.addEventListener('pointerup', up);
-  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); });
+  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); boxEnd(); });
+  // double-click a soldier: every one of his kind in view
+  c.addEventListener('dblclick', (e) => {
+    if (state !== 'play' || !hud || gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering || gr.commanding) return;
+    const s = gr.pickSettler(e.clientX, e.clientY, 26);
+    if (!s || !gr.orders.chosen.includes(s.id)) return;
+    const r = c.getBoundingClientRect();
+    hud.selectSoldiers(gr.orders.inRect(gr.cam.camera, c, r.left, r.top, r.right, r.bottom, s.job), e.shiftKey);
+  });
 }
 
 function onClick(e: PointerEvent) {
   if (!hud) return;
+  if (gr.commanding) {
+    if (hud.commandAt(e.clientX, e.clientY, gr.commanding) && !e.shiftKey) hud.startCommanding(null);
+    return;
+  }
   if (gr.casting) {
     const p = gr.pickGround(e.clientX, e.clientY);
     if (p) hud.castAt(p.x, p.z, e.shiftKey);
@@ -288,7 +328,7 @@ function onClick(e: PointerEvent) {
   // settlers win when the click is right on them (or no building was hit)
   const s = gr.pickSettler(e.clientX, e.clientY, b ? 12 : 26);
   const ship = s ? 0 : gr.pickShip(e.clientX, e.clientY);
-  if (s) hud.select({ kind: 'settler', id: s.id });
+  if (s) hud.select({ kind: 'settler', id: s.id }, e.shiftKey);
   else if (ship) hud.select({ kind: 'ship', id: ship });
   else if (b) hud.select({ kind: 'building', id: b.id });
   else hud.select(null);

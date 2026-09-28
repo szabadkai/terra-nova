@@ -28,6 +28,7 @@ import { findDock } from '../game/sea';
 import { SignsRenderer } from './signs';
 import { PROBE_RADIUS, knownOre, prospectError } from '../game/geology';
 import { PIONEER_RADIUS, pioneerError } from '../game/pioneers';
+import { OrdersFX } from './orders';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 
@@ -143,6 +144,10 @@ export class GameRenderer {
   reflection: PlanarReflection;
   borders: BordersRenderer;
   spells: SpellFX;
+  /** soldiers the player has picked, and where his orders land */
+  orders: OrdersFX;
+  /** a Move or Attack order waiting for its target (from the soldiers' panel) */
+  commanding: 'move' | 'attack' | null = null;
   // interaction state
   placing: BuildingType | null = null;
   casting: SpellId | null = null;
@@ -207,6 +212,8 @@ export class GameRenderer {
     this.scene.add(this.grass.mesh);
     this.settlers = new SettlersRenderer(game, goodGeos);
     this.scene.add(this.settlers.group);
+    this.orders = new OrdersFX(game);
+    this.scene.add(this.orders.group);
     this.animals = new AnimalsRenderer(game);
     this.scene.add(this.animals.group);
     this.arrows = new ProjectilesRenderer(game);
@@ -257,6 +264,7 @@ export class GameRenderer {
 
   /** Release GPU resources and listeners so a new world can be created on a fresh canvas. */
   dispose() {
+    this.orders.dispose();
     window.removeEventListener('resize', this.onResize);
     this.cam.detach();
     this.scene.traverse((o) => {
@@ -592,6 +600,7 @@ export class GameRenderer {
       if (this.onEvent) this.onEvent(e);
       const snd = (n: string, v = 1) => this.sound?.(n, x, z, v);
       this.spells.onEvent(e, snd);
+      this.orders.onEvent(e);
       if (!near(e.x, e.z)) continue;
       switch (e.type) {
         case 'chop': P.chips(x, y, z); snd('chop'); break;
@@ -872,6 +881,7 @@ export class GameRenderer {
     G.uLightCount.value = n;
     void MAX_LIGHTS;
 
+    this.orders.update(dt);
     // selection ring
     const U = this.terrain.uniforms;
     if (this.selected) {

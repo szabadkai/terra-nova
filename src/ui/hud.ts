@@ -14,6 +14,7 @@ import type { Ship } from '../game/types';
 import { MAX_SHIPS } from '../game/defs';
 import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
 import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
+import { callOut, commandable, fieldSoldiers, orderAttack, orderGarrison, orderMove, orderReturn } from '../game/orders';
 import { buildingIcons, goodIcons } from './icons';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
@@ -309,6 +310,11 @@ export class HUD {
     c.appendChild(h('div', 'kv', `<span>Swordsmen / Bowmen</span><b>${swords} / ${bows}</b>`));
     c.appendChild(h('div', 'kv', `<span>Garrisoned / in the field</span><b>${inTowers} / ${idle}</b>`));
     c.appendChild(h('div', 'kv', `<span>Morale (gold)</span><b>${Math.round(p.morale * 100)}%</b>`));
+    const field = fieldSoldiers(g, g.local);
+    const all = h('button', 'wide', field.length ? `⚔ Select the ${field.length} in the field` : 'No soldiers in the field');
+    (all as HTMLButtonElement).disabled = !field.length;
+    all.onclick = () => { this.selectSoldiers(field.map((x) => x.id)); const f = field[0]; if (f) this.gr.cam.jumpTo(f.x, f.z + 2); };
+    c.appendChild(all);
     c.appendChild(h('h3', '', 'Strongholds'));
     const list = h('div', 'list');
     for (const b of g.buildings.values()) {
@@ -318,7 +324,7 @@ export class HUD {
       list.appendChild(row);
     }
     c.appendChild(list);
-    c.appendChild(h('p', 'note', 'To attack, select an enemy tower or castle within reach of your own military buildings and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>.'));
+    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>.'));
   }
 
   private renderFaith(c: HTMLElement) {
@@ -486,6 +492,7 @@ export class HUD {
     else if (this.gr.expedition) this.startExpedition(0);
     else if (this.gr.prospecting) this.startProspecting(false);
     else if (this.gr.pioneering) this.startPioneering(false);
+    else if (this.gr.commanding) this.startCommanding(null);
     else return false;
     return true;
   }
@@ -520,7 +527,20 @@ export class HUD {
   }
 
   // ------------------------------------------------------------ selection panel
-  select(sel: { kind: 'building' | 'settler' | 'ship'; id: number } | null) {
+  select(sel: { kind: 'building' | 'settler' | 'ship'; id: number } | null, add = false) {
+    // one of our soldiers: he joins (or starts) the group that takes orders
+    if (sel?.kind === 'settler') {
+      const s = this.game.settlers.get(sel.id);
+      if (commandable(this.game, this.game.local, s) && !s.inside) {
+        const cur = this.gr.orders.chosen;
+        if (add) this.selectSoldiers(cur.includes(s.id) ? cur.filter((id) => id !== s.id) : [...cur, s.id]);
+        else this.selectSoldiers([s.id]);
+        return;
+      }
+    }
+    if (this.gr.orders.chosen.length && !this.modeOn()) this.hint.classList.add('hidden');
+    this.gr.orders.chosen = [];
+    this.gr.commanding = null;
     this.gr.selected = sel;
     this.lastInfoKey = '';
     this.infoT = 0;
@@ -528,9 +548,122 @@ export class HUD {
     this.refreshInfo();
   }
 
+  /** Pick soldiers to give orders to (an empty list lets them go). */
+  selectSoldiers(ids: number[], add = false) {
+    const o = this.gr.orders;
+    o.chosen = add ? [...new Set([...o.chosen, ...ids])] : [...new Set(ids)];
+    o.prune();
+    this.gr.selected = null;
+    this.gr.commanding = null;
+    this.lastInfoKey = '';
+    this.infoT = 0;
+    if (o.chosen.length) this.audio.play('click');
+    this.refreshInfo();
+    if (o.chosen.length) {
+      this.hint.innerHTML = `<b>Right-click</b>: march there and stand guard · on an enemy stronghold: storm it · on your tower: man it · <b>R</b> back to duty · <b>Esc</b> lets them go`;
+      this.hint.classList.remove('hidden');
+    } else if (!this.modeOn()) this.hint.classList.add('hidden');
+  }
+
+  private modeOn() {
+    const gr = this.gr;
+    return !!(gr.placing || gr.casting || gr.expedition || gr.prospecting || gr.pioneering || gr.commanding);
+  }
+
+  /** Give the chosen soldiers an order at a screen point: storm, man or march there. */
+  commandAt(clientX: number, clientY: number, kind: 'move' | 'attack' | null = null) {
+    const g = this.game, gr = this.gr;
+    const ids = gr.orders.chosen;
+    if (!ids.length) return false;
+    const b = gr.pickBuilding(clientX, clientY);
+    const w = g.world;
+    const seen = b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))];
+    if (b && seen && b.def.military && b.state === 'done' && b.owner !== g.local && kind !== 'move') {
+      const n = orderAttack(g, g.local, ids, b);
+      if (!n) { this.message('None of them can reach it', b.cx, b.cz, 'bad'); this.audio.play('click'); return false; }
+      this.message(`${n} soldier${n > 1 ? 's' : ''} storm the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
+      this.audio.play('horn');
+      return true;
+    }
+    if (kind === 'attack') { this.message('Pick an enemy stronghold to storm', undefined, undefined, 'bad'); this.audio.play('click'); return false; }
+    if (b && b.owner === g.local && b.def.military && b.state === 'done' && kind !== 'move') {
+      const n = orderGarrison(g, g.local, ids, b);
+      this.message(n ? `${n} soldier${n > 1 ? 's' : ''} march into the ${b.def.name}` : `The ${b.def.name} has no room`, b.cx, b.cz, n ? 'good' : 'bad');
+      this.audio.play(n ? 'place' : 'click');
+      return n > 0;
+    }
+    const p = gr.pickGround(clientX, clientY);
+    if (!p) return false;
+    const n = orderMove(g, g.local, ids, p.x, p.z);
+    if (!n) { this.message('They cannot get there', p.x, p.z, 'bad'); this.audio.play('click'); return false; }
+    this.audio.play('place');
+    return true;
+  }
+
+  /** The chosen soldiers go back to garrison duty. */
+  returnToDuty() {
+    const n = orderReturn(this.game, this.game.local, this.gr.orders.chosen);
+    if (n) this.message(`${n} soldier${n > 1 ? 's' : ''} return to their posts`, undefined, undefined, 'good');
+    this.selectSoldiers([]);
+  }
+
+  /** Move or Attack from the panel: the next click picks the target. */
+  startCommanding(kind: 'move' | 'attack' | null) {
+    this.gr.commanding = kind;
+    this.audio.play('ui');
+    if (kind) {
+      this.hint.innerHTML = kind === 'move'
+        ? `Click where they should stand guard · <b>Esc</b>/right-click cancels`
+        : `Click an enemy stronghold to storm · <b>Esc</b>/right-click cancels`;
+      this.hint.classList.remove('hidden');
+    } else this.selectSoldiers(this.gr.orders.chosen);
+  }
+
+  private renderGroupInfo(ids: number[]) {
+    const g = this.game;
+    let sw = 0, bw = 0, hp = 0, max = 0;
+    const doing: Record<string, number> = {};
+    const ORDERS: Record<string, string> = { hold: 'Standing guard', attack: 'Storming', moving: 'Marching to a post', idle: 'Awaiting orders', return: 'Returning', defend: 'Defending' };
+    for (const id of ids) {
+      const s = g.settlers.get(id)!;
+      if (s.job === 'swordsman') sw++; else bw++;
+      hp += Math.max(0, s.hp);
+      max += s.maxHp;
+      const d = s.engaged ? 'Fighting' : ORDERS[s.sstate] ?? 'Busy';
+      doing[d] = (doing[d] ?? 0) + 1;
+    }
+    let body = `<div class="kv"><span>Swordsmen · bowmen</span><b>⚔ ${sw} · 🏹 ${bw}</b></div>`;
+    body += `<div class="kv"><span>Health</span><b>${Math.round((hp / Math.max(1, max)) * 100)}%</b></div><div class="bar hp"><i style="width:${(hp / Math.max(1, max)) * 100}%"></i></div>`;
+    body += `<div class="kv"><span>Orders</span><b>${Object.entries(doing).map(([k, v]) => `${k} ${v}`).join(' · ')}</b></div>`;
+    const cm = this.gr.commanding;
+    const buttons = `<button class="${cm === 'move' ? 'primary' : ''}" data-act="move">🚩 Move…</button><button class="${cm === 'attack' ? 'primary' : ''}" data-act="attack">⚔ Attack…</button><button data-act="duty">↩ Back to duty</button>`;
+    const key = `grp|${ids.join(',')}|${body}|${cm}`;
+    if (key === this.lastInfoKey) return;
+    this.lastInfoKey = key;
+    this.info.innerHTML = `
+      <div class="ihead"><div class="avatar" style="background:${hex(PLAYER_COLORS[g.local])}">⚔</div><div><h2>${ids.length} soldier${ids.length > 1 ? 's' : ''}</h2><div class="owner">${g.players[g.local].name}</div></div><button class="close" data-act="close">✕</button></div>
+      <div class="ibody">${body}</div>
+      <div class="ibtns">${buttons}</div>`;
+    this.info.querySelectorAll<HTMLElement>('[data-act]').forEach((el) => {
+      const act = el.dataset.act!;
+      el.onclick = () => {
+        if (act === 'close') this.selectSoldiers([]);
+        else if (act === 'move' || act === 'attack') this.startCommanding(this.gr.commanding === act ? null : act);
+        else if (act === 'duty') this.returnToDuty();
+      };
+    });
+  }
+
   private refreshInfo() {
     const sel = this.gr.selected;
     const g = this.game;
+    const grp = this.gr.orders;
+    if (grp.chosen.length) {
+      grp.prune();
+      if (grp.chosen.length) { this.renderGroupInfo(grp.chosen); this.info.classList.remove('hidden'); return; }
+      this.selectSoldiers([]);
+      return;
+    }
     if (!sel) { this.info.classList.add('hidden'); return; }
     if (sel.kind === 'building') {
       const b = g.buildings.get(sel.id);
@@ -631,6 +764,7 @@ export class HUD {
       else if (!ex) buttons.push(`<button class="primary" data-act="expedition">⚓ Found a colony</button>`);
       buttons.push(`<button data-act="scout">🧭 Scout the seas</button>`);
     }
+    if (mine && b.state === 'done' && d.military && b.garrison.length > 1) buttons.push(`<button class="primary" data-act="callout">⚔ Call out ${b.garrison.length - 1}</button>`);
     if (mine && b.state === 'done' && (d.cycle || d.worker) && !d.military) buttons.push(`<button data-act="pause">${b.paused ? '▶ Resume' : '❚❚ Pause'}</button>`);
     if (mine && b.type !== 'hq' && b.state !== 'burning') buttons.push(`<button class="danger" data-act="destroy">🔥 Demolish</button>`);
     const key = `${b.id}|${body}|${buttons.join('')}`;
@@ -655,6 +789,10 @@ export class HUD {
         this.audio.play('ui');
         if (act === 'close') this.select(null);
         else if (act === 'pause') b.paused = !b.paused;
+        else if (act === 'callout') {
+          const men = callOut(g, g.local, b, 1);
+          if (men.length) { this.selectSoldiers(men.map((x) => x.id)); this.audio.play('horn'); return; }
+        }
         else if (act === 'destroy') { g.destroyBuilding(b, true); this.select(null); }
         else if (act === 'des-') b.desiredSoldiers = Math.max(1, b.desiredSoldiers - 1);
         else if (act === 'des+') b.desiredSoldiers = Math.min(b.def.military!.capacity, b.desiredSoldiers + 1);
@@ -708,7 +846,7 @@ export class HUD {
     if (s.aboard) { const sh = g.ships.get(s.aboard); if (sh) body += `<div class="kv"><span>Aboard</span><b>⛵ ${sh.name}</b></div>`; }
     if (soldier) {
       body += `<div class="kv"><span>Health</span><b>${Math.max(0, Math.round(s.hp))}/${s.maxHp}</b></div><div class="bar hp"><i style="width:${Math.max(0, (s.hp / s.maxHp) * 100)}%"></i></div>`;
-      body += `<div class="kv"><span>Orders</span><b>${{ garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: 'Attacking', defend: 'Defending', fight: 'Fighting', return: 'Returning', ship: 'Travelling by sea' }[s.sstate]}</b></div>`;
+      body += `<div class="kv"><span>Orders</span><b>${{ garrison: 'Guarding', idle: 'Awaiting orders', moving: 'Marching', attack: 'Attacking', defend: 'Defending', fight: 'Fighting', return: 'Returning', ship: 'Travelling by sea', hold: 'Holding position' }[s.sstate]}</b></div>`;
     } else {
       body += `<div class="kv"><span>Doing</span><b>${s.task || (s.idle ? 'Idle' : s.anim === 'walk' ? 'Walking' : 'Working')}</b></div>`;
     }
