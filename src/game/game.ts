@@ -41,6 +41,8 @@ export interface PlayerState {
   spellCd: number;
   spellsCast: number;
   traded: number; // goods delivered by donkey caravans
+  /** its headquarters has fallen: its strongholds show through everyone's fog, and a computer kingdom yields once it is down to its last few */
+  fallen: boolean;
 }
 
 export interface GameOptions {
@@ -52,6 +54,9 @@ export interface GameOptions {
 }
 
 export const OUT_CAP = 8;
+/** A computer kingdom that has lost its headquarters yields once it holds this many strongholds or fewer and no castle,
+ *  so the end of a won war isn't a hunt for the last watchtower or a harbour across the sea. */
+export const YIELD_FORTS = 3;
 
 /** Only a building that still wants something can be put first: a site, or a finished one that takes goods in. */
 export function canPrioritise(b: Building): boolean {
@@ -145,7 +150,7 @@ export class Game {
     return {
       id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
       swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
-      produced: emptyStock(), used: emptyStock(), flow: [], history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0, traded: 0,
+      produced: emptyStock(), used: emptyStock(), flow: [], history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0, traded: 0, fallen: false,
     };
   }
 
@@ -795,19 +800,31 @@ export class Game {
       reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
     }
     for (const sh of this.ships.values()) if (sh.owner === this.local) reveal(sh.x, sh.z, 8);
+    // a realm whose headquarters has fallen can hide its strongholds no longer
+    for (const b of this.buildings.values()) {
+      if (b.owner === this.local || !b.def.military || b.state !== 'done' || !this.players[b.owner]?.fallen) continue;
+      reveal(b.cx, b.cz, b.size + 3);
+    }
     if (changed) w.exploredDirty = true;
   }
 
   private checkVictory() {
     for (const p of this.players) {
       if (!p.alive) continue;
-      let hasMil = false;
-      for (const b of this.buildings.values()) {
-        if (b.owner === p.id && b.def.military && b.state === 'done' && b.occupied) { hasMil = true; break; }
+      const forts = strongholdsOf(this, p.id);
+      const hq = this.buildings.get(p.hq);
+      const fallen = !(hq && hq.owner === p.id && hq.state === 'done');
+      if (fallen && !p.fallen && forts.length) {
+        // the others learn where the rest of the realm stands (see updateExplored)
+        const me = this.buildings.get(this.players[this.local].hq);
+        const near = nearestTo(forts, me?.cx ?? 0, me?.cz ?? 0);
+        if (p.id !== this.local) this.message(this.local, `The headquarters of ${p.name} has fallen! Its ${forts.length} remaining stronghold${forts.length > 1 ? 's are' : ' is'} marked on the map.`, near.cx, near.cz, 'good', near.id);
       }
-      if (!hasMil) {
+      p.fallen = fallen;
+      const yields = fallen && forts.length > 0 && forts.length <= YIELD_FORTS && !forts.some((b) => b.type === 'castle') && this.ai.some((a) => a.p === p.id);
+      if (!forts.length || yields) {
         p.alive = false;
-        this.emit({ type: 'defeated', owner: p.id, text: `${p.name} has been defeated!` });
+        this.emit({ type: 'defeated', owner: p.id, text: yields ? `${p.name} yields! Its last stronghold${forts.length > 1 ? 's lay' : ' lays'} down their arms.` : `${p.name} has been defeated!` });
         // their settlers wander leaderless; soldiers die off
         for (const s of this.settlers.values()) if (s.owner === p.id) { s.dead = true; s.anim = 'die'; s.deadT = 0; abortPlan(this, s); }
         for (const b of this.buildings.values()) if (b.owner === p.id) this.destroyBuilding(b, true);
@@ -839,4 +856,17 @@ export class Game {
       p.history.push({ t: this.time, pop: pop.total, soldiers: pop.soldiers, buildings: this.countBuildings(p.id, undefined, false), goods });
     }
   }
+}
+
+/** A player's manned strongholds (military buildings, harbours included): what keeps the realm alive. */
+export function strongholdsOf(g: Game, owner: number): Building[] {
+  const out: Building[] = [];
+  for (const b of g.buildings.values()) if (b.owner === owner && b.def.military && b.state === 'done' && b.occupied) out.push(b);
+  return out;
+}
+
+function nearestTo(list: Building[], x: number, z: number): Building {
+  let best = list[0], bd = Infinity;
+  for (const b of list) { const d = (b.cx - x) ** 2 + (b.cz - z) ** 2; if (d < bd) { bd = d; best = b; } }
+  return best;
 }

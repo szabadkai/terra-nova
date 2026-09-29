@@ -3,7 +3,7 @@
 import {
   BUILDINGS, BUILD_ORDER, BuildingType, CATEGORY_NAMES, Category, GOODS, GOOD_NAMES, Good, JOB_NAMES, PLAYER_COLORS, TOOLS,
 } from '../game/defs';
-import { canPrioritise, type Game } from '../game/game';
+import { YIELD_FORTS, canPrioritise, strongholdsOf, type Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
 import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
@@ -506,6 +506,7 @@ export class HUD {
       }
       c.appendChild(gl);
     }
+    this.renderRivals(c);
     c.appendChild(h('h3', '', 'Strongholds'));
     const list = h('div', 'list');
     for (const b of g.buildings.values()) {
@@ -515,7 +516,37 @@ export class HUD {
       list.appendChild(row);
     }
     c.appendChild(list);
-    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. Pick a <b>formation</b> in their panel — line, block, wedge or ring — and they form up in it facing the way they marched, swordsmen in front; <b>Stand firm</b> keeps them at their posts instead of charging out. <b>Ctrl</b>+<b>1</b>–<b>9</b> keeps them as a group: press the number to pick them again, twice to go there. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>. A <b>Siege Workshop</b> builds catapults: they take the same orders and shell strongholds from beyond arrow range, but need soldiers to protect them.'));
+    c.appendChild(h('p', 'note', 'Drag a box around your soldiers (or <b>Call out</b> a stronghold\'s garrison), then <b>right-click</b> the ground to send them there to stand guard, an enemy stronghold to storm it, or one of your towers to man it. <b>R</b> sends them back to duty. Pick a <b>formation</b> in their panel — line, block, wedge or ring — and they form up in it facing the way they marched, swordsmen in front; <b>Stand firm</b> keeps them at their posts instead of charging out. <b>Ctrl</b>+<b>1</b>–<b>9</b> keeps them as a group: press the number to pick them again, twice to go there. To attack from your towers directly, select an enemy stronghold and press <b>Attack</b>. Train soldiers in <b>Barracks</b> with swords and bows from the <b>Weaponsmith</b>. A <b>Siege Workshop</b> builds catapults: they take the same orders and shell strongholds from beyond arrow range, but need soldiers to protect them. Once a rival\'s <b>headquarters</b> falls its strongholds can hide no longer, and a computer rival yields when it is down to its last ' + YIELD_FORTS + ' without a castle.'));
+  }
+
+  /** The rivals' strongholds the player knows of, nearest first, each a click away: the way to the last holdouts. */
+  private renderRivals(c: HTMLElement) {
+    const g = this.game, w = g.world;
+    const rivals = g.players.filter((r) => r.id !== g.local && r.alive);
+    if (!rivals.length) return;
+    const hq = g.buildings.get(g.players[g.local].hq);
+    const ox = hq?.cx ?? this.gr.cam.target.x, oz = hq?.cz ?? this.gr.cam.target.z;
+    // landmasses the player has a stronghold on: anything elsewhere is over the sea
+    const mine = new Set(strongholdsOf(g, g.local).map((b) => w.region[b.door]));
+    c.appendChild(h('h3', '', 'Enemy strongholds'));
+    for (const r of rivals) {
+      const all = strongholdsOf(g, r.id);
+      const known = all.filter((b) => w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))])
+        .sort((a, b) => (a.cx - ox) ** 2 + (a.cz - oz) ** 2 - ((b.cx - ox) ** 2 + (b.cz - oz) ** 2));
+      const tag = `<i class="sw" style="background:${hex(PLAYER_COLORS[r.id])}"></i>${r.name}`;
+      c.appendChild(h('div', 'kv', `<span>${tag}</span><b>${r.fallen ? `${all.length} left` : `${known.length} known`}</b>`));
+      if (r.fallen) c.appendChild(h('p', 'note', `Its headquarters has fallen: all its strongholds show on the map${r.ai ? `, and it yields when it is down to ${YIELD_FORTS} without a castle` : ''}.`));
+      const list = h('div', 'list');
+      for (const b of known.slice(0, 8)) {
+        const sea = !mine.has(w.region[b.door]);
+        const row = h('button', 'lrow', `<img src="${buildingIcons.get(b.type)}"><span>${b.def.name}</span><b>⚔ ${b.garrison.length}${sea ? ' · ⚓ over the sea' : ''}</b>`);
+        row.title = sea ? 'On land where you hold no stronghold: land there by expedition, or shell it from a warship if it stands by the water' : 'Go there: select it and press Attack, or right-click it with soldiers picked';
+        row.onclick = () => { this.gr.cam.jumpTo(b.cx, b.cz + 2); this.select({ kind: 'building', id: b.id }); };
+        list.appendChild(row);
+      }
+      if (known.length > 8) list.appendChild(h('p', 'note', `…and ${known.length - 8} more further off`));
+      if (known.length) c.appendChild(list);
+    }
   }
 
   private renderFaith(c: HTMLElement) {

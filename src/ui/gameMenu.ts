@@ -282,7 +282,7 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Kingdoms'));
     for (const p of g.players) {
       const pop = g.population(p.id);
-      kv(`<i class="sw" style="background:${hex(PLAYER_COLORS[p.id])}"></i>${p.name}${p.id === g.local ? ' (you)' : ''}${p.alive ? '' : ' · defeated'}`,
+      kv(`<i class="sw" style="background:${hex(PLAYER_COLORS[p.id])}"></i>${p.name}${p.id === g.local ? ' (you)' : ''}${p.alive ? (p.fallen ? ' · headquarters fallen' : '') : ' · defeated'}`,
         `👥 ${pop.total} · ⚔ ${pop.soldiers} · 🏠 ${g.countBuildings(p.id, undefined, false)}`);
     }
   }
