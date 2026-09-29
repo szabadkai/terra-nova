@@ -4,6 +4,7 @@
 import { GOODS, PLAYER_COLORS } from '../game/defs';
 import type { Game } from '../game/game';
 import type { GameRenderer, Quality, RenderSettings, Resolution } from '../render/renderer';
+import { framePace, type FrameCap } from '../render/framePace';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
@@ -417,8 +418,13 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Quality'));
     c.appendChild(this.seg('Detail level', 'Resolution and shadow sharpness. Lower it if the game stutters.',
       [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']], () => s.quality, (v) => set('quality')(v as Quality)));
-    c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens.',
-      [['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
+    c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens. Auto draws at full and drops to 92% or 85% only while frames keep running late, and the counter shows when it does.',
+      [['auto', 'Auto'], ['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
+    const hz = framePace.hz;
+    const fps = (cap: FrameCap) => `${framePace.capFps(cap)} fps`;
+    c.appendChild(this.select('Frame cap', `Draws every second or third frame of the ${hz} Hz display, so the frames that are shown come evenly spaced instead of in bursts; the game runs the same.`,
+      [['off', `Off (up to ${hz} fps)`], ['half', `Half the display rate (${fps('half')})`], ['third', `A third (${fps('third')})`], ['60', `About 60 (${fps('60')})`], ['30', `About 30 (${fps('30')})`]],
+      () => s.frameCap, (v) => set('frameCap')(v as FrameCap)));
     c.appendChild(h('h3', '', 'Effects'));
     c.appendChild(this.toggle('Bloom and glow', 'Glowing windows, forges and water glints', () => s.bloom, set('bloom')));
     c.appendChild(this.toggle('Tilt-shift depth of field', 'Miniature diorama look', () => s.dof, set('dof')));

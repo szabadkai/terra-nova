@@ -37,6 +37,7 @@ import { gameNear } from '../game/wildlife';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
 import { prefs, savePrefs } from './prefs';
+import { framePace } from '../render/framePace';
 import { immersiveAvailable, isImmersive, leaveHint, toggleImmersive } from './immersive';
 
 // corner brackets pointing out (fill the screen) and in (leave it) for the top-bar button
@@ -1776,7 +1777,9 @@ export class HUD {
       }
     }
     if (this.fpsT >= 1) {
-      if (this.fpsEl) this.fpsEl.textContent = `${Math.round(this.frames / this.fpsT)} fps`;
+      // with the automatic resolution below full, the share the world is drawn at follows
+      const res = framePace.auto && framePace.scale < 1 ? ` · ${Math.round(framePace.scale * 100)}%` : '';
+      if (this.fpsEl) this.fpsEl.textContent = `${Math.round(this.frames / this.fpsT)} fps${res}`;
       this.frames = 0;
       this.fpsT = 0;
     }

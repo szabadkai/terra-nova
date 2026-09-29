@@ -16,6 +16,7 @@ import { afloat, canBombard } from './game/naval';
 import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
 import { lodReady } from './render/lod';
+import { framePace } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, warmUp } from './ui/saveStore';
 
@@ -273,6 +274,8 @@ async function restart() {
 }
 
 async function boot() {
+  // the display's refresh rate, read off a few empty animation frames before anything heavy runs
+  await framePace.probe();
   void warmUp();
   // models are simplified for the distance as the world is built
   await lodReady;
@@ -666,6 +669,8 @@ function onClick(e: PointerEvent) {
 let last = performance.now();
 function loop() {
   const now = performance.now();
+  // under a frame cap most display frames are let by; the time they took goes into the next one
+  if (!framePace.due(now)) { requestAnimationFrame(loop); return; }
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (game && gr) {

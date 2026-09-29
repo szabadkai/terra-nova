@@ -38,15 +38,18 @@ import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
 import { commitInstances, withInstanceColor } from './instancing';
 import { lodView } from './lod';
+import { framePace, type FrameCap } from './framePace';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
-/** Share of the screen's resolution the world renders at before it is scaled up. */
-export type Resolution = 'full' | '85' | '70' | '50';
-const RES_SCALE: Record<Resolution, number> = { full: 1, '85': 0.85, '70': 0.7, '50': 0.5 };
+/** Share of the screen's resolution the world renders at before it is scaled up ('auto': full, stepped down while frames run late). */
+export type Resolution = 'auto' | 'full' | '85' | '70' | '50';
+const RES_SCALE: Record<Resolution, number> = { auto: 1, full: 1, '85': 0.85, '70': 0.7, '50': 0.5 };
 
 export interface RenderSettings {
   quality: Quality;
   resolution: Resolution;
+  /** render every Nth display frame, so that the frames shown arrive evenly */
+  frameCap: FrameCap;
   bloom: boolean;
   dof: boolean;
   grass: boolean;
@@ -59,7 +62,7 @@ export interface RenderSettings {
 }
 
 export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
-  quality: 'high', resolution: 'full', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
+  quality: 'high', resolution: 'auto', frameCap: 'off', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
 };
 
 /** Falling-leaf colours of the deciduous species (oak, birch, fruit tree). */
@@ -98,6 +101,8 @@ export class GameRenderer {
   birds: Birds;
   time = 0;
   settings: RenderSettings = { ...DEFAULT_RENDER_SETTINGS };
+  /** the frame cap and automatic resolution (shared with the main loop and the menu) */
+  readonly pace = framePace;
   reflection: PlanarReflection;
   borders: BordersRenderer;
   spells: SpellFX;
@@ -334,7 +339,12 @@ export class GameRenderer {
     this.fx.settings.dof = s.dof;
     this.fx.settings.grade = s.grade;
     this.fx.enableAO(s.ao);
-    this.fx.scale = RES_SCALE[s.resolution] ?? 1;
+    framePace.auto = s.resolution === 'auto';
+    if (!framePace.auto) framePace.level = 0;
+    framePace.cap = s.frameCap;
+    this.fx.scale = framePace.auto ? framePace.scale : RES_SCALE[s.resolution] ?? 1;
+    // below Ultra the water keeps each reflection for two frames
+    this.reflEvery = s.quality === 'ultra' ? 1 : 2;
     this.sky.cycle = s.dayCycle;
     this.terrain.uniforms.uBorderOn.value = s.borders ? 1 : 0;
     if (this.borders) { this.borders.posts.visible = s.borders; this.borders.caps.visible = s.borders; }
@@ -343,6 +353,11 @@ export class GameRenderer {
 
   private lastW = 0;
   private lastH = 0;
+  /** the water's reflection is drawn every this many frames; the water keeps the last picture between */
+  reflEvery = 2;
+  /** the kept reflection is gone (target resized, or no water was in view): draw a fresh one */
+  private reflStale = true;
+  private frameNo = 0;
   /** Pixels per CSS pixel of the world's render target. */
   get renderPixelRatio() {
     return this.renderer.getPixelRatio() * this.fx.scale;
@@ -358,6 +373,8 @@ export class GameRenderer {
     // the world renders at the resolution scale (the final pass scales it up to the canvas)
     const pr = this.renderPixelRatio;
     this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
+    this.reflStale = true;
+    framePace.resized();
     const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
     this.particles.setScale(pxScale);
     this.settlers.idle.setScale(pxScale);
@@ -917,6 +934,8 @@ export class GameRenderer {
   // ------------------------------------------------------------ frame
   frame(dt: number, gameDt: number) {
     if (this.canvas.clientWidth !== this.lastW || this.canvas.clientHeight !== this.lastH) this.resize();
+    // the automatic resolution has moved a step: the world's targets follow
+    if (framePace.auto && framePace.scale !== this.fx.scale) { this.fx.scale = framePace.scale; this.resize(); }
     this.time += dt;
     G.uTime.value = this.time;
     const g = this.game;
@@ -1020,14 +1039,19 @@ export class GameRenderer {
     this.scene.matrixWorldAutoUpdate = false;
     this.renderer.shadowMap.autoUpdate = this.shadowsLive;
 
-    // planar water reflections (only when water is on screen)
+    // planar water reflections (only when water is on screen); between two draws the water keeps the
+    // last picture with the matrix it was drawn by, so it stays put in the world while the view moves
     const U2 = this.water.uniforms;
     const waterSeen = this.waterInView();
+    this.frameNo++;
     if (this.settings.reflections && waterSeen) {
-      this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones]);
-      (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
+      if (this.reflStale || this.frameNo % this.reflEvery === 0) {
+        this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones]);
+        (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
+        this.reflStale = false;
+      }
       U2.uReflOn.value = 1;
-    } else U2.uReflOn.value = 0;
+    } else { U2.uReflOn.value = 0; this.reflStale = true; }
 
     const rainI = this.precip === 'rain' ? this.rainAmount : 0;
     const right = new THREE.Vector3().setFromMatrixColumn(this.cam.camera.matrixWorld, 0);
