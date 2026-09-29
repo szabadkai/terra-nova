@@ -1,6 +1,7 @@
 // Day / night cycle, sun & moon light, sky colours and image-based lighting.
 import * as THREE from 'three';
 import { G } from './shaderPatch';
+import { FitShadow } from './shadowFit';
 
 interface Key {
   e: number; // sun elevation (sin)
@@ -33,6 +34,8 @@ function lerp3(a: number[], b: number[], t: number): [number, number, number] {
 
 export class Sky {
   sun: THREE.DirectionalLight;
+  /** the sun's shadow, placed over the view each frame (fitShadow) */
+  readonly shadow = new FitShadow();
   hemi: THREE.HemisphereLight;
   timeOfDay = 0.36; // 0..1 (0.25 sunrise, 0.5 noon, 0.75 sunset)
   dayLength = 600; // seconds per full day at 1x
@@ -61,13 +64,11 @@ export class Sky {
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene) {
     this.sun = new THREE.DirectionalLight(0xffffff, 3);
     this.sun.castShadow = true;
+    this.sun.shadow = this.shadow as unknown as THREE.DirectionalLightShadow;
     this.sun.shadow.mapSize.set(4096, 4096);
-    this.sun.shadow.bias = -0.0004;
+    // (its camera, depth range and bias are set over the view each frame by fitShadow)
     this.sun.shadow.normalBias = 0.03;
     this.sun.shadow.radius = 2.5;
-    const cam = this.sun.shadow.camera;
-    cam.near = 1;
-    cam.far = 220;
     scene.add(this.sun);
     scene.add(this.sun.target);
     this.hemi = new THREE.HemisphereLight(0x99bbff, 0x554433, 0.9);
@@ -210,17 +211,8 @@ export class Sky {
     G.uNight.value = THREE.MathUtils.smoothstep(-elev, -0.02, 0.18) * 0.9 + overcast * 0.15;
     G.uCloud.value = 0.3 + overcast * 0.5;
 
-    // shadow camera follows the view
-    const half = Math.max(18, viewSize * 0.75);
-    const cam = this.sun.shadow.camera;
-    cam.left = -half; cam.right = half; cam.top = half; cam.bottom = -half;
-    cam.updateProjectionMatrix();
-    // snap to shadow texel grid to avoid shimmering
-    const texel = (half * 2) / this.sun.shadow.mapSize.x;
-    const tx = Math.round(target.x / texel) * texel, tz = Math.round(target.z / texel) * texel;
-    this.sun.target.position.set(tx, target.y, tz);
-    this.sun.position.set(tx + lightDir.x * 90, target.y + lightDir.y * 90, tz + lightDir.z * 90);
-    this.sun.target.updateMatrixWorld();
+    // (the shadow camera is placed over the view by fitShadow, from sunDir)
+    void viewSize;
 
     // visible dome follows the camera target
     const du = this.domeMat.uniforms;

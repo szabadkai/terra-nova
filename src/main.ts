@@ -1,5 +1,6 @@
 import './style.css';
-import { Game } from './game/game';
+import { Game, TICK } from './game/game';
+import { Lockstep, SPEEDS } from './net/lockstep';
 import { GameRenderer } from './render/renderer';
 import { HUD } from './ui/hud';
 import { generateIcons } from './ui/icons';
@@ -45,9 +46,10 @@ let menuEl: HTMLElement | null = null;
 /** the Esc menu in a game, or the options modal on the title screen; the game is paused while it is open */
 let gameMenu: GameMenu | null = null;
 let state: 'menu' | 'play' = 'menu';
-let speed = 1;
-let pausedSpeed = 1;
-let iconsReady = false;
+/** steps the game: alone, or in lockstep with the other players of a networked game */
+let driver: Lockstep;
+/** the player the building and goods icons were drawn for (their banner colour), -1 none yet */
+let iconsFor = -1;
 let islands = params.get('islands') !== '0';
 
 // ---------------------------------------------------------------- saving
@@ -73,7 +75,7 @@ function capture(): { data: SaveData; meta: SaveMeta } {
     cam: { x: gr.cam.target.x, z: gr.cam.target.z, dist: gr.cam.dist, yaw: gr.cam.yaw, tilt: gr.cam.tilt },
     tod: gr.sky.timeOfDay,
     season: gr.seasons.phase,
-    speed: pausedSpeed,
+    speed: driver.pausedSpeed,
     objective: hud?.objectives.index ?? 0,
     groups: hud?.saveGroups(),
     trails: gr.trails.save(),
@@ -185,7 +187,6 @@ async function buildWorld(from?: SaveData) {
   }
   if (hud) { hud.root.remove(); hud = null; }
   state = 'menu';
-  speed = pausedSpeed = 1;
   if (loaded) {
     game = loaded;
     Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel });
@@ -193,13 +194,15 @@ async function buildWorld(from?: SaveData) {
   } else {
     game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands });
   }
+  driver = new Lockstep(game, [game.local], 0);
   gr = new GameRenderer(canvas, game);
   applyRenderPrefs(gr);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
   bindCanvas(canvas);
-  if (!iconsReady) { generateIcons(game.local); iconsReady = true; }
+  if (iconsFor !== game.local) { generateIcons(game.local); iconsFor = game.local; }
   (window as any).game = game;
   (window as any).gr = gr;
+  (window as any).driver = driver;
   await gr.warmUp();
   // the first run in this browser: the graphics are picked for the machine, once
   if (firstRun && !prefs.hw.level) {
@@ -346,10 +349,10 @@ function startGame(resumed?: Record<string, unknown>) {
   if (typeof view?.season === 'number') gr.seasons.phase = view.season;
   // the paths worn so far (a save from before them starts from the game's own wear)
   if (view) gr.trails.load((resumed as { trails?: unknown }).trails);
-  speed = pausedSpeed = view?.speed || 1;
+  driver.speed = driver.pausedSpeed = SPEEDS.includes(view?.speed ?? 1) && view?.speed ? view.speed : 1;
   hud = new HUD(game, gr, audio, {
-    getSpeed: () => speed,
-    setSpeed: (s) => { speed = s; if (s > 0) pausedSpeed = s; },
+    getSpeed: () => driver.speed,
+    issue: (c) => driver.issue(c),
     restart: () => { void restart(); },
     openMenu: (page) => openGameMenu(page),
   }, uiRoot);
@@ -418,12 +421,11 @@ function setupGlobalInput() {
       else hud.recallGroup(slot, e.shiftKey);
       return;
     }
-    if (k === ' ') { e.preventDefault(); speed = speed === 0 ? pausedSpeed : 0; }
+    if (k === ' ') { e.preventDefault(); driver.issue({ t: 'speed', s: driver.speed === 0 ? driver.pausedSpeed : 0 }); }
     else if (k === '[' || k === ']') {
-      const steps = [1, 2, 3, 4];
-      const cur = steps.indexOf(speed || pausedSpeed);
-      speed = pausedSpeed = steps[Math.max(0, Math.min(steps.length - 1, (cur < 0 ? 0 : cur) + (k === ']' ? 1 : -1)))];
-      hud.message(`Game speed ${speed}×`);
+      const s = Math.max(1, Math.min(SPEEDS[SPEEDS.length - 1], (driver.speed || driver.pausedSpeed) + (k === ']' ? 1 : -1)));
+      driver.issue({ t: 'speed', s });
+      hud.message(`Game speed ${s}×`);
     } else if ((k === 'r' || k === 'R') && gr.orders.chosen.length) hud.returnToDuty();
     else if ((k === 'r' || k === 'R') && gr.orders.ships.length) hud.shipsHome();
     else if (k === 'n' || k === 'N') {
@@ -446,7 +448,7 @@ function setupGlobalInput() {
       const sel = gr.selected;
       if (sel?.kind === 'building') {
         const b = game.buildings.get(sel.id);
-        if (b && b.owner === game.local && b.type !== 'hq') { game.destroyBuilding(b, true); hud.select(null); }
+        if (b && b.owner === game.local && b.type !== 'hq') { driver.issue({ t: 'destroy', id: b.id }); hud.select(null); }
       }
     }
   });
@@ -676,7 +678,7 @@ function onClick(e: PointerEvent) {
     const a = game.anchorFor(gr.placing, w.nx(node), w.ny(node));
     const err = game.placeError(gr.placing, game.local, a.x, a.y);
     if (err) { hud.message(err, undefined, undefined, 'bad'); audio.play('click'); return; }
-    game.placeBuilding(gr.placing, game.local, a.x, a.y);
+    driver.issue({ t: 'place', b: gr.placing, x: a.x, y: a.y });
     if (!e.shiftKey) hud.startPlacing(null);
     return;
   }
@@ -702,8 +704,8 @@ function loop() {
   last = now;
   if (game && gr) {
     if (state === 'play') {
-      const gdt = gameMenu ? 0 : dt * speed;
-      game.update(gdt);
+      driver.hold = !!gameMenu;
+      const gdt = driver.pump(now) * TICK;
       gr.handleEvents(game.events.splice(0));
       gr.frame(dt, gdt);
       if (!gameMenu) hud?.update(dt);
@@ -729,14 +731,27 @@ function loop() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave(true); });
 window.addEventListener('pagehide', () => autosave(true));
 
+// a hidden tab gets no animation frames; in a networked game a worker's timer steps it instead, so the
+// others never wait on someone who looked away (the page's own timers are throttled in a hidden tab)
+try {
+  const pumper = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 50)'], { type: 'text/javascript' })));
+  pumper.onmessage = () => {
+    if (!document.hidden || state !== 'play' || !driver || driver.solo) return;
+    driver.pump(performance.now());
+    gr.handleEvents(game.events.splice(0));
+  };
+} catch (e) {
+  console.warn('No worker for hidden tabs:', e);
+}
+
 // debug helper: advance the game manually (used when the tab is not animating)
-(window as any).step = (n = 1, dt = 0.05) => {
+(window as any).step = (n = 1, dt = TICK) => {
   for (let i = 0; i < n; i++) {
-    game.update(dt * speed);
+    game.update(dt);
     gr.handleEvents(game.events.splice(0));
     hud?.update(dt);
   }
-  gr.frame(dt, dt * speed);
+  gr.frame(dt, dt);
 };
 
 boot().catch((err) => {

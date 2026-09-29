@@ -13,6 +13,7 @@ import type { Game } from './game';
 import { isCombatant, sendSoldierTo } from './military';
 import { claim, exit } from './settlers';
 import type { Building, Formation, Settler } from './types';
+import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 
 export type { Formation } from './types';
 
@@ -88,8 +89,8 @@ interface Slot { x: number; z: number; kind: number; face: number }
  * the men on nodes exactly and never shoulder to shoulder.
  */
 function layout(shape: Formation, counts: number[], a: number): Slot[] {
-  const fx = Math.sin(a), fz = Math.cos(a); // forward
-  const rx = Math.cos(a), rz = -Math.sin(a); // across
+  const fx = sin(a), fz = cos(a); // forward
+  const rx = cos(a), rz = -sin(a); // across
   const out: Slot[] = [];
   const n = counts[0] + counts[1] + counts[2];
   if (!n) return out;
@@ -109,7 +110,7 @@ function layout(shape: Formation, counts: number[], a: number): Slot[] {
       const c = counts[kind];
       for (let j = 0; j < c; j++) {
         const t = a + (Math.PI * 2 * j) / c;
-        out.push({ x: Math.sin(t) * r, z: Math.cos(t) * r, kind, face: t });
+        out.push({ x: sin(t) * r, z: cos(t) * r, kind, face: t });
       }
     };
     if (outer >= 0) ring(outer, rOut);
@@ -118,7 +119,7 @@ function layout(shape: Formation, counts: number[], a: number): Slot[] {
       // catapults huddle in the middle, a couple of nodes apart, aimed the way the group faces
       const t = a + (Math.PI * 2 * j) / Math.max(1, cats);
       const r = cats > 1 ? 1.2 : 0;
-      out.push({ x: Math.sin(t) * r, z: Math.cos(t) * r, kind: 2, face: a });
+      out.push({ x: sin(t) * r, z: cos(t) * r, kind: 2, face: a });
     }
     return out;
   }
@@ -201,8 +202,8 @@ export function planFormation(g: Game, owner: number, ids: Iterable<number>, x: 
   mx /= men.length;
   mz /= men.length;
   if (face === undefined) {
-    if (Math.hypot(xi - mx, zi - mz) >= 2.5) face = Math.atan2(xi - mx, zi - mz);
-    else face = men.find((s) => s.face !== null)?.face ?? Math.atan2(xi - mx, zi - mz);
+    if (hypot(xi - mx, zi - mz) >= 2.5) face = atan2(xi - mx, zi - mz);
+    else face = men.find((s) => s.face !== null)?.face ?? atan2(xi - mx, zi - mz);
   }
   const step = Math.PI / 4;
   const a = Math.round(face / step) * step;
@@ -226,7 +227,7 @@ export function planFormation(g: Game, owner: number, ids: Iterable<number>, x: 
       let best = -1, bd = Infinity;
       w.forRadius(px, pz, r, (i, nx, nz) => {
         if (!free(i)) return;
-        const d = (nx - px) ** 2 + (nz - pz) ** 2 + (cramped(i) ? 4 : 0);
+        const d = sq(nx - px) + sq(nz - pz) + (cramped(i) ? 4 : 0);
         if (d < bd) { bd = d; best = i; }
       });
       if (best >= 0) return best;
@@ -242,22 +243,22 @@ export function planFormation(g: Game, owner: number, ids: Iterable<number>, x: 
   // match men to slots kind by kind, each on his own side so that the files do not cross
   const nodes = new Array<number>(men.length).fill(-1);
   const faces = new Array<number>(men.length).fill(a);
-  const rx = Math.cos(a), rz = -Math.sin(a);
+  const rx = cos(a), rz = -sin(a);
   for (let k = 0; k < 3; k++) {
     const who = men.map((s, i) => ({ s, i })).filter((m) => kindOf(m.s) === k);
     const where = slots.map((sl, j) => ({ sl, j })).filter((o) => o.sl.kind === k);
     if (!who.length) continue;
     if (shape === 'ring') {
       // round the ring in order, turned so that the men walk the least
-      const ang = (px: number, pz: number) => Math.atan2(px - xi, pz - zi);
+      const ang = (px: number, pz: number) => atan2(px - xi, pz - zi);
       who.sort((p, q) => ang(w.nx(standing(g, p.s)), w.ny(standing(g, p.s))) - ang(w.nx(standing(g, q.s)), w.ny(standing(g, q.s))));
-      where.sort((p, q) => Math.atan2(p.sl.x, p.sl.z) - Math.atan2(q.sl.x, q.sl.z));
+      where.sort((p, q) => atan2(p.sl.x, p.sl.z) - atan2(q.sl.x, q.sl.z));
       let best = 0, bd = Infinity;
       for (let off = 0; off < where.length; off++) {
         let d = 0;
         who.forEach((m, j) => {
           const o = where[(j + off) % where.length], at = standing(g, m.s);
-          d += (w.nx(at) - xi - o.sl.x) ** 2 + (w.ny(at) - zi - o.sl.z) ** 2;
+          d += sq(w.nx(at) - xi - o.sl.x) + sq(w.ny(at) - zi - o.sl.z);
         });
         if (d < bd) { bd = d; best = off; }
       }
@@ -404,9 +405,9 @@ export function callOut(g: Game, owner: number, b: Building, keep = 1): Settler[
   const w = g.world;
   // form up a little way out from the door, facing away from it
   const dx = w.nx(b.door) - b.cx, dz = w.ny(b.door) - b.cz;
-  const l = Math.hypot(dx, dz) || 1;
+  const l = hypot(dx, dz) || 1;
   const x = w.nx(b.door) + (dx / l) * 3, z = w.ny(b.door) + (dz / l) * 3;
-  orderMove(g, owner, ids, x, z, undefined, Math.atan2(dx, dz));
+  orderMove(g, owner, ids, x, z, undefined, atan2(dx, dz));
   return ids.map((id) => g.settlers.get(id)!).filter((s) => s && s.sstate === 'hold');
 }
 

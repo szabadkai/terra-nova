@@ -7,6 +7,7 @@ import {
   T_DIRT, T_FOREST, T_GRASS, T_MEADOW, T_ROCK, T_SAND, T_SNOW, T_SWAMP,
 } from './defs';
 import { DX8, DY8, WATER_LEVEL, World } from './world';
+import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 
 export interface MapGenResult {
   starts: { x: number; y: number }[];
@@ -41,8 +42,8 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
   for (let p = 0; p < opt.players; p++) {
     const a = baseAng + (p / opt.players) * Math.PI * 2 + rng.range(-0.15, 0.15);
     starts.push({
-      x: Math.round(S / 2 + Math.cos(a) * R),
-      y: Math.round(S / 2 + Math.sin(a) * R * 0.92),
+      x: Math.round(S / 2 + cos(a) * R),
+      y: Math.round(S / 2 + sin(a) * R * 0.92),
     });
   }
 
@@ -53,17 +54,17 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
   const rocks: Blob[] = [];
   const lakes: Blob[] = [];
   for (const s of starts) {
-    const toCenter = Math.atan2(S / 2 - s.y, S / 2 - s.x);
+    const toCenter = atan2(S / 2 - s.y, S / 2 - s.x);
     const aM = toCenter + Math.PI + rng.range(-1.2, 1.2); // mountain behind player (towards edge-ish)
-    mountains.push({ x: s.x + Math.cos(aM) * 22, y: s.y + Math.sin(aM) * 22, r: 8.5 });
+    mountains.push({ x: s.x + cos(aM) * 22, y: s.y + sin(aM) * 22, r: 8.5 });
     const aF = aM + rng.range(1.4, 2.0);
-    forests.push({ x: s.x + Math.cos(aF) * 13, y: s.y + Math.sin(aF) * 13, r: 6.5 });
+    forests.push({ x: s.x + cos(aF) * 13, y: s.y + sin(aF) * 13, r: 6.5 });
     const aF2 = aM - rng.range(1.4, 2.2);
-    forests.push({ x: s.x + Math.cos(aF2) * 17, y: s.y + Math.sin(aF2) * 17, r: 5.5 });
+    forests.push({ x: s.x + cos(aF2) * 17, y: s.y + sin(aF2) * 17, r: 5.5 });
     const aR = aF + rng.range(1.0, 1.6);
-    rocks.push({ x: s.x + Math.cos(aR) * 11, y: s.y + Math.sin(aR) * 11, r: 2.6 });
+    rocks.push({ x: s.x + cos(aR) * 11, y: s.y + sin(aR) * 11, r: 2.6 });
     const aL = aF2 - rng.range(0.9, 1.4);
-    lakes.push({ x: s.x + Math.cos(aL) * 19, y: s.y + Math.sin(aL) * 19, r: 5.5 });
+    lakes.push({ x: s.x + cos(aL) * 19, y: s.y + sin(aL) * 19, r: 5.5 });
   }
 
   const blobF = (b: Blob, x: number, y: number, jitter: Simplex) => {
@@ -76,7 +77,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
   const startInfluence = (x: number, y: number, r0: number, r1: number) => {
     let m = 0;
     for (const s of starts) {
-      const d = Math.hypot(x - s.x, y - s.y);
+      const d = hypot(x - s.x, y - s.y);
       m = Math.max(m, 1 - smoothstep(r0, r1, d));
     }
     return m;
@@ -133,35 +134,35 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
   interface Isle { x: number; y: number; r: number; mtn: Blob | null; }
   const isles: Isle[] = [];
   const landings: { x: number; y: number }[] = [];
-  const nearLanding = (x: number, y: number) => landings.some((L) => Math.hypot(x - L.x, y - L.y) < 3.6);
+  const nearLanding = (x: number, y: number) => landings.some((L) => hypot(x - L.x, y - L.y) < 3.6);
   const wantIsles = opt.islands === false ? 0 : S >= 200 ? 4 : S >= 150 ? 3 : 2;
   for (let tries = 0; tries < 400 && isles.length < wantIsles; tries++) {
     // big ones first; later tries settle for smaller isles that fit the corners
     const r = S * rng.range(0.042, tries < 200 ? 0.07 : 0.05);
     const a = rng.range(0, Math.PI * 2);
     const D = S * rng.range(0.38, 0.72);
-    const x = S / 2 + Math.cos(a) * D, y = S / 2 + Math.sin(a) * D;
+    const x = S / 2 + cos(a) * D, y = S / 2 + sin(a) * D;
     if (x - r < 5 || y - r < 5 || x + r > W - 6 || y + r > H - 6) continue;
-    if (starts.some((st) => Math.hypot(st.x - x, st.y - y) < r + 24)) continue;
-    if (isles.some((o) => Math.hypot(o.x - x, o.y - y) < o.r + r + 10)) continue;
+    if (starts.some((st) => hypot(st.x - x, st.y - y) < r + 24)) continue;
+    if (isles.some((o) => hypot(o.x - x, o.y - y) < o.r + r + 10)) continue;
     // open sea all around, with a channel to the mainland wide enough to sail
     let deep = 0, n = 0, ring = 0, ringDeep = 0;
     world.forRadius(x, y, r + 4.5, (i, _x, _y, d2) => {
       const dp = world.h[i] < WATER_LEVEL - 0.35;
       n++;
       if (dp) deep++;
-      if (d2 > (r * 1.3) ** 2) { ring++; if (dp) ringDeep++; }
+      if (d2 > sq(r * 1.3)) { ring++; if (dp) ringDeep++; }
     });
     if (deep < n * 0.9 || ringDeep < ring * 0.985) continue;
     // the mountain sits on the seaward side, away from the landing
-    const ma = Math.atan2(y - S / 2, x - S / 2) + rng.range(-0.9, 0.9);
-    const mtn = rng.chance(0.85) ? { x: x + Math.cos(ma) * r * 0.35, y: y + Math.sin(ma) * r * 0.35, r: r * 0.5 } : null;
+    const ma = atan2(y - S / 2, x - S / 2) + rng.range(-0.9, 0.9);
+    const mtn = rng.chance(0.85) ? { x: x + cos(ma) * r * 0.35, y: y + sin(ma) * r * 0.35, r: r * 0.5 } : null;
     isles.push({ x, y, r, mtn });
   }
   for (const I of isles) {
     world.forRadius(I.x, I.y, I.r * 1.5, (i, x, y) => {
       const u = x / S, v = y / S;
-      const dd = Math.hypot(x - I.x, y - I.y) / I.r + nDetail.noise(x * 0.12 + 17, y * 0.12 + 5) * 0.3;
+      const dd = hypot(x - I.x, y - I.y) / I.r + nDetail.noise(x * 0.12 + 17, y * 0.12 + 5) * 0.3;
       let h = world.h[i];
       if (dd < 1) {
         const land = WATER_LEVEL + 0.12 + (1 - smoothstep(0.55, 1.0, dd)) * 1.3 + Math.max(0, nDetail.fbm(u * 14, v * 14, 3)) * 0.5;
@@ -178,8 +179,8 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
       world.h[i] = h;
     });
     // a sheltered landing facing the mainland: flat, open meadow by deep water
-    const ta = Math.atan2(S / 2 - I.y, S / 2 - I.x) + rng.range(-0.5, 0.5);
-    const lx = I.x + Math.cos(ta) * I.r * 0.72, ly = I.y + Math.sin(ta) * I.r * 0.72;
+    const ta = atan2(S / 2 - I.y, S / 2 - I.x) + rng.range(-0.5, 0.5);
+    const lx = I.x + cos(ta) * I.r * 0.72, ly = I.y + sin(ta) * I.r * 0.72;
     landings.push({ x: lx, y: ly });
     world.forRadius(lx, ly, 3.4, (i, x, y, d2) => {
       if (world.h[i] < WATER_LEVEL - 0.1) return;
@@ -189,8 +190,8 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
       void x; void y;
     });
     const fa = ta + Math.PI + rng.range(-1.2, 1.2);
-    forests.push({ x: I.x + Math.cos(fa) * I.r * 0.4, y: I.y + Math.sin(fa) * I.r * 0.4, r: I.r * 0.42 });
-    rocks.push({ x: I.x + Math.cos(fa + 1.6) * I.r * 0.45, y: I.y + Math.sin(fa + 1.6) * I.r * 0.45, r: 1.8 });
+    forests.push({ x: I.x + cos(fa) * I.r * 0.4, y: I.y + sin(fa) * I.r * 0.4, r: I.r * 0.42 });
+    rocks.push({ x: I.x + cos(fa + 1.6) * I.r * 0.45, y: I.y + sin(fa + 1.6) * I.r * 0.45, r: 1.8 });
   }
 
   // Ensure land connectivity between starts: carve land bridges if needed
@@ -258,7 +259,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
     const kinds = [ORE_COAL, ORE_IRON, ORE_COAL, ORE_GOLD, ORE_STONE];
     for (let k = 0; k < kinds.length; k++) {
       const a = (k / kinds.length) * Math.PI * 2 + rng.range(0, 0.6);
-      const cx = M.x + Math.cos(a) * M.r * 0.45, cy = M.y + Math.sin(a) * M.r * 0.45;
+      const cx = M.x + cos(a) * M.r * 0.45, cy = M.y + sin(a) * M.r * 0.45;
       world.forRadius(cx, cy, 3.2, (i) => {
         if (world.terrain[i] === T_ROCK || world.terrain[i] === T_SNOW) {
           world.ore[i] = kinds[k];
@@ -274,7 +275,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
     const kinds = [ORE_GOLD, ORE_IRON, ORE_GOLD, ORE_COAL];
     for (let k = 0; k < kinds.length; k++) {
       const a = (k / kinds.length) * Math.PI * 2 + rng.range(0, 0.8);
-      world.forRadius(I.mtn.x + Math.cos(a) * I.mtn.r * 0.4, I.mtn.y + Math.sin(a) * I.mtn.r * 0.4, 2.4, (i) => {
+      world.forRadius(I.mtn.x + cos(a) * I.mtn.r * 0.4, I.mtn.y + sin(a) * I.mtn.r * 0.4, 2.4, (i) => {
         if (world.terrain[i] === T_ROCK || world.terrain[i] === T_SNOW) {
           world.ore[i] = kinds[k];
           world.oreAmt[i] = rng.int(12, 22);
@@ -337,7 +338,7 @@ export function generateMap(world: World, opt: MapOptions): MapGenResult {
       const sn = nStone.noise(x * 0.09, y * 0.09);
       if (sn > 0.66 && t !== T_SWAMP) p = 0.24;
       if ((t === T_ROCK) && world.slopeAt(i) < 0.7 && sn > 0.3) p = Math.max(p, 0.05);
-      for (const Rk of rocks) if (Math.hypot(x - Rk.x, y - Rk.y) < Rk.r) p = 0.55;
+      for (const Rk of rocks) if (hypot(x - Rk.x, y - Rk.y) < Rk.r) p = 0.55;
       if (!rng.chance(p)) continue;
       stones.push({ node: i, amount: rng.int(6, 11) });
       occupied[i] = 1;
@@ -412,11 +413,11 @@ function ensureConnectivity(world: World, starts: { x: number; y: number }[]) {
         ok = false;
         // raise a land bridge between start 0 and p
         const a = starts[0], b = starts[p];
-        const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y));
+        const steps = Math.ceil(hypot(b.x - a.x, b.y - a.y));
         for (let k = 0; k <= steps; k++) {
           const t = k / steps;
-          const x = a.x + (b.x - a.x) * t + Math.sin(t * Math.PI * 2) * 6;
-          const y = a.y + (b.y - a.y) * t + Math.cos(t * Math.PI * 3) * 4;
+          const x = a.x + (b.x - a.x) * t + sin(t * Math.PI * 2) * 6;
+          const y = a.y + (b.y - a.y) * t + cos(t * Math.PI * 3) * 4;
           world.forRadius(x, y, 3.5, (i, _x, _y, d2) => {
             const target = WATER_LEVEL + 0.6 - d2 * 0.02;
             if (world.h[i] < target) world.h[i] = target;

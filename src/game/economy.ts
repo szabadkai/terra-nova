@@ -13,12 +13,13 @@ import { catapultCap, catapultsOf, mendWalls, spawnCatapult } from './siege';
 import { CATAPULT_PARTS } from './defs';
 import { setStall, setStatus } from './status';
 import { consume } from './flow';
+import { sq } from '../core/fmath';
 
 const SITE_DIGGERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 const SITE_BUILDERS = (b: Building) => (b.size >= 4 ? 3 : b.size >= 3 ? 2 : 1);
 
 function dist2(ax: number, az: number, bx: number, bz: number) {
-  return (ax - bx) ** 2 + (az - bz) ** 2;
+  return sq(ax - bx) + sq(az - bz);
 }
 
 /** Landmass a building's door stands on; carriers never cross water. */

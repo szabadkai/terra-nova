@@ -12,6 +12,7 @@ import { ORDER_STEP, placeOrder } from './trade';
 import { availableAt } from './economy';
 import { DX8, DY8 } from './world';
 import type { Building } from './types';
+import { cos, hypot, sin, sq } from '../core/fmath';
 
 /** Overland trade starts once the realm is this old… */
 const TRADE_FROM = 1300;
@@ -257,8 +258,8 @@ export class AIController {
     for (const I of g.isles) {
       for (let k = 0; k < 12; k++) {
         const a = (k / 12) * Math.PI * 2;
-        const px = I.x + Math.cos(a) * I.r * 0.75, pz = I.y + Math.sin(a) * I.r * 0.75;
-        const d = Math.hypot(px - harbour.cx, pz - harbour.cz);
+        const px = I.x + cos(a) * I.r * 0.75, pz = I.y + sin(a) * I.r * 0.75;
+        const d = hypot(px - harbour.cx, pz - harbour.cz);
         if (d >= bd) continue;
         const cs = colonySite(g, this.p, harbour, px, pz);
         if (typeof cs === 'string' || settled.has(g.world.region[cs.shore])) continue;
@@ -285,16 +286,16 @@ export class AIController {
     if (!this.outpost) {
       // workshops far from every storehouse, and the thickest knot of them
       const far = mine.filter((b) => b.state === 'done' && !b.def.military && !b.def.storage && b.def.category !== 'trade'
-        && stores.every((st) => Math.hypot(st.cx - b.cx, st.cz - b.cz) > FAR));
+        && stores.every((st) => hypot(st.cx - b.cx, st.cz - b.cz) > FAR));
       let best: Building[] = [];
       for (const a of far) {
-        const knot = far.filter((b) => Math.hypot(a.cx - b.cx, a.cz - b.cz) < 12);
+        const knot = far.filter((b) => hypot(a.cx - b.cx, a.cz - b.cz) < 12);
         if (knot.length > best.length) best = knot;
       }
       if (best.length < OUTPOST_MIN) return;
       this.outpost = { x: best.reduce((q, b) => q + b.cx, 0) / best.length, z: best.reduce((q, b) => q + b.cz, 0) / best.length };
     }
-    const near = (b: Building, x: number, z: number, r: number) => Math.hypot(b.cx - x, b.cz - z) < r;
+    const near = (b: Building, x: number, z: number, r: number) => hypot(b.cx - x, b.cz - z) < r;
     const op = this.outpost;
     let sites = 0;
     for (const b of mine) if (b.state === 'leveling' || b.state === 'building') sites++;
@@ -314,8 +315,8 @@ export class AIController {
       if (room && this.count('farm') >= 2 && this.count('waterworks') >= 1) this.tryPlace('donkeyfarm');
       return;
     }
-    const farOut = Math.hypot(farM.cx - hq.cx, farM.cz - hq.cz);
-    const homeSide = (x: number, z: number) => Math.hypot(x - hq.cx, z - hq.cz) < farOut && Math.hypot(x - farM.cx, z - farM.cz) >= ROUTE_MIN;
+    const farOut = hypot(farM.cx - hq.cx, farM.cz - hq.cz);
+    const homeSide = (x: number, z: number) => hypot(x - hq.cx, z - hq.cz) < farOut && hypot(x - farM.cx, z - farM.cz) >= ROUTE_MIN;
     const homeM = mine.find((b) => b.type === 'market' && b.id !== farM.id && near(b, hq.cx, hq.cz, HOME_R) && homeSide(b.cx, b.cz));
     if (!homeM) { if (room) this.tryPlace('market', undefined, { x: hq.cx, z: hq.cz, r: HOME_R, ok: homeSide }); return; }
     if (homeM.state !== 'done' || farM.state !== 'done') return;
@@ -328,7 +329,7 @@ export class AIController {
    */
   private planRoutes(mine: Building[], homeM: Building, farM: Building) {
     const g = this.g;
-    const d = (b: Building, m: Building) => Math.hypot(b.cx - m.cx, b.cz - m.cz);
+    const d = (b: Building, m: Building) => hypot(b.cx - m.cx, b.cz - m.cz);
     const want = [emptyStock(), emptyStock()], have = [emptyStock(), emptyStock()], makes = [emptyStock(), emptyStock()];
     for (const b of mine) {
       const side = d(b, farM) < d(b, homeM) ? 1 : 0;
@@ -399,7 +400,7 @@ export class AIController {
     let best: Building | null = null, bs = Infinity;
     for (const b of g.buildings.values()) {
       if (b.owner === this.p || !b.def.military || b.state !== 'done' || !g.players[b.owner]?.alive) continue;
-      const d = Math.hypot(b.cx - idle[0].x, b.cz - idle[0].z);
+      const d = hypot(b.cx - idle[0].x, b.cz - idle[0].z);
       if (d > 70) continue;
       const score = d + b.garrison.length * 6 + (b.type === 'hq' ? 30 : 0);
       if (score >= bs || !bombardSpot(g, idle[0], b)) continue;
@@ -462,7 +463,7 @@ export class AIController {
       const i = cands[g.rng.int(0, cands.length)];
       let n = 0;
       w.forRadius(w.nx(i), w.ny(i), PROBE_RADIUS, (j) => { if (w.isMountain(j) && !w.known(j, this.p)) n++; });
-      const sc = n - Math.hypot(w.nx(i) - hq.cx, w.ny(i) - hq.cz) * 0.4;
+      const sc = n - hypot(w.nx(i) - hq.cx, w.ny(i) - hq.cz) * 0.4;
       if (sc > bs && prospectError(g, this.p, w.nx(i), w.ny(i)) === null) { bs = sc; best = i; }
     }
     if (best < 0) return;
@@ -522,7 +523,7 @@ export class AIController {
     for (const b of g.buildings.values()) {
       if (b.owner !== this.p || !b.def.military || b.type === 'hq' || b.state !== 'done') continue;
       let d = Infinity;
-      for (const e of enemyMil) d = Math.min(d, Math.hypot(e.x - b.cx, e.z - b.cz));
+      for (const e of enemyMil) d = Math.min(d, hypot(e.x - b.cx, e.z - b.cz));
       const cap = b.def.military.capacity;
       b.desiredSoldiers = d < 40 ? cap : d < 60 ? Math.max(1, Math.ceil(cap / 2)) : 1;
     }
@@ -570,7 +571,7 @@ export class AIController {
     const w = g.world;
     const def = BUILDINGS[type];
     // for a building wanted by a spot, only the ground around that spot
-    const nodes = near ? this.territoryNodes().filter((i) => Math.hypot(w.nx(i) - near.x, w.ny(i) - near.z) <= (near.r ?? OUTPOST_R)) : this.territoryNodes();
+    const nodes = near ? this.territoryNodes().filter((i) => hypot(w.nx(i) - near.x, w.ny(i) - near.z) <= (near.r ?? OUTPOST_R)) : this.territoryNodes();
     if (!nodes.length) return false;
     const hq = g.buildings.get(g.players[this.p].hq);
     const hx = hq ? hq.cx : w.nx(nodes[0]), hz = hq ? hq.cz : w.ny(nodes[0]);
@@ -578,7 +579,7 @@ export class AIController {
     let ex = hx, ez = hz, ed = Infinity;
     for (const b of g.buildings.values()) {
       if (b.owner === this.p || !b.def.military) continue;
-      const d = (b.cx - hx) ** 2 + (b.cz - hz) ** 2;
+      const d = sq(b.cx - hx) + sq(b.cz - hz);
       if (d < ed) { ed = d; ex = b.cx; ez = b.cz; }
     }
     let best: { x: number; y: number } | null = null, bs = -Infinity;
@@ -589,11 +590,11 @@ export class AIController {
       const a = g.anchorFor(type, hxN, hyN);
       if (!g.canPlace(type, this.p, a.x, a.y)) continue;
       const cx = a.x + (def.size - 1) / 2, cz = a.y + (def.size - 1) / 2;
-      const dHQ = Math.hypot(cx - hx, cz - hz);
+      const dHQ = hypot(cx - hx, cz - hz);
       let score = -dHQ * 0.6;
       if (near) {
         // as close to the spot as it will go
-        const dn = Math.hypot(cx - near.x, cz - near.z);
+        const dn = hypot(cx - near.x, cz - near.z);
         if (dn > (near.r ?? OUTPOST_R) || (near.ok && !near.ok(cx, cz))) continue;
         score = -dn;
       }
@@ -626,10 +627,10 @@ export class AIController {
         case 'tower_s': case 'tower_l': case 'castle': {
           // close to border, far from HQ, slightly towards the enemy
           const border = this.borderDist(i);
-          const towards = ed < Infinity ? -Math.hypot(cx - ex, cz - ez) * 0.4 : 0;
+          const towards = ed < Infinity ? -hypot(cx - ex, cz - ez) * 0.4 : 0;
           const milNear = this.countMilitaryNear(cx, cz, def.military!.radius * 0.8);
           score = -border * 3 + dHQ * 0.5 + towards - milNear * 15;
-          if (bias === 'enemy' && ed < Infinity) score = -Math.hypot(cx - ex, cz - ez) * 1.6 - border * 1.5 - milNear * 12;
+          if (bias === 'enemy' && ed < Infinity) score = -hypot(cx - ex, cz - ez) * 1.6 - border * 1.5 - milNear * 12;
           if (bias === 'mountain') score += this.countMountain(cx, cz, 10) * 0.5;
           if (bias === 'water') score += this.countWater(cx, cz, 10, false) * 0.3;
           if (bias === 'stone') score += this.countStones(cx, cz, 14) * 0.6;
@@ -639,7 +640,7 @@ export class AIController {
         case 'harbour': case 'shipyard': {
           // a sheltered spot close to home, the yard next to the harbour
           const hb = [...g.buildings.values()].find((o) => o.owner === this.p && o.type === 'harbour');
-          score = -dHQ * 0.5 + (type === 'shipyard' && hb ? -Math.hypot(cx - hb.cx, cz - hb.cz) * 2 : 0);
+          score = -dHQ * 0.5 + (type === 'shipyard' && hb ? -hypot(cx - hb.cx, cz - hb.cz) * 2 : 0);
           break;
         }
       }
@@ -688,12 +689,12 @@ export class AIController {
   }
   private countBuildingsNear(x: number, z: number, r: number, type: BuildingType) {
     let n = 0;
-    for (const b of this.g.buildings.values()) if (b.owner === this.p && b.type === type && Math.hypot(b.cx - x, b.cz - z) < r) n++;
+    for (const b of this.g.buildings.values()) if (b.owner === this.p && b.type === type && hypot(b.cx - x, b.cz - z) < r) n++;
     return n;
   }
   private countMilitaryNear(x: number, z: number, r: number) {
     let n = 0;
-    for (const b of this.g.buildings.values()) if (b.owner === this.p && b.def.military && Math.hypot(b.cx - x, b.cz - z) < r) n++;
+    for (const b of this.g.buildings.values()) if (b.owner === this.p && b.def.military && hypot(b.cx - x, b.cz - z) < r) n++;
     return n;
   }
   private borderDist(i: number) {
@@ -702,7 +703,7 @@ export class AIController {
     for (let r = 1; r < 16; r++) {
       for (let k = 0; k < 8; k++) {
         const a = (k / 8) * Math.PI * 2;
-        const xx = Math.round(x + Math.cos(a) * r), yy = Math.round(y + Math.sin(a) * r);
+        const xx = Math.round(x + cos(a) * r), yy = Math.round(y + sin(a) * r);
         if (!w.inBounds(xx, yy)) return r;
         if (w.owner[w.idx(xx, yy)] !== this.p) return r;
       }
@@ -756,7 +757,7 @@ export class AIController {
     let best: { x: number; z: number; n: number } | null = null;
     for (const a of foes) {
       let n = 0, sx = 0, sz = 0;
-      for (const b of foes) if ((a.x - b.x) ** 2 + (a.z - b.z) ** 2 < 16) { n++; sx += b.x; sz += b.z; }
+      for (const b of foes) if (sq(a.x - b.x) + sq(a.z - b.z) < 16) { n++; sx += b.x; sz += b.z; }
       if (!best || n > best.n) best = { x: sx / n, z: sz / n, n };
     }
     return best;

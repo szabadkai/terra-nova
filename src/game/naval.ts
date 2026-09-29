@@ -13,6 +13,7 @@ import type { Building, Projectile, Ship, ShipKind } from './types';
 import { kill } from './military';
 import { WATER_LEVEL } from './world';
 import { berthPos, nearestHarbourBySea, nearestNavigable, sailTo, shipDeckY } from './sea';
+import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 
 /** A guard lets a foe go once the chase would lead this far from its post. */
 export const SHIP_LEASH = 18;
@@ -60,7 +61,7 @@ export function enemyShipNear(g: Game, sh: Ship, x: number, z: number, r: number
   let best: Ship | null = null, bs = Infinity;
   for (const o of g.ships.values()) {
     if (!afloat(o) || !hostile(g, sh.owner, o.owner)) continue;
-    const d2 = (o.x - x) ** 2 + (o.z - z) ** 2;
+    const d2 = sq(o.x - x) + sq(o.z - z);
     if (d2 > r * r) continue;
     if (seaOf(g, o) !== sea) continue;
     const sc = d2 - (o.kind === 'war' ? 25 : 0);
@@ -74,7 +75,7 @@ export function strongholdInReach(g: Game, sh: Ship): Building | null {
   let best: Building | null = null, bd = WARSHIP_RANGE * WARSHIP_RANGE;
   for (const b of g.buildings.values()) {
     if (!b.def.military || b.state !== 'done' || !hostile(g, sh.owner, b.owner)) continue;
-    const d = (b.cx - sh.x) ** 2 + (b.cz - sh.z) ** 2;
+    const d = sq(b.cx - sh.x) + sq(b.cz - sh.z);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -87,7 +88,7 @@ export function bombardSpot(g: Game, sh: Ship, b: Building, sea = seaOf(g, sh)):
   w.forRadius(b.cx, b.cz, WARSHIP_RANGE - 0.5, (i, x, y, d2) => {
     if (!w.navigable(i) || w.sea[i] !== sea) return;
     const d = Math.sqrt(d2);
-    const sc = (x - sh.x) ** 2 + (y - sh.z) ** 2 + Math.max(0, ARCHER_REACH + 0.4 - d) ** 2 * 8;
+    const sc = sq(x - sh.x) + sq(y - sh.z) + sq(Math.max(0, ARCHER_REACH + 0.4 - d)) * 8;
     if (sc < bs) { bs = sc; best = i; }
   });
   return best < 0 ? null : { x: w.nx(best), z: w.ny(best) };
@@ -100,7 +101,7 @@ export function canBombard(g: Game, sh: Ship, b: Building): boolean {
 
 // ------------------------------------------------------------------ gunnery
 function shot(g: Game, sh: Ship, tx: number, tz: number) {
-  sh.aim = Math.atan2(tx - sh.x, tz - sh.z);
+  sh.aim = atan2(tx - sh.x, tz - sh.z);
   sh.fired = g.time;
   sh.reload = WARSHIP_RELOAD * (0.9 + g.rng.next() * 0.2);
   g.emit({ type: 'broadside', x: sh.x, z: sh.z, owner: sh.owner, s: sh.id });
@@ -109,23 +110,23 @@ function shot(g: Game, sh: Ship, tx: number, tz: number) {
 /** Where the catapult sits: on the foredeck, a little above the deck. */
 function muzzle(g: Game, sh: Ship) {
   const f = 0.62 * 1.25;
-  return { x: sh.x + Math.sin(sh.heading) * f, y: shipDeckY(g.time, sh.id) + 0.75, z: sh.z + Math.cos(sh.heading) * f };
+  return { x: sh.x + sin(sh.heading) * f, y: shipDeckY(g.time, sh.id) + 0.75, z: sh.z + cos(sh.heading) * f };
 }
 
 /** A stone at a ship: aimed where it will be when the stone comes down, surer at short range on a slow target. */
 export function fireAtShip(g: Game, sh: Ship, t: Ship) {
   const m = muzzle(g, sh);
-  const d = Math.hypot(t.x - sh.x, t.z - sh.z);
+  const d = hypot(t.x - sh.x, t.z - sh.z);
   const dur = Math.max(0.9, d * 0.14);
-  const px = t.x + Math.sin(t.heading) * t.speed * dur, pz = t.z + Math.cos(t.heading) * t.speed * dur;
+  const px = t.x + sin(t.heading) * t.speed * dur, pz = t.z + cos(t.heading) * t.speed * dur;
   const acc = 0.8 - d * 0.02 - t.speed * 0.07 - sh.speed * 0.04;
   const hit = g.rng.next() < acc;
   let tx = px, tz = pz;
   if (hit) { tx += (g.rng.next() - 0.5) * 0.5; tz += (g.rng.next() - 0.5) * 0.5; }
   else {
     const a = g.rng.range(0, Math.PI * 2), r = 1.7 + g.rng.next() * 1.8;
-    tx += Math.cos(a) * r;
-    tz += Math.sin(a) * r;
+    tx += cos(a) * r;
+    tz += sin(a) * r;
   }
   g.projectiles.push({
     id: g.id(), owner: sh.owner, sx: m.x, sy: m.y, sz: m.z, tx, ty: WATER_LEVEL + 0.25, tz, t: 0, dur,
@@ -138,7 +139,7 @@ export function fireAtShip(g: Game, sh: Ship, t: Ship) {
 export function fireAtBuilding(g: Game, sh: Ship, b: Building) {
   const w = g.world;
   const m = muzzle(g, sh);
-  const d = Math.hypot(b.cx - sh.x, b.cz - sh.z);
+  const d = hypot(b.cx - sh.x, b.cz - sh.z);
   const hit = g.rng.next() < 0.75 - sh.speed * 0.05;
   let tx: number, tz: number, ty: number;
   if (hit) {
@@ -147,8 +148,8 @@ export function fireAtBuilding(g: Game, sh: Ship, b: Building) {
     ty = w.heightAt(b.cx, b.cz) + b.size * 0.55 + 0.6;
   } else {
     const a = g.rng.range(0, Math.PI * 2), rr = b.size * 0.5 + 1 + g.rng.next() * 1.5;
-    tx = b.cx + Math.cos(a) * rr;
-    tz = b.cz + Math.sin(a) * rr;
+    tx = b.cx + cos(a) * rr;
+    tz = b.cz + sin(a) * rr;
     ty = Math.max(WATER_LEVEL, w.heightAt(tx, tz)) + 0.1;
   }
   g.projectiles.push({
@@ -164,11 +165,11 @@ export function shipStoneLands(g: Game, p: Projectile) {
   const t = p.ship ? g.ships.get(p.ship) : undefined;
   let victim: Ship | null = null;
   const reach = 1.25 * 1.1;
-  if (t && afloat(t) && p.damage > 0 && Math.hypot(t.x - p.tx, t.z - p.tz) < reach + 0.35) victim = t;
+  if (t && afloat(t) && p.damage > 0 && hypot(t.x - p.tx, t.z - p.tz) < reach + 0.35) victim = t;
   if (!victim) {
     for (const o of g.ships.values()) {
       if (!afloat(o) || !hostile(g, p.owner, o.owner)) continue;
-      if (Math.hypot(o.x - p.tx, o.z - p.tz) < reach * 0.75) { victim = o; break; }
+      if (hypot(o.x - p.tx, o.z - p.tz) < reach * 0.75) { victim = o; break; }
     }
   }
   if (!victim) { g.emit({ type: 'seamiss', x: p.tx, z: p.tz }); return; }
@@ -178,7 +179,7 @@ export function shipStoneLands(g: Game, p: Projectile) {
 /** An arrow aimed at a ship: most find the planking, few do much harm. */
 export function shipArrowLands(g: Game, p: Projectile) {
   const t = p.ship ? g.ships.get(p.ship) : undefined;
-  if (!t || !afloat(t) || Math.hypot(t.x - p.tx, t.z - p.tz) > 1.6 || g.rng.next() > 0.75) {
+  if (!t || !afloat(t) || hypot(t.x - p.tx, t.z - p.tz) > 1.6 || g.rng.next() > 0.75) {
     if (g.world.isWater(g.world.idx(Math.max(0, Math.min(g.world.W - 1, Math.round(p.tx))), Math.max(0, Math.min(g.world.H - 1, Math.round(p.tz)))))) g.emit({ type: 'arrowsplash', x: p.tx, z: p.tz });
     return;
   }
@@ -190,13 +191,13 @@ export function towerShootShip(g: Game, b: Building, top: number): boolean {
   let best: Ship | null = null, bd = ARCHER_REACH * ARCHER_REACH;
   for (const o of g.ships.values()) {
     if (!afloat(o) || !hostile(g, b.owner, o.owner)) continue;
-    const d = (o.x - b.cx) ** 2 + (o.z - b.cz) ** 2;
+    const d = sq(o.x - b.cx) + sq(o.z - b.cz);
     if (d < bd) { bd = d; best = o; }
   }
   if (!best) return false;
   const d = Math.sqrt(bd);
   const dur = Math.max(0.35, d * 0.08);
-  const tx = best.x + Math.sin(best.heading) * best.speed * dur, tz = best.z + Math.cos(best.heading) * best.speed * dur;
+  const tx = best.x + sin(best.heading) * best.speed * dur, tz = best.z + cos(best.heading) * best.speed * dur;
   g.projectiles.push({
     id: g.id(), owner: b.owner, sx: b.cx, sy: top, sz: b.cz, tx, ty: shipDeckY(g.time, best.id) + 0.35, tz,
     t: 0, dur, target: 0, damage: ARROW_DAMAGE, kind: 'arrow', ship: best.id,
@@ -300,8 +301,8 @@ function guardHere(sh: Ship) {
 /** Sail after a ship, to where it is heading. */
 function chase(g: Game, sh: Ship, t: Ship) {
   sh.routeT = 1.5;
-  const lead = Math.min(4, Math.hypot(t.x - sh.x, t.z - sh.z) * 0.25);
-  if (!sailTo(g, sh, t.x + Math.sin(t.heading) * t.speed * lead, t.z + Math.cos(t.heading) * t.speed * lead)) sailTo(g, sh, t.x, t.z);
+  const lead = Math.min(4, hypot(t.x - sh.x, t.z - sh.z) * 0.25);
+  if (!sailTo(g, sh, t.x + sin(t.heading) * t.speed * lead, t.z + cos(t.heading) * t.speed * lead)) sailTo(g, sh, t.x, t.z);
 }
 
 /** Shoot at whatever is within reach: an enemy ship first, else a stronghold. */
@@ -320,14 +321,14 @@ export function warshipStep(g: Game, sh: Ship, dt: number, arrived: boolean) {
   if (arrived) {
     // moored beside one of its harbours, it can mend there
     const hb = nearestHarbourBySea(g, sh.owner, sh);
-    if (hb && Math.hypot(hb.cx - sh.x, hb.cz - sh.z) < hb.size + 5) sh.at = hb.id;
+    if (hb && hypot(hb.cx - sh.x, hb.cz - sh.z) < hb.size + 5) sh.at = hb.id;
   }
   switch (sh.state) {
     case 'hunt': {
       const t = foeOf(g, sh);
       if (!t || (sh.scanT <= 0 && seaOf(g, t) !== seaOf(g, sh))) { guardHere(sh); sh.route = null; return; }
       if (sh.scanT <= 0) sh.scanT = 0.5;
-      const d = Math.hypot(t.x - sh.x, t.z - sh.z);
+      const d = hypot(t.x - sh.x, t.z - sh.z);
       if (d > WARSHIP_RANGE - 1.5) { if (sh.routeT <= 0 || !sh.route) chase(g, sh, t); }
       else if (sh.route && d < WARSHIP_RANGE - 3) sh.route = null;
       if (d <= WARSHIP_RANGE && sh.reload <= 0) fireAtShip(g, sh, t);
@@ -337,7 +338,7 @@ export function warshipStep(g: Game, sh: Ship, dt: number, arrived: boolean) {
     case 'bombard': {
       const b = g.buildings.get(sh.target);
       if (!b || !b.def.military || b.state !== 'done' || !hostile(g, sh.owner, b.owner)) { guardHere(sh); sh.route = null; return; }
-      const d = Math.hypot(b.cx - sh.x, b.cz - sh.z);
+      const d = hypot(b.cx - sh.x, b.cz - sh.z);
       if (d <= WARSHIP_RANGE - 0.2) {
         if (sh.route && d <= WARSHIP_RANGE - 0.9) sh.route = null;
         // an enemy warship closing in is answered first
@@ -368,17 +369,17 @@ export function warshipStep(g: Game, sh: Ship, dt: number, arrived: boolean) {
         // foes near the post are gone after, as long as the chase stays close to it
         if (!underWay) {
           const cur = foeOf(g, sh);
-          if (cur && Math.hypot(cur.x - px, cur.z - pz) > SHIP_LEASH) { sh.target = 0; sh.route = null; }
+          if (cur && hypot(cur.x - px, cur.z - pz) > SHIP_LEASH) { sh.target = 0; sh.route = null; }
           else if (!cur) {
             if (sh.target) { sh.target = 0; sh.route = null; }
             const foe = enemyShipNear(g, sh, sh.x, sh.z, WARSHIP_SIGHT);
-            if (foe && Math.hypot(foe.x - px, foe.z - pz) < SHIP_LEASH) sh.target = foe.id;
+            if (foe && hypot(foe.x - px, foe.z - pz) < SHIP_LEASH) sh.target = foe.id;
           }
         }
       }
       const foe = sh.target ? foeOf(g, sh) : null;
       if (foe) {
-        const d = Math.hypot(foe.x - sh.x, foe.z - sh.z);
+        const d = hypot(foe.x - sh.x, foe.z - sh.z);
         if (d > WARSHIP_RANGE - 1.5) { if (sh.routeT <= 0 || !sh.route) chase(g, sh, foe); }
         else if (sh.route && d < WARSHIP_RANGE - 3) sh.route = null;
         if (d <= WARSHIP_RANGE && sh.reload <= 0) fireAtShip(g, sh, foe);
@@ -387,7 +388,7 @@ export function warshipStep(g: Game, sh: Ship, dt: number, arrived: boolean) {
       }
       if (sh.target) sh.target = 0;
       // back to the post
-      if (!sh.route && sh.routeT <= 0 && Math.hypot(sh.x - px, sh.z - pz) > 1.6) {
+      if (!sh.route && sh.routeT <= 0 && hypot(sh.x - px, sh.z - pz) > 1.6) {
         sh.routeT = 3;
         if (!sailTo(g, sh, px, pz)) { sh.postX = sh.x; sh.postZ = sh.z; }
       }
@@ -418,7 +419,7 @@ function stations(g: Game, x: number, z: number, n: number, sea: number): { x: n
   for (const c of cands) {
     if (out.length >= n) break;
     const cx = w.nx(c.i), cz = w.ny(c.i);
-    if (out.some((o) => Math.hypot(o.x - cx, o.z - cz) < 2.6)) continue;
+    if (out.some((o) => hypot(o.x - cx, o.z - cz) < 2.6)) continue;
     out.push({ x: cx, z: cz });
   }
   return out;
@@ -427,7 +428,7 @@ function stations(g: Game, x: number, z: number, n: number, sea: number): { x: n
 /** Sail to (x, z) and stand guard there. Returns how many went. */
 export function orderShipMove(g: Game, owner: number, ids: Iterable<number>, x: number, z: number): number {
   const i = nearestNavigable(g, x, z);
-  if (i < 0 || Math.hypot(g.world.nx(i) - x, g.world.ny(i) - z) > 4) return 0;
+  if (i < 0 || hypot(g.world.nx(i) - x, g.world.ny(i) - z) > 4) return 0;
   const sea = g.world.sea[i];
   const fleet = mine(g, owner, ids).filter((sh) => seaOf(g, sh) === sea);
   const spots = stations(g, g.world.nx(i), g.world.ny(i), fleet.length, sea);
@@ -440,7 +441,7 @@ export function orderShipMove(g: Game, owner: number, ids: Iterable<number>, x: 
     sh.postX = p.x;
     sh.postZ = p.z;
     sh.routeT = 3;
-    if (sailTo(g, sh, p.x, p.z) || Math.hypot(sh.x - p.x, sh.z - p.z) < 1.6) n++;
+    if (sailTo(g, sh, p.x, p.z) || hypot(sh.x - p.x, sh.z - p.z) < 1.6) n++;
   });
   if (n) g.emit({ type: 'order', x, z, owner, kind: 'move' });
   return n;
@@ -489,14 +490,14 @@ export function orderShipHome(g: Game, owner: number, ids: Iterable<number>, to?
     const hb = to && to.owner === owner && to.type === 'harbour' && to.state === 'done' && to.dock >= 0 && g.world.sea[to.dock] === seaOf(g, sh) ? to : nearestHarbourBySea(g, owner, sh);
     if (!hb) continue;
     let k = 0;
-    for (const o of g.ships.values()) if (o.id !== sh.id && o.owner === owner && (o.at === hb.id || (o.kind === 'war' && Math.hypot(o.postX - hb.cx, o.postZ - hb.cz) < hb.size + 5))) k++;
+    for (const o of g.ships.values()) if (o.id !== sh.id && o.owner === owner && (o.at === hb.id || (o.kind === 'war' && hypot(o.postX - hb.cx, o.postZ - hb.cz) < hb.size + 5))) k++;
     const p = berthPos(g, hb, 1 + (k % 4));
     sh.state = 'guard';
     sh.target = 0;
     sh.postX = p.x;
     sh.postZ = p.z;
     sh.routeT = 3;
-    if (sailTo(g, sh, p.x, p.z) || Math.hypot(sh.x - p.x, sh.z - p.z) < 1.6) { n++; if (!sh.route) sh.at = hb.id; }
+    if (sailTo(g, sh, p.x, p.z) || hypot(sh.x - p.x, sh.z - p.z) < 1.6) { n++; if (!sh.route) sh.at = hb.id; }
   }
   if (n && to) g.emit({ type: 'order', x: to.cx, z: to.cz, owner, kind: 'garrison' });
   return n;

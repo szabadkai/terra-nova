@@ -7,6 +7,7 @@ import { equip, findToolSource } from './economy';
 import { A, abortPlan, claim, idleWander, plan } from './settlers';
 import type { Settler } from './types';
 import { DX8, DY8 } from './world';
+import { hypot, sq } from '../core/fmath';
 
 /** Land within this distance of the spot a pioneer is sent to gets claimed. */
 export const PIONEER_RADIUS = 7;
@@ -66,7 +67,7 @@ export function sendPioneer(g: Game, owner: number, x: number, z: number): strin
   let best: Settler | null = null, bd = Infinity;
   for (const s of g.settlers.values()) {
     if (s.owner !== owner || s.job !== 'pioneer' || s.dead || s.order >= 0 || s.voyage || s.aboard || w.region[s.node] !== region) continue;
-    const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+    const d = sq(s.x - x) + sq(s.z - z);
     if (d < bd) { bd = d; best = s; }
   }
   if (best) {
@@ -82,7 +83,7 @@ export function sendPioneer(g: Game, owner: number, x: number, z: number): strin
   bd = Infinity;
   for (const s of g.settlers.values()) {
     if (s.owner !== owner || s.job !== 'carrier' || !s.idle || s.dead || s.home || s.voyage || s.aboard || w.region[s.node] !== region) continue;
-    const d = (s.x - src.cx) ** 2 + (s.z - src.cz) ** 2;
+    const d = sq(s.x - src.cx) + sq(s.z - src.cz);
     if (d < bd) { bd = d; c = s; }
   }
   if (!c) return 'No free settler to become a pioneer';
@@ -128,7 +129,7 @@ function pickSpot(g: Game, s: Settler): number {
   let best = -1, bs = Infinity;
   for (const i of frontier(g, s.owner, tx, tz, w.region[s.node])) {
     const x = w.nx(i), y = w.ny(i);
-    let sc = Math.hypot(x - s.x, y - s.z) + Math.hypot(x - tx, y - tz) * 0.6 + g.rng.next() * 1.5;
+    let sc = hypot(x - s.x, y - s.z) + hypot(x - tx, y - tz) * 0.6 + g.rng.next() * 1.5;
     for (const o of others) if (w.dist(o, i) < 3) sc += 8;
     if (sc < bs) { bs = sc; best = i; }
   }

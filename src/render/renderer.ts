@@ -7,6 +7,7 @@ import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { RTSCamera } from './camera';
 import { Sky } from './sky';
+import { fitShadow } from './shadowFit';
 import { TerrainRenderer } from './terrain';
 import { WaterRenderer } from './water';
 import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
@@ -307,6 +308,9 @@ export class GameRenderer {
     this.warmKeep.push(...clip.values(), clipDepth);
     const ships = this.ships.samples(this.game.players.map((p) => p.id));
     extra.add(ships);
+    // (and both sides of the trees' full-leaf switch)
+    const trees = this.trees.samples();
+    extra.add(trees);
     this.scene.add(extra);
     // and each finished one in the batches, as it will be drawn
     const batched = finished.map((g) => this.buildings.batches.add(g, (g.children.find((o) => o instanceof ScreenLod) as ScreenLod | undefined) ?? null));
@@ -333,6 +337,8 @@ export class GameRenderer {
       this.scene.remove(extra);
       // (the sails' own cloth geometry; everything else is shared)
       ships.traverse((o) => { if ((o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry.userData.sail) (o as THREE.Mesh).geometry.dispose(); });
+      // (their instance buffers; the geometry is the trees' own)
+      for (const o of trees.children) (o as THREE.InstancedMesh).dispose();
     }
   }
 
@@ -364,12 +370,6 @@ export class GameRenderer {
     const dpr = window.devicePixelRatio;
     const pr = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
     this.renderer.setPixelRatio(pr);
-    const sm = s.quality === 'low' ? 1024 : s.quality === 'medium' ? 2048 : 4096;
-    if (this.sky.sun.shadow.mapSize.x !== sm) {
-      this.sky.sun.shadow.mapSize.set(sm, sm);
-      this.sky.sun.shadow.map?.dispose();
-      this.sky.sun.shadow.map = null as any;
-    }
     this.grass.enabled = s.grass && s.quality !== 'low';
     this.fx.settings.bloom = s.bloom;
     this.fx.settings.dof = s.dof;
@@ -385,6 +385,21 @@ export class GameRenderer {
     this.terrain.uniforms.uBorderOn.value = s.borders ? 1 : 0;
     if (this.borders) { this.borders.posts.visible = s.borders; this.borders.caps.visible = s.borders; }
     this.resize();
+  }
+
+  /**
+   * The sun's shadow map: its height by quality, and wider on a wide screen, where the view's footprint
+   * is (fitShadow draws only the part of it the view needs).
+   */
+  private sizeShadowMap() {
+    const q = this.settings.quality;
+    const h = q === 'low' ? 1024 : q === 'medium' ? 2048 : 4096;
+    const w = Math.round((h * THREE.MathUtils.clamp(this.cam.camera.aspect / 1.6, 1, 1.4)) / 256) * 256;
+    const sh = this.sky.shadow;
+    if (sh.mapSize.x === w && sh.mapSize.y === h) return;
+    sh.mapSize.set(w, h);
+    sh.map?.dispose();
+    sh.map = null as any;
   }
 
   private lastW = 0;
@@ -405,6 +420,7 @@ export class GameRenderer {
     this.renderer.setSize(w, h, false);
     this.cam.camera.aspect = w / h;
     this.cam.camera.updateProjectionMatrix();
+    this.sizeShadowMap();
     this.fx.setSize(w, h);
     // the world renders at the resolution scale (the final pass scales it up to the canvas)
     const pr = this.renderPixelRatio;
@@ -981,6 +997,7 @@ export class GameRenderer {
     this.updateWeather(dt);
     const zoom01 = (this.cam.dist - this.cam.minDist) / (this.cam.maxDist - this.cam.minDist);
     this.sky.update(gameDt, this.cam.target, this.cam.viewSize);
+    fitShadow(this.sky.sun, this.sky.shadow, this.cam.camera, this.cam.target, this.cam.viewSize, this.sky.sunDir, g.world);
     lodView.update(this.cam.camera, this.lastH * this.renderPixelRatio, this.sky.sun);
     // fresh snow throws the moonlight back; hold the exposure down so a winter night still reads as night
     this.renderer.toneMappingExposure = this.sky.exposure * (1 - G.uSnow.value * G.uNight.value * 0.32);

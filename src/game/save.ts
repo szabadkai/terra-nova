@@ -202,6 +202,8 @@ export function restore(saved: SaveData): Game {
   // counters last: making the records above drew ids and random numbers
   Object.assign(g, d.scalars);
   g.rng.state = d.rng;
+  // a game saved before each player's view was kept: the local player's fog is what they had seen
+  if (!('seen' in d.world.arrays)) for (let i = 0; i < w.N; i++) w.seen[i] = w.explored[i] ? 1 << g.local : 0;
   // a game saved before there were hares: the woods fill up with them as in a new game
   if (!('wildT' in d.scalars)) populateWild(g, g.starts);
   settle(g);

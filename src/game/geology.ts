@@ -4,6 +4,7 @@ import { MINE_ORE, ORE_NAMES } from './defs';
 import type { Game } from './game';
 import { A, claim, plan } from './settlers';
 import type { Settler, Sign } from './types';
+import { sq } from '../core/fmath';
 
 export const PROBES = 8;
 export const PROBE_RADIUS = 4.5;
@@ -46,7 +47,7 @@ export function sendGeologist(g: Game, owner: number, x: number, z: number): str
   for (const s of g.settlers.values()) {
     if (s.owner !== owner || s.job !== 'geologist' || s.dead || s.home || s.voyage || s.aboard || s.task.startsWith('Prospect')) continue;
     if (w.region[s.node] !== region) continue;
-    const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+    const d = sq(s.x - x) + sq(s.z - z);
     if (d < bd) { bd = d; best = s; }
   }
   if (best) {
@@ -59,7 +60,7 @@ export function sendGeologist(g: Game, owner: number, x: number, z: number): str
   bd = Infinity;
   for (const s of g.settlers.values()) {
     if (s.owner !== owner || s.job !== 'carrier' || !s.idle || s.dead || s.home || s.voyage || s.aboard || w.region[s.node] !== region) continue;
-    const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+    const d = sq(s.x - x) + sq(s.z - z);
     if (d < bd) { bd = d; c = s; }
   }
   if (!c) return 'No free settler to become a geologist';

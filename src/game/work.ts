@@ -8,6 +8,7 @@ import { DX8, DY8, WATER_LEVEL } from './world';
 import { shipwrightThink } from './sea';
 import { setStall, setStatus } from './status';
 import { huntable } from './wildlife';
+import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 
 function outFull(b: Building) {
   let n = 0;
@@ -90,7 +91,7 @@ function woodcutter(g: Game, s: Settler, b: Building) {
       if (!g.trees.has(tree.id)) return false;
       tree.state = 'falling';
       tree.timer = 0;
-      tree.fallDir = Math.atan2(w.nx(tree.node) - s.x, w.ny(tree.node) - s.z);
+      tree.fallDir = atan2(w.nx(tree.node) - s.x, w.ny(tree.node) - s.z);
       felled = true;
       g.treesVersion++;
       g.emit({ type: 'treefall', x: w.nx(tree.node), z: w.ny(tree.node) });
@@ -136,7 +137,7 @@ function forester(g: Game, s: Settler, b: Building) {
   let spot = -1;
   for (let k = 0; k < 30; k++) {
     const a = g.rng.range(0, Math.PI * 2), r = g.rng.range(2.5, R);
-    const x = Math.round(b.cx + Math.cos(a) * r), y = Math.round(b.cz + Math.sin(a) * r);
+    const x = Math.round(b.cx + cos(a) * r), y = Math.round(b.cz + sin(a) * r);
     if (!w.inBounds(x, y)) continue;
     const i = w.idx(x, y);
     if (w.owner[i] !== b.owner || w.region[i] !== w.region[b.door]) continue;
@@ -174,8 +175,8 @@ function stonecutter(g: Game, s: Settler, b: Building) {
     if (st.amount - st.reserved <= 0) continue;
     if (w.region[st.node] !== w.region[b.door]) continue;
     const x = w.nx(st.node), y = w.ny(st.node);
-    const d2 = (x - b.cx) ** 2 + (y - b.cz) ** 2;
-    if (d2 > b.def.radius! ** 2) continue;
+    const d2 = sq(x - b.cx) + sq(y - b.cz);
+    if (d2 > sq(b.def.radius!)) continue;
     if (d2 < bd) { bd = d2; best = st; }
   }
   if (!best) { setStall(g, b, { kind: 'range', lack: 'rocks' }); plan(s, [A.wait(5)]); return; }
@@ -266,8 +267,8 @@ function hunter(g: Game, s: Settler, b: Building) {
   let best = null as import('./types').Animal | null, bd = Infinity;
   for (const a of g.animals.values()) {
     if (!huntable(a) || w.region[a.node] !== w.region[b.door]) continue;
-    const d2 = (a.x - b.cx) ** 2 + (a.z - b.cz) ** 2;
-    if (d2 > b.def.radius! ** 2) continue;
+    const d2 = sq(a.x - b.cx) + sq(a.z - b.cz);
+    if (d2 > sq(b.def.radius!)) continue;
     // the nearest, but a deer (two meat) is worth a longer walk
     const score = a.kind === 'deer' ? d2 * 0.5 : d2;
     if (score < bd) { bd = score; best = a; }
@@ -279,7 +280,7 @@ function hunter(g: Game, s: Settler, b: Building) {
   let shot = false;
   const approach = () => A.do(() => {
     if (!deer.alive) return;
-    const d = Math.hypot(deer.x - s.x, deer.z - s.z);
+    const d = hypot(deer.x - s.x, deer.z - s.z);
     if (d > 5.5) {
       // re-target: insert walk in front
       s.actions.unshift(A.walk(deer.node, true), approachAgain());
@@ -289,7 +290,7 @@ function hunter(g: Game, s: Settler, b: Building) {
   const approachAgain = (): import('./types').Action => A.do(() => {
     tries++;
     if (tries > 6) return false;
-    const d = Math.hypot(deer.x - s.x, deer.z - s.z);
+    const d = hypot(deer.x - s.x, deer.z - s.z);
     if (d > 5.5 && deer.alive) s.actions.unshift(A.walk(deer.node, true), approachAgain());
   });
   plan(s, [
@@ -299,7 +300,7 @@ function hunter(g: Game, s: Settler, b: Building) {
     A.do(() => {
       // face and shoot
       if (!deer.alive) return;
-      s.heading = Math.atan2(deer.x - s.x, deer.z - s.z);
+      s.heading = atan2(deer.x - s.x, deer.z - s.z);
     }),
     A.anim('shoot', 1.3),
     A.do(() => {
@@ -307,7 +308,7 @@ function hunter(g: Game, s: Settler, b: Building) {
       const sy = w.heightAt(s.x, s.z) + 0.45, ty = w.heightAt(deer.x, deer.z) + 0.35;
       g.projectiles.push({
         id: g.id(), owner: s.owner, sx: s.x, sy, sz: s.z, tx: deer.x, ty, tz: deer.z,
-        t: 0, dur: Math.max(0.25, Math.hypot(deer.x - s.x, deer.z - s.z) * 0.07), target: -deer.id, damage: 999, kind: 'arrow',
+        t: 0, dur: Math.max(0.25, hypot(deer.x - s.x, deer.z - s.z) * 0.07), target: -deer.id, damage: 999, kind: 'arrow',
       });
       shot = true;
     }),
@@ -343,7 +344,7 @@ function farmer(g: Game, s: Settler, b: Building) {
     if (f.farm !== b.id) continue;
     count++;
     if (f.growth >= 1 && !f.reserved) {
-      const d2 = (w.nx(f.node) - b.cx) ** 2 + (w.ny(f.node) - b.cz) ** 2;
+      const d2 = sq(w.nx(f.node) - b.cx) + sq(w.ny(f.node) - b.cz);
       if (d2 < rd) { rd = d2; ripe = f; }
     }
   }
@@ -406,7 +407,7 @@ function vintner(g: Game, s: Settler, b: Building) {
     if (f.farm !== b.id) continue;
     count++;
     if (f.growth >= 1 && !f.reserved) {
-      const d2 = (w.nx(f.node) - b.cx) ** 2 + (w.ny(f.node) - b.cz) ** 2;
+      const d2 = sq(w.nx(f.node) - b.cx) + sq(w.ny(f.node) - b.cz);
       if (d2 < rd) { rd = d2; ripe = f; }
     }
   }

@@ -323,4 +323,9 @@ export interface GameEvent {
   text?: string;
   good?: Good;
   kind?: string;
+  /** the answer to a player's command (commands.ts): its sequence number and how it went */
+  seq?: number;
+  ok?: boolean;
+  n?: number;
+  ids?: number[];
 }

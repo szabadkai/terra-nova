@@ -23,7 +23,8 @@ export class World {
   oreAmt: Uint8Array;
   fish: Uint8Array;
   wear: Float32Array;
-  explored: Uint8Array; // for the local player
+  explored: Uint8Array; // for the local player: what the fog has lifted from
+  seen: Uint8Array; // bit p set once player p has explored the node (the game's own view, the same on every machine)
   region: Int32Array; // connected landmass id (1..), 0 on water
   sea: Int32Array; // connected navigable water body id (1..), 0 elsewhere
   seaSize: number[] = [0];
@@ -57,6 +58,7 @@ export class World {
     this.fish = new Uint8Array(N);
     this.wear = new Float32Array(N);
     this.explored = new Uint8Array(N);
+    this.seen = new Uint8Array(N);
     this.region = new Int32Array(N);
     this.sea = new Int32Array(N);
     this.shoreDist = new Uint8Array(N);

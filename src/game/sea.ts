@@ -15,6 +15,7 @@ import { Need, availableAt, needsOf } from './economy';
 import { afloat, mendShip, shipFields, sinkStep, tradeShipsOf, warshipStep, warshipsOf } from './naval';
 import { setStall, setStatus } from './status';
 import { consume } from './flow';
+import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 
 const SHIP_SPEED = 2.7; // nodes per second at full sail
 const WARSHIP_SPEED = 3.1; // sail and oars
@@ -65,7 +66,7 @@ export function berthPos(g: Game, b: Building, k: number): { x: number; z: numbe
   const w = g.world;
   const dx = w.nx(b.dock), dz = w.ny(b.dock);
   const ax = dx - b.cx, az = dz - b.cz;
-  const l = Math.hypot(ax, az) || 1;
+  const l = hypot(ax, az) || 1;
   const px = -az / l, pz = ax / l;
   // alongside the jetty head, then further out along the shore
   const spots: [number, number][] = k === 0
@@ -94,7 +95,7 @@ export function nearestNavigable(g: Game, x: number, z: number, sea = 0): number
 
 function clearLine(g: Game, ax: number, az: number, bx: number, bz: number, minShore: number) {
   const w = g.world;
-  const d = Math.hypot(bx - ax, bz - az);
+  const d = hypot(bx - ax, bz - az);
   const n = Math.max(1, Math.ceil(d / 0.35));
   for (let k = 0; k <= n; k++) {
     const t = k / n;
@@ -151,7 +152,7 @@ export function seaRoute(g: Game, x: number, z: number, tx: number, tz: number):
 
 function routeLength(r: number[]) {
   let L = 0;
-  for (let k = 0; k < r.length / 2 - 1; k++) L += Math.hypot(r[k * 2 + 2] - r[k * 2], r[k * 2 + 3] - r[k * 2 + 1]);
+  for (let k = 0; k < r.length / 2 - 1; k++) L += hypot(r[k * 2 + 2] - r[k * 2], r[k * 2 + 3] - r[k * 2 + 1]);
   return L;
 }
 
@@ -161,7 +162,7 @@ function routeAt(r: number[], s: number): { x: number; z: number; tx: number; tz
   const n = r.length / 2 - 1;
   for (let k = 0; k < n; k++) {
     const ax = r[k * 2], az = r[k * 2 + 1], bx = r[k * 2 + 2], bz = r[k * 2 + 3];
-    const L = Math.hypot(bx - ax, bz - az);
+    const L = hypot(bx - ax, bz - az);
     if (acc + L >= s || k === n - 1) {
       const t = L > 1e-6 ? Math.min(1, Math.max(0, (s - acc) / L)) : 1;
       return { x: ax + (bx - ax) * t, z: az + (bz - az) * t, tx: (bx - ax) / (L || 1), tz: (bz - az) / (L || 1) };
@@ -194,7 +195,7 @@ export function launchShip(g: Game, owner: number, yard: Building, kind: ShipKin
   const w = g.world;
   let n = 0;
   for (const s of g.ships.values()) if (s.owner === owner && (s.kind === 'war') === (kind === 'war')) n++;
-  const ang = Math.atan2(w.nx(yard.dock) - yard.cx, w.ny(yard.dock) - yard.cz);
+  const ang = atan2(w.nx(yard.dock) - yard.cx, w.ny(yard.dock) - yard.cz);
   const names = kind === 'war' ? WARSHIP_NAMES : SHIP_NAMES;
   const sh: Ship = {
     id: g.id(), owner, name: names[(n * 7 + owner * 3 + g.ships.size) % names.length],
@@ -208,7 +209,7 @@ export function launchShip(g: Game, owner: number, yard: Building, kind: ShipKin
   if (kind === 'war') {
     g.emit({ type: 'warship', x: sh.x, z: sh.z, owner, s: sh.id });
     // it stands guard a little way out from the slipway
-    const dx = w.nx(yard.dock) - yard.cx, dz = w.ny(yard.dock) - yard.cz, l = Math.hypot(dx, dz) || 1;
+    const dx = w.nx(yard.dock) - yard.cx, dz = w.ny(yard.dock) - yard.cz, l = hypot(dx, dz) || 1;
     const px = sh.x + (dx / l) * 2.5, pz = sh.z + (dz / l) * 2.5;
     const i = nearestNavigable(g, px, pz, w.sea[yard.dock]);
     sh.postX = i >= 0 ? w.nx(i) : sh.x;
@@ -233,7 +234,7 @@ export function nearestHarbourBySea(g: Game, owner: number, sh: Ship): Building 
   let best: Building | null = null, bd = Infinity;
   for (const b of g.buildings.values()) {
     if (b.owner !== owner || b.type !== 'harbour' || b.state !== 'done' || b.dock < 0 || w.sea[b.dock] !== sea) continue;
-    const d = (b.cx - sh.x) ** 2 + (b.cz - sh.z) ** 2;
+    const d = sq(b.cx - sh.x) + sq(b.cz - sh.z);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -259,8 +260,8 @@ function moveShip(g: Game, sh: Ship, dt: number) {
   sh.x = p.x;
   sh.z = p.z;
   const hx = ahead.x - p.x, hz = ahead.z - p.z;
-  if (Math.hypot(hx, hz) > 0.05) {
-    const want = Math.atan2(hx, hz);
+  if (hypot(hx, hz) > 0.05) {
+    const want = atan2(hx, hz);
     let d = want - sh.heading;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
@@ -275,7 +276,7 @@ function moveShip(g: Game, sh: Ship, dt: number) {
 
 /** Passengers stand on deck: keep their positions on the ship for rendering, picking and fog. */
 function syncPassengers(g: Game, sh: Ship) {
-  const c = Math.cos(sh.heading), s = Math.sin(sh.heading);
+  const c = cos(sh.heading), s = sin(sh.heading);
   sh.passengers = sh.passengers.filter((id) => g.settlers.has(id));
   sh.passengers.forEach((id, k) => {
     const p = g.settlers.get(id)!;
@@ -333,7 +334,7 @@ function updateShip(g: Game, sh: Ship, dt: number) {
       }
       if (arrived) {
         const hb = nearestHarbourBySea(g, sh.owner, sh);
-        if (hb && Math.hypot(hb.cx - sh.x, hb.cz - sh.z) < hb.size + 5) sh.at = hb.id;
+        if (hb && hypot(hb.cx - sh.x, hb.cz - sh.z) < hb.size + 5) sh.at = hb.id;
       }
       // unloaded cargo from an aborted trip goes to the nearest harbour
       if (!sh.route && (cargoCount(sh) || sh.passengers.length)) {
@@ -345,7 +346,7 @@ function updateShip(g: Game, sh: Ship, dt: number) {
     case 'toLoad': {
       const b = harbourAlive(g, sh.from, sh.owner);
       if (!b) { abortTrip(g, sh); break; }
-      if (!arrived && !sh.route && !sailToBuilding(g, sh, b) && Math.hypot(b.cx - sh.x, b.cz - sh.z) > b.size + 4) { abortTrip(g, sh); break; }
+      if (!arrived && !sh.route && !sailToBuilding(g, sh, b) && hypot(b.cx - sh.x, b.cz - sh.z) > b.size + 4) { abortTrip(g, sh); break; }
       if (arrived) {
         sh.state = 'loading';
         sh.at = b.id;
@@ -384,7 +385,7 @@ function updateShip(g: Game, sh: Ship, dt: number) {
       if (arrived || !sh.route) {
         sh.state = 'idle';
         const hb = nearestHarbourBySea(g, sh.owner, sh);
-        if (hb && Math.hypot(hb.cx - sh.x, hb.cz - sh.z) < hb.size + 5) sh.at = hb.id;
+        if (hb && hypot(hb.cx - sh.x, hb.cz - sh.z) < hb.size + 5) sh.at = hb.id;
         g.message(sh.owner, `The “${sh.name}” is back from scouting`, sh.x, sh.z, 'good');
       }
       break;
@@ -523,7 +524,7 @@ export function shipwrightThink(g: Game, s: Settler, b: Building) {
       if (!w.inBounds(xx, yy)) continue;
       const i = w.idx(xx, yy);
       if (!w.walkable(i) || w.building[i]) continue;
-      const d = (xx - dx) ** 2 + (yy - dz) ** 2;
+      const d = sq(xx - dx) + sq(yy - dz);
       if (d < bd) { bd = d; spot = i; }
     }
   let took = false, tookIron = false;
@@ -706,7 +707,7 @@ export function scoutSeas(g: Game, owner: number, from: Building): string | null
   let sh: Ship | null = null, bd = Infinity;
   for (const s of g.ships.values()) {
     if (s.owner !== owner || s.kind === 'war' || s.state !== 'idle' || cargoCount(s) || s.passengers.length) continue;
-    const d = (s.x - from.cx) ** 2 + (s.z - from.cz) ** 2;
+    const d = sq(s.x - from.cx) + sq(s.z - from.cz);
     if (d < bd) { bd = d; sh = s; }
   }
   if (!sh) return 'No idle ship to send';
@@ -720,8 +721,8 @@ export function scoutSeas(g: Game, owner: number, from: Building): string | null
   }
   const score = (i: number) => {
     let unex = 0;
-    w.forRadius(w.nx(i), w.ny(i), 7, (j) => { if (!w.explored[j]) unex++; });
-    return unex + Math.hypot(w.nx(i) - from.cx, w.ny(i) - from.cz) * 0.3;
+    w.forRadius(w.nx(i), w.ny(i), 7, (j) => { if (!((w.seen[j] >> owner) & 1)) unex++; });
+    return unex + hypot(w.nx(i) - from.cx, w.ny(i) - from.cz) * 0.3;
   };
   cands.sort((a, b) => score(b) - score(a));
   const pts = cands.slice(0, 4);
@@ -730,7 +731,7 @@ export function scoutSeas(g: Game, owner: number, from: Building): string | null
   let cx = sh.x, cz = sh.z;
   const left = [...pts];
   while (left.length) {
-    left.sort((a, b) => Math.hypot(w.nx(a) - cx, w.ny(a) - cz) - Math.hypot(w.nx(b) - cx, w.ny(b) - cz));
+    left.sort((a, b) => hypot(w.nx(a) - cx, w.ny(a) - cz) - hypot(w.nx(b) - cx, w.ny(b) - cz));
     const n = left.shift()!;
     const r = seaRoute(g, cx, cz, w.nx(n), w.ny(n));
     if (!r) continue;
@@ -1053,7 +1054,7 @@ function dispatchShips(g: Game, owner: number) {
       const s = idle[k];
       const n = nearestNavigable(g, s.x, s.z);
       if (n < 0 || g.world.sea[n] !== sea) continue;
-      const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+      const d = sq(s.x - x) + sq(s.z - z);
       if (d < bd) { bd = d; bi = k; }
     }
     return bi >= 0 ? idle.splice(bi, 1)[0] : null;
@@ -1122,6 +1123,11 @@ export function updateSea(g: Game, dt: number) {
       for (const sh of g.ships.values()) if (sh.owner === p.id) { any = true; break; }
     }
     if (!any) continue;
+    // a harbour whose chosen destination is gone (fallen, or the sea between them lost) ships to none
+    for (const b of g.buildings.values()) {
+      if (b.owner !== p.id || b.type !== 'harbour' || !b.tradeTo) continue;
+      if (!harbourDestinations(g, b).some((d) => d.id === b.tradeTo)) b.tradeTo = 0;
+    }
     planSea(g, p.id);
     dispatchShips(g, p.id);
   }
@@ -1169,17 +1175,17 @@ export function harbourDestinations(g: Game, from: Building): Building[] {
     if (w.sea[b.dock] !== w.sea[from.dock] || regionOf(g, b) === regionOf(g, from)) continue;
     out.push(b);
   }
-  out.sort((a, b) => Math.hypot(a.cx - from.cx, a.cz - from.cz) - Math.hypot(b.cx - from.cx, b.cz - from.cz));
+  out.sort((a, b) => hypot(a.cx - from.cx, a.cz - from.cz) - hypot(b.cx - from.cx, b.cz - from.cz));
   return out;
 }
 
 /** Harbours have no names: describe one by where it lies from a spot ("Harbour 40 to the NE"). */
 export function harbourLabel(b: Building, fromX: number, fromZ: number): string {
   const dx = b.cx - fromX, dz = b.cz - fromZ;
-  const d = Math.round(Math.hypot(dx, dz));
+  const d = Math.round(hypot(dx, dz));
   if (d < 2) return 'Harbour here';
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  const k = ((Math.round((Math.atan2(dx, -dz) / (Math.PI * 2)) * 8) % 8) + 8) % 8;
+  const k = ((Math.round((atan2(dx, -dz) / (Math.PI * 2)) * 8) % 8) + 8) % 8;
   return `Harbour ${d} to the ${dirs[k]}`;
 }
 
@@ -1254,7 +1260,7 @@ export function bookPassengers(g: Game, from: Building, to: number, role: Passen
     if (s.owner !== from.owner || s.dead || s.aboard || s.voyage || s.hidden || w.region[s.node] !== r || !roleMatch(s, role)) continue;
     if (role === 'carrier' ? s.idle && !s.home : role === 'builder' ? !s.home : s.sstate === 'idle' && !s.engaged) pool.push(s);
   }
-  pool.sort((a, b) => ((a.x - from.cx) ** 2 + (a.z - from.cz) ** 2) - ((b.x - from.cx) ** 2 + (b.z - from.cz) ** 2));
+  pool.sort((a, b) => (sq(a.x - from.cx) + sq(a.z - from.cz)) - (sq(b.x - from.cx) + sq(b.z - from.cz)));
   let k = 0;
   while (k < n) {
     const s = pool.shift() ?? (role === 'soldier' ? reserveSoldier(g, from.owner, r) : null);
@@ -1273,5 +1279,5 @@ export function expectedBySea(g: Game, hb: Building): number {
 }
 
 /** Height of the ship's waterline (it bobs in the swell); the deck is ~0.25 above. */
-export const shipDeckY = (t: number, id: number) => WATER_LEVEL + 0.02 + Math.sin(t * 1.3 + id) * 0.025;
+export const shipDeckY = (t: number, id: number) => WATER_LEVEL + 0.02 + sin(t * 1.3 + id) * 0.025;
 export const DECK_H = 0.2 * SHIP_SCALE;

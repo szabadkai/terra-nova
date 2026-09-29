@@ -9,6 +9,7 @@ import { DONKEYS_PER_MARKET, DONKEY_LOAD, GOODS, GOOD_NAMES, Good, MAX_DONKEYS, 
 import type { Game } from './game';
 import { A, claim, park, parkable, plan } from './settlers';
 import type { Building, Settler, TradeOrder } from './types';
+import { atan2, hypot, sq } from '../core/fmath';
 
 /** How many of a good one click in the market panel adds to (or takes off) an order. */
 export const ORDER_STEP = 4;
@@ -38,11 +39,11 @@ export function destinationsOf(g: Game, from: Building): Building[] {
 /** Markets have no names: describe one by where it lies from a spot ("Market 18 to the NE"). */
 export function marketLabel(g: Game, b: Building, fromX: number, fromZ: number): string {
   const dx = b.cx - fromX, dz = b.cz - fromZ;
-  const d = Math.round(Math.hypot(dx, dz));
+  const d = Math.round(hypot(dx, dz));
   if (d < 2) return 'Market here';
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   // north is -z on the map
-  const a = Math.atan2(dx, -dz);
+  const a = atan2(dx, -dz);
   const k = ((Math.round((a / (Math.PI * 2)) * 8) % 8) + 8) % 8;
   return `Market ${d} to the ${dirs[k]}`;
 }
@@ -154,7 +155,7 @@ function findLoad(g: Game, s: Settler): Load | null {
   let best: Load | null = null, bd = Infinity;
   for (const m of marketsOf(g, s.owner)) {
     if (reg(g, m) !== r) continue;
-    const d = (m.cx - s.x) ** 2 + (m.cz - s.z) ** 2;
+    const d = sq(m.cx - s.x) + sq(m.cz - s.z);
     if (d >= bd) continue;
     const ready = readyAt(g, m);
     let pick: { order: TradeOrder; good: Good }[] | null = null, pn = 0, to = 0;
@@ -290,13 +291,13 @@ export function donkeyThink(g: Game, s: Settler, dt: number) {
   let base: Building | null = null, bd = Infinity;
   for (const m of marketsOf(g, s.owner)) {
     if (reg(g, m) !== w.region[s.node]) continue;
-    const d = (m.cx - s.x) ** 2 + (m.cz - s.z) ** 2;
+    const d = sq(m.cx - s.x) + sq(m.cz - s.z);
     if (d < bd) { bd = d; base = m; }
   }
   base ??= g.nearestStorage(s.owner, s.x, s.z, w.region[s.node]);
   if (!base) return;
   const bx = w.nx(base.door), by = w.ny(base.door);
-  if (Math.hypot(s.x - bx, s.z - by) < 4 && g.rng.chance(0.6)) return;
+  if (hypot(s.x - bx, s.z - by) < 4 && g.rng.chance(0.6)) return;
   for (let k = 0; k < 6; k++) {
     const tx = bx + g.rng.int(-3, 4), ty = by + g.rng.int(1, 4);
     if (!w.inBounds(tx, ty)) continue;
@@ -370,7 +371,7 @@ export function marketTraffic(g: Game, m: Building) {
   for (const s of g.settlers.values()) {
     if (s.owner !== m.owner || s.job !== 'donkey' || s.dead) continue;
     if (s.target === m.id) coming++;
-    else if (!s.target && Math.hypot(s.x - m.cx, s.z - m.cz) < 6) here++;
+    else if (!s.target && hypot(s.x - m.cx, s.z - m.cz) < 6) here++;
   }
   for (const arr of readyAt(g, m).values()) ready += arr.length;
   let incoming = 0;

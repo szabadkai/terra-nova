@@ -18,6 +18,7 @@ import { cancelVoyage, findDock, sinkFleet, updateSea } from './sea';
 import { updateSigns } from './geology';
 import { updateTrade } from './trade';
 import { sampleFlow, type FlowSample } from './flow';
+import { atan2, sq } from '../core/fmath';
 
 export interface PlayerState {
   id: number;
@@ -51,12 +52,18 @@ export interface GameOptions {
   players: number;
   aiLevel: number; // 0 easy .. 2 hard
   islands?: boolean;
+  /** how many of the players are people (the first slots); the rest are computer kingdoms. Default 1. */
+  humans?: number;
+  /** the player this machine plays (its fog, its messages); default 0 */
+  local?: number;
 }
 
 export const OUT_CAP = 8;
 /** A computer kingdom that has lost its headquarters yields once it holds this many strongholds or fewer and no castle,
  *  so the end of a won war isn't a hunt for the last watchtower or a harbour across the sea. */
 export const YIELD_FORTS = 3;
+/** One step of the game as it is played: sixty a second whatever the display does, the same on every machine (src/net/lockstep.ts). */
+export const TICK = 1 / 60;
 
 /** Only a building that still wants something can be put first: a site, or a finished one that takes goods in. */
 export function canPrioritise(b: Building): boolean {
@@ -116,6 +123,7 @@ export class Game {
   /** `generate = false` leaves an empty world and no players, for restoring a saved game into. */
   constructor(opts: GameOptions, generate = true) {
     this.opts = opts;
+    this.local = opts.local ?? 0;
     this.rng = new RNG(opts.seed ^ 0x5bd1e995);
     this.world = new World(opts.size, opts.size);
     this.path = new PathFinder(this.world);
@@ -134,7 +142,7 @@ export class Game {
     for (let p = 0; p < opts.players; p++) {
       this.players.push(this.newPlayer(p));
       this.setupStart(p, gen.starts[p].x, gen.starts[p].y);
-      if (p !== 0) this.ai.push(new AIController(this, p, opts.aiLevel));
+      if (!this.isHuman(p)) this.ai.push(new AIController(this, p, opts.aiLevel));
     }
     recomputeTerritory(this);
     this.updateExplored(true);
@@ -144,11 +152,16 @@ export class Game {
     return this.nextId++;
   }
 
+  /** Whether slot `p` is played by a person (the first `opts.humans` slots are). */
+  isHuman(p: number) {
+    return p < (this.opts.humans ?? 1);
+  }
+
   newPlayer(p: number): PlayerState {
     const toolPrio: Record<string, number> = {};
     for (const t of TOOLS) toolPrio[t] = 1;
     return {
-      id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: p !== 0, alive: true,
+      id: p, name: PLAYER_NAMES[p], color: PLAYER_COLORS[p], ai: !this.isHuman(p), alive: true,
       swordRatio: 0.65, toolPrio, dispatchT: p * 0.07, militaryT: p * 0.11, morale: 0,
       produced: emptyStock(), used: emptyStock(), flow: [], history: [], hq: 0, mana: 0, spellCd: 0, spellsCast: 0, traded: 0, fallen: false,
     };
@@ -587,7 +600,7 @@ export class Game {
     for (const b of this.buildings.values()) {
       if (b.owner !== owner || !b.def.storage || b.state !== 'done') continue;
       if (region && this.world.region[b.door] !== region) continue;
-      const d = (b.cx - x) ** 2 + (b.cz - z) ** 2;
+      const d = sq(b.cx - x) + sq(b.cz - z);
       if (d < bd) { bd = d; best = b; }
     }
     return best;
@@ -656,7 +669,12 @@ export class Game {
     }
   }
 
-  private step(dt: number) {
+  /** One fixed step, TICK long: what the lockstep driver runs. */
+  tick() {
+    this.step(TICK);
+  }
+
+  step(dt: number) {
     this.time += dt;
     // trees growth
     this.updateNature(dt);
@@ -765,7 +783,7 @@ export class Game {
           const dx = w.nx(n) - w.nx(a.node), dz = w.ny(n) - w.ny(a.node);
           // a hare goes in quick hops, a deer at a walk
           a.stepDur = (dx && dz ? 1.41 : 1) * (hare ? 0.34 : 0.9);
-          a.heading = Math.atan2(dx, dz);
+          a.heading = atan2(dx, dz);
         } else a.path = null;
       }
       this.syncPos(a);
@@ -778,32 +796,40 @@ export class Game {
     updateWild(this, dt);
   }
 
+  /** What each player has seen of the map (`world.seen`, a bit a player, the same on every machine), and the
+   *  local player's fog (`world.explored`, this machine's view of the same). */
   updateExplored(force: boolean) {
     const w = this.world;
     let changed = false;
+    const localBit = 1 << this.local;
+    let bit = 1;
     const reveal = (cx: number, cz: number, r: number) => {
       w.forRadius(cx, cz, r, (i) => {
-        if (!w.explored[i]) {
+        w.seen[i] |= bit;
+        if (bit === localBit && !w.explored[i]) {
           w.explored[i] = 1;
           changed = true;
         }
       });
     };
-    for (const b of this.buildings.values()) {
-      if (b.owner !== this.local) continue;
-      const r = b.def.military && b.occupied ? b.def.military.radius + 4 : b.size + 5;
-      if (!force && b.state !== 'done' && !b.def.military) { reveal(b.cx, b.cz, b.size + 4); continue; }
-      reveal(b.cx, b.cz, r);
-    }
-    for (const s of this.settlers.values()) {
-      if (s.owner !== this.local || s.hidden || s.dead) continue;
-      reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
-    }
-    for (const sh of this.ships.values()) if (sh.owner === this.local) reveal(sh.x, sh.z, 8);
-    // a realm whose headquarters has fallen can hide its strongholds no longer
-    for (const b of this.buildings.values()) {
-      if (b.owner === this.local || !b.def.military || b.state !== 'done' || !this.players[b.owner]?.fallen) continue;
-      reveal(b.cx, b.cz, b.size + 3);
+    for (const p of this.players) {
+      bit = 1 << p.id;
+      for (const b of this.buildings.values()) {
+        if (b.owner !== p.id) continue;
+        const r = b.def.military && b.occupied ? b.def.military.radius + 4 : b.size + 5;
+        if (!force && b.state !== 'done' && !b.def.military) { reveal(b.cx, b.cz, b.size + 4); continue; }
+        reveal(b.cx, b.cz, r);
+      }
+      for (const s of this.settlers.values()) {
+        if (s.owner !== p.id || s.hidden || s.dead) continue;
+        reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
+      }
+      for (const sh of this.ships.values()) if (sh.owner === p.id) reveal(sh.x, sh.z, 8);
+      // a realm whose headquarters has fallen can hide its strongholds no longer
+      for (const b of this.buildings.values()) {
+        if (b.owner === p.id || !b.def.military || b.state !== 'done' || !this.players[b.owner]?.fallen) continue;
+        reveal(b.cx, b.cz, b.size + 3);
+      }
     }
     if (changed) w.exploredDirty = true;
   }
@@ -834,7 +860,8 @@ export class Game {
     }
     if (!this.over) {
       const alive = this.players.filter((p) => p.alive);
-      if (!this.players[this.local].alive) {
+      // over when no person is left standing (each learns of their own fall from the `defeated` event), or one realm is
+      if (!alive.some((p) => !p.ai)) {
         this.over = true;
         this.winner = alive.length ? alive[0].id : -1;
         this.emit({ type: 'gameover', owner: this.winner });
@@ -842,6 +869,10 @@ export class Game {
         this.over = true;
         this.winner = alive[0].id;
         this.emit({ type: 'gameover', owner: this.winner });
+      }
+      // the winner's people cheer where they stand
+      if (this.over && this.winner >= 0) {
+        for (const s of this.settlers.values()) if (s.owner === this.winner && !s.hidden && !s.dead && s.actions.length === 0) { s.anim = 'cheer'; s.animT = 0; }
       }
     }
   }
@@ -867,6 +898,6 @@ export function strongholdsOf(g: Game, owner: number): Building[] {
 
 function nearestTo(list: Building[], x: number, z: number): Building {
   let best = list[0], bd = Infinity;
-  for (const b of list) { const d = (b.cx - x) ** 2 + (b.cz - z) ** 2; if (d < bd) { bd = d; best = b; } }
+  for (const b of list) { const d = sq(b.cx - x) + sq(b.cz - z); if (d < bd) { bd = d; best = b; } }
   return best;
 }

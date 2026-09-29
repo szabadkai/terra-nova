@@ -8,6 +8,7 @@ import { builderThink, diggerThink } from './economy';
 import { pioneerThink } from './pioneers';
 import { donkeyThink } from './trade';
 import { catapultThink } from './siege';
+import { atan2, hypot, sq } from '../core/fmath';
 
 const BASE_STEP = 0.52;
 
@@ -104,7 +105,7 @@ export function updateMovement(g: Game, s: Settler, dt: number) {
     const bx = w.nx(s.next), bz = w.ny(s.next);
     s.x = ax + (bx - ax) * s.t;
     s.z = az + (bz - az) * s.t;
-    const target = Math.atan2(bx - ax, bz - az);
+    const target = atan2(bx - ax, bz - az);
     s.heading = turnTo(s.heading, target, dt * 10);
   } else {
     s.x = ax;
@@ -167,7 +168,7 @@ function runAction(g: Game, s: Settler, dt: number): boolean {
         s.animT = 0;
         if (act.face !== undefined && act.face !== s.node) {
           const w = g.world;
-          s.heading = Math.atan2(w.nx(act.face) - w.nx(s.node), w.ny(act.face) - w.ny(s.node));
+          s.heading = atan2(w.nx(act.face) - w.nx(s.node), w.ny(act.face) - w.ny(s.node));
         }
       }
       act.t += dt;
@@ -272,7 +273,7 @@ export function idleWander(g: Game, s: Settler, dt: number) {
     return;
   }
   const bx = w.nx(base.door), by = w.ny(base.door);
-  const d = Math.hypot(s.x - bx, s.z - by);
+  const d = hypot(s.x - bx, s.z - by);
   const R = d > 9 ? 3 : 6;
   for (let k = 0; k < 6; k++) {
     const tx = bx + g.rng.int(-R, R + 1), ty = by + g.rng.int(-R + 1, R + 2);
@@ -375,10 +376,10 @@ export function freeSpotNear(g: Game, s: Settler, c: number, r: number, maxD = I
   let best = -1, bd = Infinity;
   for (let y = cy - r; y <= cy + r; y++) {
     for (let x = cx - r; x <= cx + r; x++) {
-      if (!w.inBounds(x, y) || (x - cx) ** 2 + (y - cy) ** 2 > m2) continue;
+      if (!w.inBounds(x, y) || sq(x - cx) + sq(y - cy) > m2) continue;
       const i = w.idx(x, y);
       if (i === c || !parkable(g, s, i, trees)) continue;
-      const d = (x - s.x) ** 2 + (y - s.z) ** 2;
+      const d = sq(x - s.x) + sq(y - s.z);
       if (d < bd) { bd = d; best = i; }
     }
   }

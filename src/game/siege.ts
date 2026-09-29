@@ -11,6 +11,7 @@ import type { Game } from './game';
 import { kill } from './military';
 import { A, plan, turnTo } from './settlers';
 import type { Building, Projectile, Settler } from './types';
+import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 
 /** Stones that miss fall this far around the walls. */
 const ACCURACY = 0.8;
@@ -66,7 +67,7 @@ export function spawnCatapult(g: Game, works: Building): Settler {
 }
 
 export function inRange(s: Settler, b: Building) {
-  return Math.hypot(b.cx - s.x, b.cz - s.z) <= CATAPULT_RANGE;
+  return hypot(b.cx - s.x, b.cz - s.z) <= CATAPULT_RANGE;
 }
 
 /** The nearest enemy stronghold a catapult standing where it is can reach (water is no obstacle to a stone). */
@@ -74,7 +75,7 @@ export function siegeTarget(g: Game, s: Settler): Building | null {
   let best: Building | null = null, bd = CATAPULT_RANGE * CATAPULT_RANGE;
   for (const b of g.buildings.values()) {
     if (b.owner === s.owner || !b.def.military || b.state !== 'done' || !g.players[b.owner]?.alive) continue;
-    const d = (b.cx - s.x) ** 2 + (b.cz - s.z) ** 2;
+    const d = sq(b.cx - s.x) + sq(b.cz - s.z);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -89,7 +90,7 @@ function approach(g: Game, s: Settler, b: Building): number {
     if (d2 < 12 || !w.walkable(i) || w.region[i] !== r || w.reserve[i] || w.building[i]) return;
     const d = Math.sqrt(d2);
     // close to us, but stay out on the rim beyond an archer's reach where the ground allows
-    const sc = (x - s.x) ** 2 + (y - s.z) ** 2 + Math.max(0, 9.1 - d) ** 2 * 6;
+    const sc = sq(x - s.x) + sq(y - s.z) + sq(Math.max(0, 9.1 - d)) * 6;
     if (sc < bs) { bs = sc; best = i; }
   });
   return best;
@@ -97,8 +98,8 @@ function approach(g: Game, s: Settler, b: Building): number {
 
 function fireStone(g: Game, s: Settler, b: Building) {
   const w = g.world;
-  s.heading = Math.atan2(b.cx - s.x, b.cz - s.z);
-  const d = Math.hypot(b.cx - s.x, b.cz - s.z);
+  s.heading = atan2(b.cx - s.x, b.cz - s.z);
+  const d = hypot(b.cx - s.x, b.cz - s.z);
   const hit = g.rng.next() < ACCURACY;
   let tx: number, tz: number, ty: number;
   if (hit) {
@@ -108,8 +109,8 @@ function fireStone(g: Game, s: Settler, b: Building) {
   } else {
     // short or wide: on the ground beside the walls
     const a = g.rng.range(0, Math.PI * 2), rr = b.size * 0.5 + 1 + g.rng.next() * 1.5;
-    tx = b.cx + Math.cos(a) * rr;
-    tz = b.cz + Math.sin(a) * rr;
+    tx = b.cx + cos(a) * rr;
+    tz = b.cz + sin(a) * rr;
     ty = w.heightAt(tx, tz) + 0.1;
   }
   g.projectiles.push({
@@ -154,7 +155,7 @@ export function catapultThink(g: Game, s: Settler, dt: number) {
   const b = siegeTarget(g, s);
   if (b) { fireStone(g, s, b); return; }
   // else it is swung round slowly the way its formation faces
-  if (s.sstate === 'hold' && s.face !== null && Math.abs(Math.atan2(Math.sin(s.face - s.heading), Math.cos(s.face - s.heading))) > 0.02) {
+  if (s.sstate === 'hold' && s.face !== null && Math.abs(atan2(sin(s.face - s.heading), cos(s.face - s.heading))) > 0.02) {
     s.heading = turnTo(s.heading, s.face, dt * 1.2);
     return;
   }

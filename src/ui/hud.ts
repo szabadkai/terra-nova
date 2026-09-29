@@ -5,28 +5,23 @@ import {
 } from '../game/defs';
 import { YIELD_FORTS, canPrioritise, strongholdsOf, type Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
+import type { Cmd, SetKey } from '../game/commands';
 import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
-import { attackableSoldiers, launchAttack } from '../game/military';
-import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, castSpell, faithStatus } from '../game/faith';
+import { attackableSoldiers } from '../game/military';
+import { MANA_MAX, SPELLS, SPELL_ORDER, SpellId, castError, faithStatus } from '../game/faith';
 import {
-  SHIP_ORDER_STEP, bookPassengers, bookedPassengers, cancelExpedition, cancelShipOrder, cargoCount, colonySite, expectedBySea,
-  harbourDestinations, harbourLabel, harbourTraffic, openShipOrder, placeShipOrder, scoutSeas, shipOrders, startExpedition, warshipWantsIron,
-  type PassengerRole,
+  SHIP_ORDER_STEP, bookedPassengers, cargoCount, colonySite, expectedBySea, harbourDestinations, harbourLabel, harbourTraffic, openShipOrder,
+  shipOrders, warshipWantsIron, type PassengerRole,
 } from '../game/sea';
 import type { Ship } from '../game/types';
 import { MAX_SHIPS, MAX_WARSHIPS, WARSHIP_IRON } from '../game/defs';
-import {
-  afloat, orderShipAttack, orderShipBombard, orderShipHome, orderShipMove, tradeShipsOf, warshipDoing, warshipsOf,
-} from '../game/naval';
+import { afloat, tradeShipsOf, warshipDoing, warshipsOf } from '../game/naval';
 import { catapultCap, catapultsOf, siegeHits } from '../game/siege';
-import { PROBES, geologistsAtWork, sendGeologist } from '../game/geology';
-import { pioneersAtWork, recallPioneer, sendPioneer } from '../game/pioneers';
-import {
-  FORMATIONS, callOut, commandable, drillOf, fieldSoldiers, orderAttack, orderGarrison, orderMove, orderReturn, setDrill, setFirm,
-  type Formation,
-} from '../game/orders';
-import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder, placeOrder } from '../game/trade';
+import { PROBES, geologistsAtWork } from '../game/geology';
+import { pioneersAtWork } from '../game/pioneers';
+import { FORMATIONS, commandable, drillOf, fieldSoldiers, type Formation } from '../game/orders';
+import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder } from '../game/trade';
 import { buildingIcons, goodIcons } from './icons';
 import { StallBadges, TOP_BADGES } from './stallBadges';
 import { stalled } from '../game/status';
@@ -90,7 +85,8 @@ type Tab = 'build' | 'goods' | 'military' | 'faith' | 'stats';
 
 export interface HudHooks {
   getSpeed(): number;
-  setSpeed(s: number): void;
+  /** give the game a command (commands.ts); it answers with a `cmd` event carrying the sequence number returned */
+  issue(c: Cmd): number;
   restart(): void;
   /** the Esc menu, on the Graphics page when asked */
   openMenu(page?: 'graphics'): void;
@@ -113,6 +109,10 @@ export class HUD {
   private infoT = 0;
   private attackCount = 5;
   private lastInfoKey = '';
+  /** the callbacks waiting for the game's answers to commands given, by sequence number */
+  private pending = new Map<number, (e: GameEvent) => void>();
+  /** a building's settings changed but not yet answered, shown in the panel meanwhile so they don't snap back */
+  private pendingField = new Map<string, unknown>();
   private fpsEl!: HTMLElement;
   /** kept for the counter across the top bar's redraws */
   private fpsText = '';
@@ -227,7 +227,7 @@ export class HUD {
       ${immersiveAvailable ? `<button class="mini imm${isImmersive() ? ' on' : ''}" id="imm" aria-pressed="${isImmersive()}" aria-label="Immersive mode" title="${isImmersive() ? `Leave immersive mode (F, or ${leaveHint})` : 'Immersive mode: fill the screen, so scrolling at the top edge never leaves the window (F)'}">${isImmersive() ? IMM_OFF : IMM_ON}</button>` : ''}
       <div class="fps${prefs.showFps ? '' : ' hidden'}" id="fps">${this.fpsText}</div>`;
     this.top.querySelectorAll<HTMLButtonElement>('button[data-speed]').forEach((b) => {
-      b.onclick = () => { this.hooks.setSpeed(Number(b.dataset.speed)); this.audio.play('ui'); this.refreshTop(); };
+      b.onclick = () => { this.hooks.issue({ t: 'speed', s: Number(b.dataset.speed) }); this.audio.play('ui'); this.refreshTop(); };
     });
     const imm = this.top.querySelector<HTMLButtonElement>('#imm');
     if (imm) imm.onclick = () => { this.audio.play('ui'); void toggleImmersive(); };
@@ -369,7 +369,8 @@ export class HUD {
       const row = h('div', 'slider-row');
       row.innerHTML = `${this.icon(t, 'ci')}<label>${GOOD_NAMES[t]}</label><input type="range" min="0" max="10" value="${p.toolPrio[t]}"><span>${p.toolPrio[t]}</span>`;
       const inp = row.querySelector('input')!;
-      inp.oninput = () => { p.toolPrio[t] = Number(inp.value); row.querySelector('span')!.textContent = inp.value; };
+      inp.oninput = () => { row.querySelector('span')!.textContent = inp.value; };
+      inp.onchange = () => this.issue({ t: 'pset', k: 'toolPrio', tool: t, v: Number(inp.value) });
       c.appendChild(row);
     }
     const fleet = [...g.ships.values()].filter((sh) => sh.owner === g.local && sh.kind !== 'war' && afloat(sh));
@@ -416,7 +417,8 @@ export class HUD {
     const row = h('div', 'slider-row');
     row.innerHTML = `${this.icon('sword', 'ci')}<label>Swords vs bows</label><input type="range" min="0" max="100" value="${Math.round(p.swordRatio * 100)}"><span>${Math.round(p.swordRatio * 100)}%</span>`;
     const inp = row.querySelector('input')!;
-    inp.oninput = () => { p.swordRatio = Number(inp.value) / 100; row.querySelector('span')!.textContent = inp.value + '%'; };
+    inp.oninput = () => { row.querySelector('span')!.textContent = inp.value + '%'; };
+    inp.onchange = () => this.issue({ t: 'pset', k: 'swordRatio', v: Number(inp.value) / 100 });
     c.appendChild(row);
   }
 
@@ -601,8 +603,8 @@ export class HUD {
     const g = this.game;
     const err = castError(g, g.local, id, x, z);
     if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); return false; }
-    castSpell(g, g.local, id, x, z);
-    if (!keep || g.players[g.local].mana < SPELLS[id].cost) this.startCasting(null);
+    this.issue({ t: 'cast', id, x, z });
+    if (!keep || g.players[g.local].mana < SPELLS[id].cost * 2) this.startCasting(null);
     else if (this.tab === 'faith') this.renderTab();
     return true;
   }
@@ -724,11 +726,11 @@ export class HUD {
   }
 
   prospectAt(x: number, z: number, keep: boolean) {
-    const g = this.game;
-    const err = sendGeologist(g, g.local, x, z);
-    if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); return; }
-    this.message('A geologist sets out for the mountain', x, z, 'good');
-    this.audio.play('place');
+    this.issue({ t: 'geologist', x, z }, (e) => {
+      if (!e.ok) return this.oops(e);
+      this.message('A geologist sets out for the mountain', x, z, 'good');
+      this.audio.play('place');
+    });
     if (!keep) this.startProspecting(false);
     else if (this.tab === 'build') this.renderTab();
   }
@@ -747,11 +749,11 @@ export class HUD {
   }
 
   pioneerAt(x: number, z: number, keep: boolean) {
-    const g = this.game;
-    const err = sendPioneer(g, g.local, x, z);
-    if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); return; }
-    this.message('A pioneer sets out to stake out the land', x, z, 'good');
-    this.audio.play('place');
+    this.issue({ t: 'pioneer', x, z }, (e) => {
+      if (!e.ok) return this.oops(e);
+      this.message('A pioneer sets out to stake out the land', x, z, 'good');
+      this.audio.play('place');
+    });
     if (!keep) this.startPioneering(false);
     else if (this.tab === 'build') this.renderTab();
   }
@@ -790,9 +792,11 @@ export class HUD {
     if (!from) { this.startExpedition(0); return; }
     const site = colonySite(g, g.local, from, x, z);
     if (typeof site === 'string') { this.message(site, undefined, undefined, 'bad'); this.audio.play('click'); return; }
-    startExpedition(g, g.local, from, site);
-    this.message('An expedition is gathering at the harbour: a builder, a digger, a soldier, two carriers and building materials', from.cx, from.cz, 'good');
-    this.audio.play('horn');
+    this.issue({ t: 'expedition', from: from.id, x, z }, (e) => {
+      if (!e.ok) return this.oops(e);
+      this.message('An expedition is gathering at the harbour: a builder, a digger, a soldier, two carriers and building materials', from.cx, from.cz, 'good');
+      this.audio.play('horn');
+    });
     this.startExpedition(0);
     this.lastInfoKey = '';
   }
@@ -913,23 +917,27 @@ export class HUD {
     const w = g.world;
     const seen = b && w.explored[w.idx(Math.round(b.cx), Math.round(b.cz))];
     if (b && seen && b.def.military && b.state === 'done' && b.owner !== g.local && kind !== 'move') {
-      const n = orderAttack(g, g.local, ids, b);
-      if (!n) { this.message('None of them can reach it', b.cx, b.cz, 'bad'); this.audio.play('click'); return false; }
-      this.message(`${n} soldier${n > 1 ? 's' : ''} storm the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
-      this.audio.play('horn');
+      this.issue({ t: 'storm', ids: [...ids], b: b.id }, (e) => {
+        if (!e.ok) return this.oops(e, 'None of them can reach it', b.cx, b.cz);
+        this.message(`${e.n} soldier${e.n! > 1 ? 's' : ''} storm the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
+        this.audio.play('horn');
+      });
       return true;
     }
     if (kind === 'attack') { this.message('Pick an enemy stronghold to storm', undefined, undefined, 'bad'); this.audio.play('click'); return false; }
     if (b && b.owner === g.local && b.def.military && b.state === 'done' && kind !== 'move') {
-      const n = orderGarrison(g, g.local, ids, b);
-      this.message(n ? `${n} soldier${n > 1 ? 's' : ''} march into the ${b.def.name}` : `The ${b.def.name} has no room`, b.cx, b.cz, n ? 'good' : 'bad');
-      this.audio.play(n ? 'place' : 'click');
-      return n > 0;
+      this.issue({ t: 'garrison', ids: [...ids], b: b.id }, (e) => {
+        if (!e.ok) return this.oops(e, `The ${b.def.name} has no room`, b.cx, b.cz);
+        this.message(`${e.n} soldier${e.n! > 1 ? 's' : ''} march into the ${b.def.name}`, b.cx, b.cz, 'good');
+        this.audio.play('place');
+      });
+      return true;
     }
     if (x === undefined || z === undefined) return false;
-    const n = orderMove(g, g.local, ids, x, z);
-    if (!n) { this.message('They cannot get there', x, z, 'bad'); this.audio.play('click'); return false; }
-    this.audio.play('place');
+    this.issue({ t: 'move', ids: [...ids], x, z }, (e) => {
+      if (!e.ok) return this.oops(e, 'They cannot get there', x, z);
+      this.audio.play('place');
+    });
     return true;
   }
 
@@ -940,44 +948,55 @@ export class HUD {
     const w = g.world;
     const seenAt = (px: number, pz: number) => !!w.explored[w.idx(Math.max(0, Math.min(w.W - 1, Math.round(px))), Math.max(0, Math.min(w.H - 1, Math.round(pz))))];
     if (ship && ship.owner !== g.local && afloat(ship) && seenAt(ship.x, ship.z) && kind !== 'move') {
-      const n = orderShipAttack(g, g.local, ids, ship);
-      if (!n) { this.message('None of them can reach it', ship.x, ship.z, 'bad'); this.audio.play('click'); return false; }
-      this.message(`${n > 1 ? `${n} warships` : 'The warship'} hunt${n > 1 ? '' : 's'} the enemy “${ship.name}”!`, ship.x, ship.z, 'good');
-      this.audio.play('horn');
+      this.issue({ t: 'hunt', ids: [...ids], ship: ship.id }, (e) => {
+        if (!e.ok) return this.oops(e, 'None of them can reach it', ship.x, ship.z);
+        const n = e.n!;
+        this.message(`${n > 1 ? `${n} warships` : 'The warship'} hunt${n > 1 ? '' : 's'} the enemy “${ship.name}”!`, ship.x, ship.z, 'good');
+        this.audio.play('horn');
+      });
       return true;
     }
     if (b && seenAt(b.cx, b.cz) && b.def.military && b.state === 'done' && b.owner !== g.local && kind !== 'move') {
-      const n = orderShipBombard(g, g.local, ids, b);
-      if (!n) { this.message(`Warships cannot get within range of that ${b.def.name}`, b.cx, b.cz, 'bad'); this.audio.play('click'); return false; }
-      this.message(`${n > 1 ? `${n} warships sail` : 'The warship sails'} to bombard the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
-      this.audio.play('horn');
+      this.issue({ t: 'bombard', ids: [...ids], b: b.id }, (e) => {
+        if (!e.ok) return this.oops(e, `Warships cannot get within range of that ${b.def.name}`, b.cx, b.cz);
+        const n = e.n!;
+        this.message(`${n > 1 ? `${n} warships sail` : 'The warship sails'} to bombard the enemy ${b.def.name}!`, b.cx, b.cz, 'good');
+        this.audio.play('horn');
+      });
       return true;
     }
     if (kind === 'attack') { this.message('Pick an enemy ship, or a stronghold by the water', undefined, undefined, 'bad'); this.audio.play('click'); return false; }
     if (b && b.owner === g.local && b.type === 'harbour' && b.state === 'done' && kind !== 'move') {
-      const n = orderShipHome(g, g.local, ids, b);
-      this.message(n ? `${n > 1 ? `${n} warships make` : 'The warship makes'} for the harbour to mend` : 'None of them can reach that harbour', b.cx, b.cz, n ? 'good' : 'bad');
-      this.audio.play(n ? 'place' : 'click');
-      return n > 0;
+      this.issue({ t: 'moor', ids: [...ids], b: b.id }, (e) => {
+        if (!e.ok) return this.oops(e, 'None of them can reach that harbour', b.cx, b.cz);
+        const n = e.n!;
+        this.message(`${n > 1 ? `${n} warships make` : 'The warship makes'} for the harbour to mend`, b.cx, b.cz, 'good');
+        this.audio.play('place');
+      });
+      return true;
     }
     if (x === undefined || z === undefined) return false;
-    const n = orderShipMove(g, g.local, ids, x, z);
-    if (!n) { this.message('Ships cannot sail there', x, z, 'bad'); this.audio.play('click'); return false; }
-    this.audio.play('place');
+    this.issue({ t: 'sail', ids: [...ids], x, z }, (e) => {
+      if (!e.ok) return this.oops(e, 'Ships cannot sail there', x, z);
+      this.audio.play('place');
+    });
     return true;
   }
 
   /** The chosen warships make for the nearest harbour. */
   shipsHome() {
-    const n = orderShipHome(this.game, this.game.local, this.gr.orders.ships);
-    this.message(n ? `${n > 1 ? `${n} warships make` : 'The warship makes'} for the harbour` : 'There is no harbour of yours on their sea', undefined, undefined, n ? 'good' : 'bad');
+    this.issue({ t: 'moor', ids: [...this.gr.orders.ships] }, (e) => {
+      if (!e.ok) return this.oops(e, 'There is no harbour of yours on their sea');
+      this.message(`${e.n! > 1 ? `${e.n} warships make` : 'The warship makes'} for the harbour`, undefined, undefined, 'good');
+    });
     this.selectShips([]);
   }
 
   /** The chosen soldiers go back to garrison duty. */
   returnToDuty() {
-    const n = orderReturn(this.game, this.game.local, this.gr.orders.chosen);
-    if (n) this.message(`${n} soldier${n > 1 ? 's' : ''} return to their posts`, undefined, undefined, 'good');
+    this.issue({ t: 'return', ids: [...this.gr.orders.chosen] }, (e) => {
+      if (e.ok) this.message(`${e.n} soldier${e.n! > 1 ? 's' : ''} return to their posts`, undefined, undefined, 'good');
+    });
     this.selectSoldiers([]);
   }
 
@@ -1087,7 +1106,7 @@ export class HUD {
   setFormation(shape: Formation) {
     const ids = this.gr.orders.chosen;
     if (!ids.length) return;
-    setDrill(this.game, this.game.local, ids, shape);
+    this.issue({ t: 'drill', ids: [...ids], shape });
     this.audio.play('place');
     this.lastInfoKey = '';
     this.refreshInfo();
@@ -1098,7 +1117,7 @@ export class HUD {
     const g = this.game, ids = this.gr.orders.chosen;
     if (!ids.length) return;
     const firm = !ids.every((id) => g.settlers.get(id)?.firm);
-    setFirm(g, g.local, ids, firm);
+    this.issue({ t: 'firm', ids: [...ids], firm });
     this.audio.play('ui');
     this.message(firm ? 'They stand firm: they keep their posts and let the foe come to them' : 'They charge foes that come near their posts again');
     this.lastInfoKey = '';
@@ -1312,7 +1331,7 @@ export class HUD {
         for (const id of b.garrison) { const s = g.settlers.get(id); if (s?.job === 'swordsman') sw++; else if (s?.job === 'bowman') bw++; }
         body += `<div class="kv"><span>Garrison</span><b>⚔ ${sw} · 🏹 ${bw} &nbsp;(${b.garrison.length}/${b.type === 'hq' ? '∞' : cap})</b></div>`;
         if (b.damage > 0.05) body += `<div class="status bad">Walls battered by catapults: ${Math.ceil(b.damage - 1e-6)}/${siegeHits(b)} hits${b.garrison.length ? '' : ' — nobody inside to hold them'}</div>`;
-        if (mine && b.type !== 'hq') body += `<div class="kv"><span>Desired soldiers</span><b><button class="mini" data-act="des-">−</button> ${b.desiredSoldiers} <button class="mini" data-act="des+">+</button></b></div>`;
+        if (mine && b.type !== 'hq') body += `<div class="kv"><span>Desired soldiers</span><b><button class="mini" data-act="des-">−</button> ${this.field(b, 'desiredSoldiers')} <button class="mini" data-act="des+">+</button></b></div>`;
         if (!b.occupied && mine) body += `<div class="status">Waiting for a soldier to man it</div>`;
         if (!mine && b.state === 'done') {
           const avail = attackableSoldiers(g, g.local, b).length;
@@ -1339,7 +1358,7 @@ export class HUD {
         body += this.shippingSection(b);
       }
       if (b.type === 'shipyard' && mine) {
-        const war = b.shipKind === 'war';
+        const war = this.field(b, 'shipKind') === 'war';
         body += `<div class="kv"><span>Build</span><b><span class="kindseg"><button class="mini${war ? '' : ' on'}" data-act="kind|trade" title="Trade ships carry goods and settlers between your harbours and sail expeditions">⛵ Trade ship</button><button class="mini${war ? ' on' : ''}" data-act="kind|war" title="Warships carry a catapult: they sink enemy ships and bombard strongholds by the water. Boards and iron.">⚔ Warship</button></span></b></div>`;
         body += `<div class="kv"><span>Hull on the slipway</span><b>${Math.round(b.shipProgress * 100)}%</b></div>${pct(b.shipProgress)}`;
         if (war) body += `<div class="kv"><span>Iron for the fittings</span><b>${this.icon('iron', 'ci')}${b.stock.iron}<small>/${WARSHIP_IRON}</small>${warshipWantsIron(b) ? ' · needed now' : ''}</b></div>`;
@@ -1350,11 +1369,12 @@ export class HUD {
         const dests = destinationsOf(g, b);
         body += `<div class="kv"><span>Donkeys waiting · bound here</span><b>🐴 ${tr.here} · ${tr.coming}</b></div>`;
         if (tr.incoming) body += `<div class="kv"><span>Expected from other markets</span><b>${tr.incoming}</b></div>`;
-        const opts = dests.map((d) => `<option value="${d.id}"${b.tradeTo === d.id ? ' selected' : ''}>${marketLabel(g, d, b.cx, b.cz)}</option>`).join('');
+        const to = this.field(b, 'tradeTo');
+        const opts = dests.map((d) => `<option value="${d.id}"${to === d.id ? ' selected' : ''}>${marketLabel(g, d, b.cx, b.cz)}</option>`).join('');
         body += `<div class="kv"><span>Send goods to</span><b><select data-act="dest"><option value="0">${dests.length ? '— choose a market —' : 'no other market on this land'}</option>${opts}</select></b></div>`;
-        if (b.tradeTo && marketAlive(g, b.tradeTo, g.local)) {
+        if (to && marketAlive(g, to, g.local)) {
           body += `<div class="tgrid">${GOODS.map((gd) => {
-            const o = openOrder(g, b, b.tradeTo, gd);
+            const o = openOrder(g, b, to, gd);
             const here = b.stock[gd];
             return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${here} here${o ? `, ${o.delivered} of ${o.n} delivered${o.loaded ? `, ${o.loaded} on the road` : ''}` : ''}">${this.icon(gd, 'ci')}<span>${o ? `${o.delivered}/${o.n}` : here || ''}</span><div class="tbtn"><button class="mini" data-act="ord-|${gd}" title="Send ${ORDER_STEP} fewer">−</button><button class="mini" data-act="ord+|${gd}" title="Send ${ORDER_STEP} more">+</button></div></div>`;
           }).join('')}</div>`;
@@ -1370,7 +1390,7 @@ export class HUD {
         body += `<div class="kv"><span>Catapults built · in the field</span><b>⚙ ${b.prodCount} · ${catapultsOf(g, g.local)}/${catapultCap(g, g.local)}</b></div>`;
       }
       if (b.type === 'toolsmith' && mine) {
-        body += `<div class="kv"><span>Forge</span><select data-act="tool"><option value="auto">Auto (by demand)</option>${TOOLS.map((t) => `<option value="${t}" ${b.toolChoice === t ? 'selected' : ''}>${GOOD_NAMES[t]}</option>`).join('')}</select></div>`;
+        body += `<div class="kv"><span>Forge</span><select data-act="tool"><option value="auto">Auto (by demand)</option>${TOOLS.map((t) => `<option value="${t}" ${this.field(b, 'toolChoice') === t ? 'selected' : ''}>${GOOD_NAMES[t]}</option>`).join('')}</select></div>`;
       }
       if (b.status && !d.military) {
         const since = stalled(g, b) ? g.time - b.stallT : 0;
@@ -1387,7 +1407,7 @@ export class HUD {
     }
     if (mine && b.state === 'done' && d.military && b.garrison.length > 1) buttons.push(`<button class="primary" data-act="callout">⚔ Call out ${b.garrison.length - 1}</button>`);
     if (mine && canPrioritise(b)) buttons.push(`<button class="${b.priority ? 'on' : ''}" data-act="prio" title="${b.priority ? 'Take the priority off this building (P)' : 'Put this building first in line for goods, builders and workers (P). Only one building at a time.'}">${b.priority ? '★ Prioritised' : '☆ Prioritise'}</button>`);
-    if (mine && b.state === 'done' && (d.cycle || d.worker) && !d.military) buttons.push(`<button data-act="pause">${b.paused ? '▶ Resume' : '❚❚ Pause'}</button>`);
+    if (mine && b.state === 'done' && (d.cycle || d.worker) && !d.military) buttons.push(`<button data-act="pause">${this.field(b, 'paused') ? '▶ Resume' : '❚❚ Pause'}</button>`);
     if (mine && b.type !== 'hq' && b.state !== 'burning') buttons.push(`<button class="danger" data-act="destroy">🔥 Demolish</button>`);
     const key = `${b.id}|${body}|${buttons.join('')}`;
     if (key === this.lastInfoKey) return;
@@ -1416,74 +1436,73 @@ export class HUD {
         return;
       }
       if (act === 'tool') {
-        (el as HTMLSelectElement).onchange = () => { b.toolChoice = (el as HTMLSelectElement).value as any; };
+        (el as HTMLSelectElement).onchange = () => this.setField(b, 'toolChoice', (el as HTMLSelectElement).value);
         return;
       }
       if (act === 'dest') {
-        (el as HTMLSelectElement).onchange = () => { b.tradeTo = Number((el as HTMLSelectElement).value) || 0; this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo(); };
+        (el as HTMLSelectElement).onchange = () => { this.setField(b, 'tradeTo', Number((el as HTMLSelectElement).value) || 0); this.audio.play('ui'); };
         return;
       }
       if (act === 'auto') {
         (el as HTMLInputElement).onchange = () => {
-          b.seaAuto = (el as HTMLInputElement).checked;
-          this.message(b.seaAuto ? 'Ships keep this land supplied by themselves again' : 'Ships now carry only what you order from and to this land', b.cx, b.cz, 'good');
-          this.audio.play('ui'); this.lastInfoKey = ''; this.refreshInfo();
+          const on = (el as HTMLInputElement).checked;
+          this.setField(b, 'seaAuto', on);
+          this.message(on ? 'Ships keep this land supplied by themselves again' : 'Ships now carry only what you order from and to this land', b.cx, b.cz, 'good');
+          this.audio.play('ui');
         };
         return;
       }
       el.onclick = () => {
         this.audio.play('ui');
         if (act === 'close') this.select(null);
-        else if (act === 'pause') b.paused = !b.paused;
+        else if (act === 'pause') this.setField(b, 'paused', !this.field(b, 'paused'));
         else if (act === 'prio') this.togglePriority(b);
         else if (act === 'callout') {
-          const men = callOut(g, g.local, b, 1);
-          if (men.length) { this.selectSoldiers(men.map((x) => x.id)); this.audio.play('horn'); return; }
+          this.issue({ t: 'callout', b: b.id, keep: 1 }, (e) => {
+            if (e.ok && e.ids?.length) { this.selectSoldiers(e.ids); this.audio.play('horn'); }
+          });
+          return;
         }
-        else if (act === 'destroy') { g.destroyBuilding(b, true); this.select(null); }
-        else if (act === 'des-') b.desiredSoldiers = Math.max(1, b.desiredSoldiers - 1);
-        else if (act === 'des+') b.desiredSoldiers = Math.min(b.def.military!.capacity, b.desiredSoldiers + 1);
+        else if (act === 'destroy') { this.issue({ t: 'destroy', id: b.id }); this.select(null); }
+        else if (act === 'des-') this.setField(b, 'desiredSoldiers', Math.max(1, this.field(b, 'desiredSoldiers') - 1));
+        else if (act === 'des+') this.setField(b, 'desiredSoldiers', Math.min(b.def.military!.capacity, this.field(b, 'desiredSoldiers') + 1));
         else if (act === 'expedition') {
           if (![...g.ships.values()].some((sh) => sh.owner === g.local)) this.message('You have no ship yet — build a Shipyard on the coast first', b.cx, b.cz, 'bad');
           this.startExpedition(b.id);
-        } else if (act === 'exCancel') {
-          const ex = g.expeditions.find((e) => e.from === b.id && e.owner === g.local);
-          if (ex) cancelExpedition(g, ex);
-        } else if (act === 'scout') {
-          const err = scoutSeas(g, g.local, b);
-          this.message(err ?? 'A ship sets out to explore the seas', b.cx, b.cz, err ? 'bad' : 'good');
+        } else if (act === 'exCancel') this.issue({ t: 'exCancel', from: b.id });
+        else if (act === 'scout') {
+          this.issue({ t: 'scout', from: b.id }, (e) => {
+            if (!e.ok) return this.oops(e, undefined, b.cx, b.cz);
+            this.message('A ship sets out to explore the seas', b.cx, b.cz, 'good');
+          });
         }
         else if (act.startsWith('sord')) {
           const gd = act.slice(6) as Good;
-          const err = placeShipOrder(g, b, b.tradeTo, gd, act[4] === '+' ? SHIP_ORDER_STEP : -SHIP_ORDER_STEP);
-          if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); }
+          this.issue({ t: 'shipOrder', from: b.id, to: this.field(b, 'tradeTo'), good: gd, n: act[4] === '+' ? SHIP_ORDER_STEP : -SHIP_ORDER_STEP });
         }
         else if (act.startsWith('pax')) {
           const role = act.slice(5) as PassengerRole;
-          const r = bookPassengers(g, b, b.tradeTo, role, act[3] === '+' ? 1 : -1);
-          if (typeof r === 'string') { this.message(r, undefined, undefined, 'bad'); this.audio.play('click'); }
-          else if (!r && act[3] === '+') {
-            this.message(role === 'soldier' ? 'No soldier to spare on this land — lower a stronghold\'s desired soldiers to free some' : `No idle ${role} on this land to send`, b.cx, b.cz, 'bad');
-            this.audio.play('click');
-          }
+          const more = act[3] === '+';
+          this.issue({ t: 'pax', from: b.id, to: this.field(b, 'tradeTo'), role, n: more ? 1 : -1 }, (e) => {
+            if (e.text) return this.oops(e);
+            if (!e.ok && more) this.oops(e, role === 'soldier' ? 'No soldier to spare on this land — lower a stronghold\'s desired soldiers to free some' : `No idle ${role} on this land to send`, b.cx, b.cz);
+          });
         }
-        else if (act.startsWith('scancel|')) {
-          const o = g.seaOrders.find((x) => x.id === Number(act.slice(8)));
-          if (o) cancelShipOrder(o);
-        }
+        else if (act.startsWith('scancel|')) this.issue({ t: 'shipOrderCancel', id: Number(act.slice(8)) });
         else if (act.startsWith('kind|')) {
-          b.shipKind = act.slice(5) === 'war' ? 'war' : 'trade';
-          this.message(b.shipKind === 'war' ? 'The shipwright lays down a warship: boards, and iron for the fittings' : 'The shipwright builds trade ships', b.cx, b.cz, 'good');
+          const kind = act.slice(5) === 'war' ? 'war' : 'trade';
+          this.setField(b, 'shipKind', kind);
+          this.message(kind === 'war' ? 'The shipwright lays down a warship: boards, and iron for the fittings' : 'The shipwright builds trade ships', b.cx, b.cz, 'good');
         }
         else if (act.startsWith('ord')) {
           const gd = act.slice(5) as Good;
-          const err = placeOrder(g, b, b.tradeTo, gd, act[3] === '+' ? ORDER_STEP : -ORDER_STEP);
-          if (err) { this.message(err, undefined, undefined, 'bad'); this.audio.play('click'); }
+          this.issue({ t: 'order', from: b.id, to: this.field(b, 'tradeTo'), good: gd, n: act[3] === '+' ? ORDER_STEP : -ORDER_STEP });
         }
         else if (act === 'attack') {
-          const n = launchAttack(g, g.local, b, this.attackCount);
-          this.message(n ? `${n} soldiers march on the enemy ${d.name}!` : 'No soldiers available', b.cx, b.cz, n ? 'good' : 'bad');
-          this.audio.play('horn');
+          this.issue({ t: 'launch', b: b.id, n: this.attackCount }, (e) => {
+            this.message(e.ok ? `${e.n} soldiers march on the enemy ${d.name}!` : 'No soldiers available', b.cx, b.cz, e.ok ? 'good' : 'bad');
+            this.audio.play('horn');
+          });
         }
         this.lastInfoKey = '';
         this.refreshInfo();
@@ -1495,27 +1514,27 @@ export class HUD {
   private shippingSection(b: Building): string {
     const g = this.game;
     const dests = harbourDestinations(g, b);
-    if (b.tradeTo && !dests.some((d) => d.id === b.tradeTo)) b.tradeTo = 0;
+    const to = this.field(b, 'tradeTo');
     let out = '<div class="subh">Shipping</div>';
     const inc = expectedBySea(g, b);
     if (inc) out += `<div class="kv"><span>Expected by sea</span><b>${inc}</b></div>`;
-    const opts = dests.map((d) => `<option value="${d.id}"${b.tradeTo === d.id ? ' selected' : ''}>${harbourLabel(d, b.cx, b.cz)}</option>`).join('');
+    const opts = dests.map((d) => `<option value="${d.id}"${to === d.id ? ' selected' : ''}>${harbourLabel(d, b.cx, b.cz)}</option>`).join('');
     out += `<div class="kv"><span>Ship to</span><b><select data-act="dest"><option value="0">${dests.length ? '— choose a harbour —' : 'no harbour of yours overseas'}</option>${opts}</select></b></div>`;
-    if (b.tradeTo) {
+    if (to) {
       out += `<div class="tgrid">${GOODS.map((gd) => {
-        const o = openShipOrder(g, b, b.tradeTo, gd);
+        const o = openShipOrder(g, b, to, gd);
         const here = b.stock[gd];
         return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${here} here${o ? `, ${o.delivered} of ${o.n} delivered${o.loaded ? `, ${o.loaded} aboard` : ''}` : ''}">${this.icon(gd, 'ci')}<span>${o ? `${o.delivered}/${o.n}` : here || ''}</span><div class="tbtn"><button class="mini" data-act="sord-|${gd}" title="Ship ${SHIP_ORDER_STEP} fewer">−</button><button class="mini" data-act="sord+|${gd}" title="Ship ${SHIP_ORDER_STEP} more">+</button></div></div>`;
       }).join('')}</div>`;
       const roles: [PassengerRole, string, string][] = [['carrier', '👤', 'Carriers'], ['soldier', '⚔', 'Soldiers'], ['builder', '🔨', 'Builders']];
       out += `<div class="prow">${roles.map(([role, emo, name]) => {
-        const n = bookedPassengers(g, b, b.tradeTo, role).length;
+        const n = bookedPassengers(g, b, to, role).length;
         return `<div class="pcell${n ? ' on' : ''}" title="${name} booked to sail: they wait in this harbour for a ship"><span>${emo} ${name}</span><b>${n}</b><div class="tbtn"><button class="mini" data-act="pax-|${role}" title="Call one back">−</button><button class="mini" data-act="pax+|${role}" title="Send one more">+</button></div></div>`;
       }).join('')}</div>`;
       out += `<p class="note">Each <b>+</b> ships ${SHIP_ORDER_STEP} more of a good, or books one more passenger. Carriers bring the goods here; the next free ship takes them over.</p>`;
     } else if (dests.length) out += `<div class="status">Choose a harbour overseas to send goods and settlers to</div>`;
     else out += `<div class="status">Found a colony overseas (or build a harbour on another island) to ship to</div>`;
-    out += `<label class="check"><input type="checkbox" data-act="auto"${b.seaAuto ? ' checked' : ''}> Ships keep this land supplied by themselves</label>`;
+    out += `<label class="check"><input type="checkbox" data-act="auto"${this.field(b, 'seaAuto') ? ' checked' : ''}> Ships keep this land supplied by themselves</label>`;
     const orders = shipOrders(g, g.local, b.id);
     if (orders.length) {
       out += `<div class="list">${orders.map((o) => {
@@ -1531,11 +1550,11 @@ export class HUD {
     const g = this.game;
     if (b.owner !== g.local) return;
     const on = !b.priority;
-    if (!g.setPriority(b, on)) { this.message('Only a building that still needs goods can be prioritised', b.cx, b.cz, 'bad'); this.audio.play('click'); return; }
-    this.message(on ? `${b.def.name}: goods and crews now come here first` : `${b.def.name} is no longer prioritised`, b.cx, b.cz, 'good');
-    this.audio.play(on ? 'chime' : 'ui');
-    this.lastInfoKey = '';
-    this.refreshInfo();
+    this.issue({ t: 'prio', id: b.id, on }, (e) => {
+      if (!e.ok) return this.oops(e, undefined, b.cx, b.cz);
+      this.message(on ? `${b.def.name}: goods and crews now come here first` : `${b.def.name} is no longer prioritised`, b.cx, b.cz, 'good');
+      this.audio.play(on ? 'chime' : 'ui');
+    });
   }
 
   private renderShipInfo(sh: Ship) {
@@ -1589,7 +1608,7 @@ export class HUD {
       <div class="ibody">${body}</div>${recall ? '<div class="ibtns"><button data-act="recall">↩ Call back</button></div>' : ''}`;
     this.info.querySelector<HTMLElement>('[data-act=close]')!.onclick = () => this.select(null);
     const rb = this.info.querySelector<HTMLElement>('[data-act=recall]');
-    if (rb) rb.onclick = () => { this.audio.play('ui'); recallPioneer(g, s); this.lastInfoKey = ''; this.refreshInfo(); };
+    if (rb) rb.onclick = () => { this.audio.play('ui'); this.issue({ t: 'recall', s: s.id }); };
   }
 
   // ------------------------------------------------------------ stalls
@@ -1773,14 +1792,55 @@ export class HUD {
     this.tip.classList.add('hidden');
   }
 
+  /** Give the game a command; `then` hears how it went. Without it, a failure the game explains is told to the player. */
+  private issue(c: Cmd, then?: (e: GameEvent) => void) {
+    const seq = this.hooks.issue(c);
+    if (then) this.pending.set(seq, then);
+  }
+
+  /** Tell the player why a command did nothing. */
+  private oops(e: GameEvent, fallback?: string, x?: number, z?: number) {
+    const text = e.text ?? fallback;
+    if (text) this.message(text, x, z, 'bad');
+    this.audio.play('click');
+  }
+
+  /** Change one of a building's settings: shown at once; the game's answer (a moment later with others) makes it so. */
+  private setField(b: Building, k: SetKey, v: boolean | number | string) {
+    const key = `${b.id}.${k}`;
+    this.pendingField.set(key, v);
+    this.issue({ t: 'set', id: b.id, k, v }, (e) => { this.pendingField.delete(key); if (!e.ok) this.oops(e); });
+    this.lastInfoKey = '';
+    this.refreshInfo();
+  }
+
+  /** A building's setting as the panel should show it: the change asked for, until the game answers. */
+  private field<K extends SetKey>(b: Building, k: K): Building[K] {
+    const v = this.pendingField.get(`${b.id}.${k}`);
+    return (v === undefined ? b[k] : v) as Building[K];
+  }
+
   onEvent(e: GameEvent) {
     this.objectives.noteEvent(e.type, e.owner);
+    if (e.type === 'cmd' && e.owner === this.game.local && e.seq !== undefined) {
+      const then = this.pending.get(e.seq);
+      this.pending.delete(e.seq);
+      if (then) then(e);
+      else if (!e.ok) this.oops(e);
+      this.lastInfoKey = '';
+      this.refreshInfo();
+    }
     if (e.type === 'msg' && e.text) this.message(e.text, e.x, e.z, e.kind, e.b);
     if (e.type === 'defeated' && e.text) this.message(e.text, undefined, undefined, e.owner === this.game.local ? 'bad' : 'good');
+    // one's own fall is the end (the game may go on for the others); a win comes with the game's end
+    if (e.type === 'defeated' && e.owner === this.game.local) this.gameOver(false);
     if (e.type === 'gameover') this.gameOver(e.owner === this.game.local);
   }
 
+  private ended = false;
   private gameOver(won: boolean) {
+    if (this.ended) return;
+    this.ended = true;
     const g = this.game;
     const ov = h('div', 'overlay');
     const p = g.players[g.local];
@@ -1799,7 +1859,6 @@ export class HUD {
     ov.querySelector<HTMLElement>('[data-act=cont]')!.onclick = () => ov.remove();
     ov.querySelector<HTMLElement>('[data-act=menu]')!.onclick = () => this.hooks.restart();
     this.audio.play(won ? 'fanfare' : 'death');
-    if (won) for (const s of g.settlers.values()) if (s.owner === g.local && !s.hidden && !s.dead && s.actions.length === 0) { s.anim = 'cheer'; s.animT = 0; }
   }
 
   // ------------------------------------------------------------ per frame

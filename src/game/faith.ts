@@ -3,6 +3,7 @@ import type { Game } from './game';
 import type { Building, Settler } from './types';
 import { abortPlan } from './settlers';
 import { isSoldier, kill } from './military';
+import { cos, sin, sq } from '../core/fmath';
 
 export type SpellId = 'harvest' | 'heal' | 'wrath' | 'convert';
 
@@ -64,7 +65,7 @@ function enemySoldiersNear(g: Game, owner: number, x: number, z: number, r: numb
   const out: Settler[] = [];
   for (const s of g.settlers.values()) {
     if (s.owner === owner || !isSoldier(s) || s.dead || s.hidden) continue;
-    if ((s.x - x) ** 2 + (s.z - z) ** 2 <= r * r) out.push(s);
+    if (sq(s.x - x) + sq(s.z - z) <= r * r) out.push(s);
   }
   return out;
 }
@@ -74,7 +75,7 @@ function inReach(g: Game, owner: number, x: number, z: number) {
   for (const b of g.buildings.values()) {
     if (b.owner !== owner || !b.def.military || b.state !== 'done' || !b.occupied) continue;
     const r = b.def.military.radius + 7;
-    if ((b.cx - x) ** 2 + (b.cz - z) ** 2 <= r * r) return true;
+    if (sq(b.cx - x) + sq(b.cz - z) <= r * r) return true;
   }
   return false;
 }
@@ -92,7 +93,7 @@ export function castError(g: Game, owner: number, id: SpellId, x: number, z: num
   const w = g.world;
   const xi = Math.round(x), zi = Math.round(z);
   if (!w.inBounds(xi, zi)) return 'Out of bounds';
-  if (owner === g.local && !w.explored[w.idx(xi, zi)]) return 'You cannot see that place';
+  if (!p.ai && !((w.seen[w.idx(xi, zi)] >> owner) & 1)) return 'You cannot see that place';
   if (!inReach(g, owner, x, z)) return 'Too far from your strongholds';
   if ((id === 'wrath' || id === 'convert') && !enemySoldiersNear(g, owner, x, z, def.radius).length) return 'No enemy soldiers there';
   return null;
@@ -109,7 +110,7 @@ export function castSpell(g: Game, owner: number, id: SpellId, x: number, z: num
   let src: Building | null = null, bd = Infinity;
   for (const b of temples(g, owner)) {
     if (!priestPresent(g, b)) continue;
-    const d = (b.cx - x) ** 2 + (b.cz - z) ** 2 + (b.type === 'greattemple' ? 0 : def.great ? 1e9 : 0);
+    const d = sq(b.cx - x) + sq(b.cz - z) + (b.type === 'greattemple' ? 0 : def.great ? 1e9 : 0);
     if (d < bd) { bd = d; src = b; }
   }
   g.emit({ type: 'spell', kind: id, x, z, owner, b: src?.id });
@@ -164,7 +165,7 @@ function apply(g: Game, e: Pending) {
       const r = SPELLS.heal.radius;
       for (const s of g.settlers.values()) {
         if (s.owner !== e.owner || !isSoldier(s) || s.dead) continue;
-        if ((s.x - e.x) ** 2 + (s.z - e.z) ** 2 > r * r) continue;
+        if (sq(s.x - e.x) + sq(s.z - e.z) > r * r) continue;
         s.hp = s.maxHp;
         s.blessUntil = g.time + BLESS_TIME;
         if (!s.hidden) g.emit({ type: 'healed', x: s.x, z: s.z, s: s.id, owner: s.owner });
@@ -181,7 +182,7 @@ function apply(g: Game, e: Pending) {
         tx = f.x; tz = f.z;
       } else {
         const a = g.rng.range(0, Math.PI * 2), d = Math.sqrt(g.rng.next()) * r;
-        tx = e.x + Math.cos(a) * d; tz = e.z + Math.sin(a) * d;
+        tx = e.x + cos(a) * d; tz = e.z + sin(a) * d;
       }
       for (const s of enemySoldiersNear(g, e.owner, tx, tz, 1.1)) {
         s.hp -= 60;
@@ -199,7 +200,7 @@ function apply(g: Game, e: Pending) {
       break;
     case 'convert': {
       const foes = enemySoldiersNear(g, e.owner, e.x, e.z, SPELLS.convert.radius)
-        .sort((a, b) => ((a.x - e.x) ** 2 + (a.z - e.z) ** 2) - ((b.x - e.x) ** 2 + (b.z - e.z) ** 2))
+        .sort((a, b) => (sq(a.x - e.x) + sq(a.z - e.z)) - (sq(b.x - e.x) + sq(b.z - e.z)))
         .slice(0, 3);
       for (const s of foes) {
         const prev = s.owner;

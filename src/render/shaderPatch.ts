@@ -366,9 +366,12 @@ uniform float uGrime;`);
   return mat;
 }
 
-/** Depth material for shadows that shares wind/clip behaviour (vertexHead/vertexBegin/fragHead/fragPost hooks apply too). */
+/**
+ * Depth material for shadows that shares wind/clip behaviour (vertexHead/vertexBegin/fragHead/fragPost hooks apply too).
+ * (The shadow map is read from its depth buffer: the colour it writes is never looked at, so it is not packed.)
+ */
 export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map?: THREE.Texture } = {}): THREE.MeshDepthMaterial {
-  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: opts.map ?? null, alphaTest: opts.alphaTest ?? 0 });
+  const m = new THREE.MeshDepthMaterial({ map: opts.map ?? null, alphaTest: opts.alphaTest ?? 0 });
   const o = { wind: 'none', windAmp: 1, ...opts };
   const uClip = { value: 1e9 };
   (m as any).userData.uClip = uClip;

@@ -9,6 +9,7 @@ import { T_ROCK, T_SNOW } from './defs';
 import type { Game } from './game';
 import type { Animal } from './types';
 import type { World } from './world';
+import { hypot, sq } from '../core/fmath';
 
 export const CELL = 8;
 /** grown trees a patch needs for each hare it holds */
@@ -50,7 +51,7 @@ export function gameNear(g: Game, x: number, z: number, r: number, door: number)
   let hares = 0, deer = 0;
   for (const a of g.animals.values()) {
     if (!a.alive || a.leave || w.region[a.node] !== w.region[door]) continue;
-    if ((a.x - x) ** 2 + (a.z - z) ** 2 > r * r) continue;
+    if (sq(a.x - x) + sq(a.z - z) > r * r) continue;
     if (a.kind === 'hare') hares++;
     else deer++;
   }
@@ -97,7 +98,7 @@ export function populateWild(g: Game, starts: { x: number; y: number }[]) {
     for (let k = 0; k < cap; k++) {
       const i = spotIn(g, c, 12);
       if (i < 0) break;
-      if (starts.some((s) => Math.hypot(w.nx(i) - s.x, w.ny(i) - s.y) < 7)) continue;
+      if (starts.some((s) => hypot(w.nx(i) - s.x, w.ny(i) - s.y) < 7)) continue;
       g.addAnimal(i, 0, 'hare');
     }
   }
@@ -118,7 +119,7 @@ function hops(w: World, from: number, to: number, max: number): number[] {
   return out;
 }
 
-const near = (w: World, a: number, b: number, r: number) => (w.nx(a) - w.nx(b)) ** 2 + (w.ny(a) - w.ny(b)) ** 2 <= r * r;
+const near = (w: World, a: number, b: number, r: number) => sq(w.nx(a) - w.nx(b)) + sq(w.ny(a) - w.ny(b)) <= r * r;
 
 /** Where an animal standing still goes next: a hop or two about its home, or back to it. */
 export function wander(g: Game, a: Animal) {

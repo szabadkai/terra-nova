@@ -6,6 +6,7 @@ import { FIRM_LEASH, GUARD_RANGE, LEASH } from './orders';
 import { CATAPULT_RANGE } from './defs';
 import { siegeHit } from './siege';
 import { shipArrowLands, shipStoneLands, towerShootShip } from './naval';
+import { atan2, hypot, sq } from '../core/fmath';
 
 export function isSoldier(s: Settler) {
   return s.job === 'swordsman' || s.job === 'bowman';
@@ -109,7 +110,7 @@ export function updateMilitary(g: Game, owner: number) {
       let bi = -1, bd = Infinity;
       for (let i = 0; i < idle.length; i++) {
         if (regS(g, idle[i]) !== r) continue;
-        const d = (idle[i].x - b.cx) ** 2 + (idle[i].z - b.cz) ** 2;
+        const d = sq(idle[i].x - b.cx) + sq(idle[i].z - b.cz);
         if (d < bd) { bd = d; bi = i; }
       }
       let s: Settler | null = null;
@@ -145,7 +146,7 @@ export function updateMilitary(g: Game, owner: number) {
       if (regB(g, b) !== r) continue;
       const cap = b.type === 'hq' ? 999 : b.desiredSoldiers;
       if (b.garrison.length + b.soldiersIncoming >= cap) continue;
-      const d = (s.x - b.cx) ** 2 + (s.z - b.cz) ** 2 + (b.type === 'hq' ? 0 : 400);
+      const d = sq(s.x - b.cx) + sq(s.z - b.cz) + (b.type === 'hq' ? 0 : 400);
       if (d < bd) { bd = d; target = b; }
     }
     if (target) sendSoldierTo(g, s, target);
@@ -161,7 +162,7 @@ function reserveSource(g: Game, owner: number, target: Building): Building | nul
     if (b.id === target.id || regB(g, b) !== regB(g, target)) continue;
     const surplus = b.type === 'hq' ? b.garrison.length - 2 : b.garrison.length - b.desiredSoldiers;
     if (surplus <= 0) continue;
-    const d = (b.cx - target.cx) ** 2 + (b.cz - target.cz) ** 2 - (b.type === 'hq' ? 0 : 0);
+    const d = sq(b.cx - target.cx) + sq(b.cz - target.cz) - (b.type === 'hq' ? 0 : 0);
     if (d < bd) { bd = d; best = b; }
   }
   return best;
@@ -202,7 +203,7 @@ export function attackableSoldiers(g: Game, owner: number, target: Building): Se
   const r = regB(g, target);
   for (const b of g.buildings.values()) {
     if (b.owner !== owner || !b.def.military || b.state !== 'done' || regB(g, b) !== r) continue;
-    const d = Math.hypot(b.cx - target.cx, b.cz - target.cz);
+    const d = hypot(b.cx - target.cx, b.cz - target.cz);
     if (d > 42) continue;
     const keep = 1;
     const avail = b.garrison.slice(keep);
@@ -211,7 +212,7 @@ export function attackableSoldiers(g: Game, owner: number, target: Building): Se
       if (s) out.push(s);
     }
   }
-  out.sort((a, b) => ((a.x - target.cx) ** 2 + (a.z - target.cz) ** 2) - ((b.x - target.cx) ** 2 + (b.z - target.cz) ** 2));
+  out.sort((a, b) => (sq(a.x - target.cx) + sq(a.z - target.cz)) - (sq(b.x - target.cx) + sq(b.z - target.cz)));
   return out;
 }
 
@@ -246,7 +247,7 @@ function defend(g: Game, b: Building) {
   const r = regB(g, b);
   for (const s of g.settlers.values()) {
     if (s.owner === b.owner || !isCombatant(s) || s.dead || s.hidden || regS(g, s) !== r) continue;
-    const d = Math.hypot(s.x - b.cx, s.z - b.cz);
+    const d = hypot(s.x - b.cx, s.z - b.cz);
     if (s.job === 'catapult') {
       // a catapult that can reach us, or is rolling up to, must be smashed before its stones tell
       if ((s.sstate === 'attack' && s.targetB === b.id && d < CATAPULT_RANGE + 4) || d < CATAPULT_RANGE + 1) threats.push(s);
@@ -283,7 +284,7 @@ function enemySoldierNear(g: Game, s: Settler, range: number): Settler | null {
   let best: Settler | null = null, bd = range * range;
   for (const o of g.settlers.values()) {
     if (o.owner === s.owner || !isCombatant(o) || o.dead || o.hidden) continue;
-    const d = (o.x - s.x) ** 2 + (o.z - s.z) ** 2;
+    const d = sq(o.x - s.x) + sq(o.z - s.z);
     if (d < bd) { bd = d; best = o; }
   }
   return best;
@@ -329,15 +330,15 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
     } else {
       if (s.next >= 0) return true; // finish step
       // a guard lets a fleeing foe go once the chase leads too far from his post (not far at all when he stands firm)
-      if (s.sstate === 'hold' && s.order >= 0 && Math.hypot(e.x - g.world.nx(s.order), e.z - g.world.ny(s.order)) > (s.firm ? FIRM_LEASH : LEASH)) {
+      if (s.sstate === 'hold' && s.order >= 0 && hypot(e.x - g.world.nx(s.order), e.z - g.world.ny(s.order)) > (s.firm ? FIRM_LEASH : LEASH)) {
         s.engaged = 0;
         if (e.engaged === s.id) e.engaged = 0;
         return false;
       }
       s.path = null;
-      const tgt = Math.atan2(e.x - s.x, e.z - s.z);
+      const tgt = atan2(e.x - s.x, e.z - s.z);
       s.heading = turnTo(s.heading, tgt, dt * 8);
-      const d = Math.hypot(e.x - s.x, e.z - s.z);
+      const d = hypot(e.x - s.x, e.z - s.z);
       if (d > MELEE_RANGE + 0.6) {
         // chase
         if (!s.actions.length || s.actions[0].k !== 'walk') {
@@ -381,14 +382,14 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
     const guard = s.sstate === 'hold';
     const near = enemySoldierNear(g, s, s.job === 'bowman' ? BOW_RANGE : guard ? GUARD_RANGE : MELEE_RANGE + 1.4);
     if (near) {
-      const d = Math.hypot(near.x - s.x, near.z - s.z);
+      const d = hypot(near.x - s.x, near.z - s.z);
       if (s.job === 'bowman' && d > MELEE_RANGE + 0.2) {
         // ranged attack
         if (s.cooldown <= 0 && s.next < 0) {
           s.actions.length = 0;
           s.path = null;
           s.cooldown = 1.9 + g.rng.next() * 0.5;
-          s.heading = Math.atan2(near.x - s.x, near.z - s.z);
+          s.heading = atan2(near.x - s.x, near.z - s.z);
           s.anim = 'shoot';
           s.animT = 0;
           fireArrow(g, s, near, 13 * strength(g, s));
@@ -398,7 +399,7 @@ export function soldierUpdate(g: Game, s: Settler, dt: number): boolean {
         engage(g, s, near);
         return true;
       } else if (guard && !s.firm && regS(g, near) === regS(g, s) && s.order >= 0
-        && Math.hypot(near.x - g.world.nx(s.order), near.z - g.world.ny(s.order)) < LEASH) {
+        && hypot(near.x - g.world.nx(s.order), near.z - g.world.ny(s.order)) < LEASH) {
         // a guard charges a foe that comes near his post (unless he stands firm)
         s.pace = 1;
         if (!s.actions.length || s.actions[0].k !== 'walk') {
@@ -476,7 +477,7 @@ function fireArrow(g: Game, s: Settler, target: Settler, dmg: number) {
   const w = g.world;
   const sy = w.heightAt(s.x, s.z) + 0.5;
   const ty = w.heightAt(target.x, target.z) + 0.35;
-  const d = Math.hypot(target.x - s.x, target.z - s.z);
+  const d = hypot(target.x - s.x, target.z - s.z);
   g.projectiles.push({
     id: g.id(), owner: s.owner, sx: s.x, sy, sz: s.z, tx: target.x, ty, tz: target.z,
     t: 0, dur: Math.max(0.3, d * 0.08), target: target.id, damage: dmg, kind: 'arrow',
@@ -540,7 +541,7 @@ function thinkDefend(g: Game, s: Settler): boolean {
     s.sstate = home && home.owner === s.owner ? 'return' : 'idle';
     return false;
   }
-  const d = Math.hypot(t.x - s.x, t.z - s.z);
+  const d = hypot(t.x - s.x, t.z - s.z);
   if (d > 16) { s.sstate = 'return'; return false; }
   plan(s, [besideFoe(g, s, t)]);
   return false;
@@ -604,7 +605,7 @@ export function updateProjectiles(g: Game, dt: number) {
       if (p.target < 0) continue; // animal (handled by hunter plan)
       const v = g.settlers.get(p.target);
       if (!v || v.dead) continue;
-      const d = Math.hypot(v.x - p.tx, v.z - p.tz);
+      const d = hypot(v.x - p.tx, v.z - p.tz);
       if (d < 1.2 && g.rng.next() < 0.78) {
         v.hp -= p.damage;
         g.emit({ type: 'hit', x: v.x, z: v.z, s: v.id });
@@ -629,7 +630,7 @@ export function updateProjectiles(g: Game, dt: number) {
     let best: Settler | null = null, bd = 9 * 9;
     for (const o of g.settlers.values()) {
       if (o.owner === b.owner || !isCombatant(o) || o.dead || o.hidden) continue;
-      const d = (o.x - b.cx) ** 2 + (o.z - b.cz) ** 2;
+      const d = sq(o.x - b.cx) + sq(o.z - b.cz);
       if (d < bd) { bd = d; best = o; }
     }
     const w = g.world;

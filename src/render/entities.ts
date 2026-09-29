@@ -127,8 +127,8 @@ export class TreesRenderer {
   private species = new Uint8Array(0);
   private spheres = new Float32Array(0);
   private falling: { i: number; id: number }[] = [];
-  /** deciduous crowns: a thinning material (cuts the crown away as leaves fall) and a full one */
-  private crownMats: { sp: number; thin: THREE.Material; thinDepth: THREE.Material; full: THREE.Material; fullDepth: THREE.Material }[] = [];
+  /** deciduous crowns and leaf cards: a thinning material (leaves come and go with the season) and a full one */
+  private leafMats: { pair: LodPair; thin: THREE.Material; thinDepth: THREE.Material; full: THREE.Material; fullDepth: THREE.Material }[] = [];
   private fullLeaf: boolean | null = null;
 
   constructor(private game: Game) {
@@ -188,11 +188,13 @@ export class TreesRenderer {
         vertexHead: leafVertHead(false), vertexBegin: leafVert(false), fragHead: leafFragHead(false, true),
         fragPost: 'if (crownGone(crownNoise())) discard;',
       });
-      const card = patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, alphaTest: 0.45, side: THREE.DoubleSide }), {
-        wind: 'tree', key: 'cardS', snow: 0.75, uniforms,
+      // in full leaf every card is in leaf (cardState is 1 for each, see treeLeaf): the full copies skip
+      // the noise, the twigs and their mip level, which the shadow map paid for on every card it drew
+      const mkSeasonCard = (full: boolean) => patchMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, alphaTest: 0.45, side: THREE.DoubleSide }), {
+        wind: 'tree', key: full ? 'cardSf' : 'cardS', snow: 0.75, uniforms,
         vertexHead: leafVertHead(true), vertexBegin: leafVert(true), fragHead: leafFragHead(true, false),
         fragMap: `
-  float lfSt = cardState();
+  float lfSt = ${full ? '1.0' : 'cardState()'};
   diffuseColor.a *= cardAlpha(lfSt);
   if (lfSt > 0.5) diffuseColor.rgb *= texture2D(tLeaf, vCardUv).rgb;`,
         fragRough: `{
@@ -202,12 +204,15 @@ export class TreesRenderer {
         }`,
         fragEmissive: leafEmissive(0.08, 0.45, '(lfSt < 0.5 ? 0.15 : 1.0)'),
       });
-      const cardDepth = patchedDepthMaterial({
-        wind: 'tree', key: 'cardSd', uniforms: depthU,
+      const mkSeasonCardDepth = (full: boolean) => patchedDepthMaterial({
+        wind: 'tree', key: full ? 'cardSdf' : 'cardSd', uniforms: depthU,
         vertexHead: leafVertHead(true), vertexBegin: leafVert(true), fragHead: leafFragHead(true, true),
-        fragPost: 'if (cardAlpha(cardState()) < 0.45) discard;',
+        fragPost: full ? 'if (texture2D(tLeaf, vCardUv).a < 0.45) discard;' : 'if (cardAlpha(cardState()) < 0.45) discard;',
       });
-      return { crown, crownFull, crownDepth, card, cardDepth };
+      return {
+        crown, crownFull, crownDepth,
+        card: mkSeasonCard(false), cardFull: mkSeasonCard(true), cardDepth: mkSeasonCardDepth(false), cardFullDepth: mkSeasonCardDepth(true),
+      };
     };
     const cap = Math.max(4000, game.trees.size * 2);
     const far = (g: THREE.BufferGeometry) => simplify(g, 0.2, TREE_FAR_ERR).geo;
@@ -219,14 +224,36 @@ export class TreesRenderer {
     geos.forEach((g, sp) => {
       const sm = DECIDUOUS[sp] ? seasonal(sp) : null;
       this.trunks.push(pair(g.trunk, far(g.trunk), barkMat, depth, 0));
-      this.crowns.push(pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depth, 1));
-      if (sm) this.crownMats.push({ sp, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depth });
+      const crown = pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depth, 1);
+      this.crowns.push(crown);
+      if (sm) this.leafMats.push({ pair: crown, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depth });
       if (g.cards) {
         const cf = g.cardsFar ?? g.cards;
-        this.cards.push(g.needles ? pair(g.cards, cf, needleMat, needleDepth, 1) : pair(g.cards, cf, sm!.card, sm!.cardDepth, 1));
+        const cards = g.needles ? pair(g.cards, cf, needleMat, needleDepth, 1) : pair(g.cards, cf, sm!.card, sm!.cardDepth, 1);
+        this.cards.push(cards);
+        if (sm && !g.needles) this.leafMats.push({ pair: cards, thin: sm.card, thinDepth: sm.cardDepth, full: sm.cardFull, fullDepth: sm.cardFullDepth });
       } else this.cards.push(null);
       this.limbs.push(g.branches ? pair(g.branches, far(g.branches), limbMat, depth, 0) : null);
     });
+  }
+
+  /**
+   * One tree part in each leaf material, the full and the thinning ones, for the warm-up: only one of
+   * them is in use at a time, and the first frame after the season turns would compile the others.
+   */
+  samples(): THREE.Group {
+    const g = new THREE.Group();
+    for (const c of this.leafMats)
+      for (const [mat, depth] of [[c.thin, c.thinDepth], [c.full, c.fullDepth]]) {
+        const src = c.pair.meshes[0];
+        const m = withInstanceColor(new THREE.InstancedMesh(src.geometry, mat, 1));
+        m.customDepthMaterial = depth;
+        m.castShadow = true;
+        m.receiveShadow = src.receiveShadow;
+        m.frustumCulled = false;
+        g.add(m);
+      }
+    return g;
   }
 
   /** Recompute every tree's matrix and tint (when the forest changed). */
@@ -291,11 +318,12 @@ export class TreesRenderer {
     }
     // bare limbs only matter once the crowns start to thin
     const bare = G.uSeasonA.value.x < 0.97;
-    // no crown is cut away above 0.96 leaf, the least leafy tree included (see treeLeaf/crownGone)
+    // no crown is cut away and every card is in leaf above 0.96 leaf, the least leafy tree included
+    // (see treeLeaf, crownGone and cardState)
     const full = G.uSeasonA.value.x >= 0.96;
     if (full !== this.fullLeaf) {
       this.fullLeaf = full;
-      for (const c of this.crownMats) for (const m of this.crowns[c.sp].meshes) {
+      for (const c of this.leafMats) for (const m of c.pair.meshes) {
         m.material = full ? c.full : c.thin;
         m.customDepthMaterial = full ? c.fullDepth : c.thinDepth;
       }
