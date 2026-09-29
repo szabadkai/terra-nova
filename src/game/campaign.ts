@@ -7,7 +7,7 @@ import type { Game } from './game';
 import type { Building, GameEvent, Settler, Ship, ShipKind } from './types';
 import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 import { orderAttack } from './orders';
-import { nearestNavigable } from './sea';
+import { findDock, nearestNavigable } from './sea';
 import { shipFields } from './naval';
 import { MISSIONS } from './missions';
 
@@ -64,8 +64,10 @@ export interface RivalRule {
 }
 
 export interface Raid {
-  /** game seconds */
+  /** game seconds - after the start, or after the event named in `after` was first counted */
   t: number;
+  /** a tally key ('captured', 'built:…'): the clock for `t` starts when it first happens */
+  after?: string;
   /** the rival the raiders belong to, default 1 */
   rival?: number;
   /** edge: on free land 28-36 from the target on the far side from the player's headquarters; rival: at the rival's headquarters */
@@ -123,6 +125,8 @@ export interface MissionState {
   won: boolean;
   /** the local player's events so far: 'captured', 'captured:<building>', 'spell:harvest', 'produced:board', 'sinking:<ship>' … */
   tally: Record<string, number>;
+  /** the game time each of those was first counted */
+  at: Record<string, number>;
 }
 
 export const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'];
@@ -186,7 +190,7 @@ export function beginMission(g: Game) {
   const m = g.mission;
   if (!m) return;
   const w = g.world;
-  g.ms = { forts: [], ships: [], home: w.region[hqOf(g).door], raid: 0, truceOver: false, won: false, tally: {} };
+  g.ms = { forts: [], ships: [], home: w.region[hqOf(g).door], raid: 0, truceOver: false, won: false, tally: {}, at: {} };
   const rules = m.rules;
   for (const p of g.players) {
     const rule = rivalRule(m, p.id);
@@ -206,9 +210,10 @@ export function beginMission(g: Game) {
 export function tallyEvent(g: Game, e: GameEvent) {
   const ms = g.ms;
   if (!ms) return;
-  const bump = (k: string) => { ms.tally[k] = (ms.tally[k] ?? 0) + 1; };
-  // a ship going down is counted by the ship, whoever sank it
+  const bump = (k: string) => { if (!ms.tally[k]) ms.at[k] = g.time; ms.tally[k] = (ms.tally[k] ?? 0) + 1; };
+  // a ship going down is counted by the ship, whoever sank it; a raid is the rival's doing but the player's concern
   if (e.type === 'sinking' && e.s) bump(`sinking:${e.s}`);
+  if (e.type === 'raid') bump('raid');
   // whose doing: the event's owner, else the owner of the building it names
   let owner = e.owner;
   if (owner === undefined && e.b) owner = g.buildings.get(e.b)?.owner;
@@ -225,7 +230,16 @@ export function missionStep(g: Game) {
   const m = g.mission, ms = g.ms;
   if (!m || !ms) return;
   const rules = m.rules;
-  if (rules?.raids) while (ms.raid < rules.raids.length && g.time >= rules.raids[ms.raid].t) fireRaid(g, rules.raids[ms.raid++]);
+  if (rules?.raids) {
+    // in order; one that waits on an event holds the ones behind it
+    while (ms.raid < rules.raids.length) {
+      const r = rules.raids[ms.raid];
+      const since = r.after ? ms.at[r.after] : 0;
+      if (since === undefined || g.time < since + r.t) break;
+      ms.raid++;
+      fireRaid(g, r);
+    }
+  }
   if (rules?.truce && !ms.truceOver && g.time >= rules.truce) {
     ms.truceOver = true;
     g.emit({ type: 'truceover', owner: g.local });
@@ -512,12 +526,15 @@ export function nearestFish(g: Game): { x: number; z: number; r?: number } | nul
   });
   return best < 0 ? null : { x: w.nx(best), z: w.ny(best), r: 3 };
 }
-/** The middle of the mountain by the start. */
+/** The middle of the mountain by the start: the rock nearest the headquarters and what lies around it (not every crag within sight). */
 export function mountainCentre(g: Game): { x: number; z: number; r?: number } | null {
   const w = g.world, hq = hqOf(g);
+  let n0 = -1, bd = Infinity;
+  w.forRadius(hq.cx, hq.cz, 34, (i, _x, _y, d2) => { if (d2 >= sq(8) && d2 < bd && w.isMountain(i)) { bd = d2; n0 = i; } });
+  if (n0 < 0) return null;
   let sx = 0, sz = 0, n = 0;
-  w.forRadius(hq.cx, hq.cz, 32, (i, x, y) => { if (w.isMountain(i)) { sx += x; sz += y; n++; } });
-  return n ? { x: sx / n, z: sz / n, r: 6 } : null;
+  w.forRadius(w.nx(n0), w.ny(n0), 9, (i, x, y) => { if (w.isMountain(i)) { sx += x; sz += y; n++; } });
+  return { x: sx / n, z: sz / n, r: 6 };
 }
 /** A point on the player's border on the way to a spot. */
 export function borderToward(g: Game, to: { x: number; z: number } | null, dist = 13): { x: number; z: number; r?: number } | null {
@@ -556,13 +573,13 @@ export function addCarriers(g: Game, n: number, owner = g.local) {
   for (let k = 0; k < n; k++) g.syncPos(g.addSettler(owner, 'carrier', hq.door));
 }
 
-/** The richest placeable site for a mine on the player's own mountain, with the ore it would reach; null if none. */
-export function bestMineSite(g: Game, type: 'coalmine' | 'ironmine' | 'goldmine' | 'stonemine', owner = g.local, r = 34): { x: number; y: number; ore: number } | null {
+/** The richest placeable site for a mine on the player's own mountain (around `near`, else the headquarters), with the ore it would reach; null if none. */
+export function bestMineSite(g: Game, type: 'coalmine' | 'ironmine' | 'goldmine' | 'stonemine', owner = g.local, r = 34, near?: { x: number; z: number }): { x: number; y: number; ore: number } | null {
   const w = g.world, hq = hqOf(g, owner), def = BUILDINGS[type];
   const kind = MINE_ORE[def.mine!];
   const reach = (def.radius ?? 3) + 0.5;
   let best: { x: number; y: number; ore: number } | null = null;
-  w.forRadius(hq.cx, hq.cz, r, (i, x, y) => {
+  w.forRadius(near?.x ?? hq.cx, near?.z ?? hq.cz, r, (i, x, y) => {
     if (w.owner[i] !== owner || !w.isMountain(i)) return;
     const a = g.anchorFor(type, x, y);
     if (g.placeError(type, owner, a.x, a.y) !== null) return;
@@ -584,6 +601,47 @@ export function plantableNear(g: Game, x: number, z: number, r: number, owner = 
     if (t === T_GRASS || t === T_MEADOW || t === T_DIRT || t === T_FOREST) n++;
   });
   return n;
+}
+
+/** A stronghold changes hands without a fight (the headless check's shortcut for a capture). */
+export function handOver(g: Game, b: Building, owner: number) {
+  for (const id of b.garrison) { const s = g.settlers.get(id); if (s) g.removeSettler(s); }
+  b.garrison = [];
+  b.owner = owner;
+  garrison(g, b, { sword: 1, bow: 0 });
+  g.emit({ type: 'captured', b: b.id, owner, x: b.cx, z: b.cz });
+}
+
+/** The island nearest the headquarters. */
+export function nearestIsle(g: Game): { x: number; y: number; r: number } | null {
+  const hq = hqOf(g);
+  let best: { x: number; y: number; r: number } | null = null, bd = Infinity;
+  for (const isle of g.isles) { const d = sq(isle.x - hq.cx) + sq(isle.y - hq.cz); if (d < bd) { bd = d; best = isle; } }
+  return best;
+}
+
+/** A harbour site on an island's coast that ships from the player's own coast can reach: anchor and landing, or null. */
+export function colonySpot(g: Game, isle = nearestIsle(g)): { x: number; y: number; dock: number } | null {
+  if (!isle) return null;
+  const w = g.world, home = g.ms?.home ?? w.region[hqOf(g).door];
+  const shore = seaNear(g, hqOf(g).cx, hqOf(g).cz, 24);
+  const sea = shore >= 0 ? w.sea[shore] : 0;
+  const size = BUILDINGS.harbour.size;
+  let best: { x: number; y: number; dock: number } | null = null, bd = Infinity;
+  for (let t = 0; t < 24; t++) {
+    const px = isle.x + cos((t / 24) * Math.PI * 2) * (isle.r + 1), pz = isle.y + sin((t / 24) * Math.PI * 2) * (isle.r + 1);
+    w.forRadius(px, pz, 5, (_i, x, y, d2) => {
+      if (d2 >= bd) return;
+      const a = g.anchorFor('harbour', x, y);
+      if (g.placeError('harbour', g.local, a.x, a.y, true) !== null) return;
+      if (w.region[g.doorOf(size, a.x, a.y)] === home) return;
+      const dock = findDock(g, size, a.x, a.y);
+      if (dock < 0 || (sea && w.sea[dock] !== sea)) return;
+      bd = d2;
+      best = { x: a.x, y: a.y, dock };
+    });
+  }
+  return best;
 }
 
 // ------------------------------------------------------------------ predicates the missions share

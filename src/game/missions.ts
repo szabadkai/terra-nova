@@ -4,14 +4,19 @@
 // Game helpers may be imported, but only used inside functions: game.ts imports this file through
 // campaign.ts, so nothing here may run at load.
 import {
-  addCarriers, bestMineSite, borderToward, fewerCarriers, fillResidence, has, hqOf, knowOre, knowsCoalAndIron, me, mine, mountainCentre, moveGarrison,
-  nearestFish, nearestRock, nearestTrees, nearestWater, ownedOre, placeNear, plantableNear, pop, prebuilt, revealAround, stock, stockUp, tally, type Mission,
+  addCarriers, allRivalsDefeated, bestMineSite, borderToward, colonySpot, fewerCarriers, fillResidence, fort, garrison, handOver, has, hqOf, knowOre,
+  knowsCoalAndIron, me, mine, mountainCentre, moveGarrison, nearestFish, nearestIsle, nearestRock, nearestTrees, nearestWater, ownedOre, placeNear,
+  plantableNear, pop, prebuilt, revealAround, seaNear, ship, stock, stockUp, tally, type Mission,
 } from './campaign';
 import type { Game } from './game';
+import { strongholdsOf } from './game';
 import type { Building } from './types';
 import { ORE_COAL, ORE_IRON, TOOLS, type BuildingType } from './defs';
 import { recomputeTerritory } from './military';
 import { gameNear } from './wildlife';
+import { launchShip } from './sea';
+import { sinkShip } from './naval';
+import { spawnCatapult } from './siege';
 import { sq } from '../core/fmath';
 
 // ------------------------------------------------------------------ what the quaestor had raised while the legate travelled
@@ -51,10 +56,15 @@ function coreB(g: Game) {
   prebuilt(g, 'hunter', t.x, t.z, 12);
   stockUp(g, { water: 10 });
 }
-/** A watchtower on the border towards the mountain, manned from the headquarters, and the land it takes. */
+/** A watchtower towards the mountain, manned from the headquarters, and the land it takes: at the mountain's foot just
+ *  beyond the border where there is room (it makes its own land), else on the border itself. */
 function towerToMountain(g: Game) {
-  const b = borderToward(g, mountainCentre(g), 11)!;
-  const tower = prebuilt(g, 'tower_l', b.x, b.z, 9);
+  const m = mountainCentre(g);
+  let a: { x: number; y: number } | null = null;
+  for (const d of [17, 19, 21, 15]) { const b = borderToward(g, m, d)!; a = placeNear(g, g.local, 'tower_l', b.x, b.z, 6, true); if (a) break; }
+  if (!a) { const b = borderToward(g, m, 11)!; a = placeNear(g, g.local, 'tower_l', b.x, b.z, 9); }
+  if (!a) throw new Error('campaign: no room for a watchtower towards the mountain');
+  const tower = g.addBuilding('tower_l', g.local, a.x, a.y, true);
   moveGarrison(g, hqOf(g), tower, 1);
   recomputeTerritory(g);
   return tower;
@@ -78,6 +88,30 @@ function coreC(g: Game) {
   prebuilt(g, 'toolsmith', hq.cx, hq.cz - 7, 11);
   fillResidence(g, prebuilt(g, 'residence_m', hq.cx - 8, hq.cz + 5, 12));
   stockUp(g, { coal: 8, iron: 6, bread: 12, fish: 10, meat: 8 });
+}
+/** The spine with arms: barracks, a weaponsmith and soldiers in the headquarters' reserve. */
+function coreD(g: Game, soldiers: number) {
+  coreC(g);
+  const hq = hqOf(g);
+  prebuilt(g, 'weaponsmith', hq.cx + 8, hq.cz - 3, 12);
+  prebuilt(g, 'barracks', hq.cx - 9, hq.cz - 4, 12);
+  garrison(g, hq, { sword: Math.max(0, soldiers - pop(g).soldiers), bow: 0 });
+  hq.desiredSoldiers = hq.def.military!.capacity;
+  stockUp(g, { sword: 4, bow: 2, board: 50, stone: 30 });
+}
+const fortAt = (g: Game, k: number): Building | undefined => g.buildings.get(g.ms?.forts[k] ?? 0);
+const fortDown = (g: Game, k: number) => { const b = fortAt(g, k); return !b || b.state === 'burning' || b.owner === g.local; };
+const rebelsAfield = (g: Game) => [...g.settlers.values()].some((s) => s.owner !== g.local && (s.job === 'swordsman' || s.job === 'bowman') && !s.dead && !s.inside);
+const ownShip = (g: Game, kind?: 'trade' | 'war') => [...g.ships.values()].some((sh) => sh.owner === g.local && (!kind || sh.kind === kind));
+const colonyHarbour = (g: Game) => mine(g).some((b) => b.type === 'harbour' && b.state === 'done' && b.occupied && g.world.region[b.door] !== g.ms?.home);
+const homeHarbour = (g: Game) => mine(g).find((b) => b.type === 'harbour' && b.state === 'done' && g.world.region[b.door] === g.ms?.home);
+/** A manned colony harbour on the nearest island, as an expedition would have founded it. */
+function foundColony(g: Game) {
+  const spot = colonySpot(g);
+  if (!spot) throw new Error('campaign: no island coast for a colony');
+  const b = g.addBuilding('harbour', g.local, spot.x, spot.y, true);
+  garrison(g, b, { sword: 1, bow: 0 });
+  return b;
 }
 /** The spine stands: the tower manned, the mines on ore. */
 function spineProbe(g: Game): string | null {
@@ -545,5 +579,426 @@ export const MISSIONS: Mission[] = [
       { id: 'idle', on: 'time', when: (g) => g.time > 120 && pop(g).idle <= 4, title: 'The barracks keep four carriers free.', detail: 'Build homes for more men, or they train nobody.' },
     ],
     probe: (g) => spineProbe(g) ?? roomFor(g, ['weaponsmith', 'barracks'], 12),
+  },
+  // ---------------------------------------------------------------- IX
+  {
+    id: 'pugna',
+    title: 'Prima Pugna',
+    subtitle: 'First Blood',
+    briefing: [
+      'Deserters of the Ninth Legion hold two towers on the road east and call themselves free men. The Senate calls them something shorter.',
+      'Select a tower of theirs and press Attack, and your men march by themselves. Or command them: drag a box around your soldiers, right-click where they should go or what they should storm, and a number key with Ctrl keeps a group under it. A captured tower keeps its land and its walls.',
+      'They will not take it kindly. When they come, select a tower of yours, call out its garrison to meet them, and R sends the men back to their posts.',
+    ],
+    debrief: 'The road is ours. The deserters were not many, and are fewer.',
+    hook: 'Next: the gods, who have been patient.',
+    map: { size: 128, seed: 3, players: 2, aiLevel: 0, islands: false },
+    unlocks: ['residence_l'],
+    rules: {
+      rivals: [{ mode: 'dormant', noPeople: true, name: 'The Ninth' }],
+      reveal: 'strongholds',
+      raids: [{ t: 75, after: 'captured', from: 'edge', men: { sword: 3, bow: 0, hp: 80 }, target: 'nearest-tower' }],
+    },
+    setup: (g) => {
+      coreD(g, 10);
+      fort(g, { type: 'tower_s', owner: 1, near: { dist: [24, 28], toward: 'rival' }, garrison: { sword: 1, bow: 0 } });
+      fort(g, { type: 'tower_s', owner: 1, near: { dist: [29, 34], toward: 'rival', spread: Math.PI / 2 }, garrison: { sword: 2, bow: 0 } });
+      const hq = hqOf(g);
+      revealAround(g, hq.cx, hq.cz, 30);
+    },
+    goals: [
+      {
+        id: 'first', text: 'Storm the rebel tower on the road', hint: 'Select it and press Attack, or box-select your men and right-click it. Five swordsmen are plenty for one.',
+        done: (g) => fortAt(g, 0)?.owner === g.local, focus: { building: (g) => g.ms?.forts[0] ?? 0 },
+        satisfy: (g) => { const b = fortAt(g, 0); if (b) handOver(g, b, g.local); },
+      },
+      {
+        id: 'second', text: 'Take the second tower', hint: 'Two men inside. Bring more than two.',
+        done: (g) => fortAt(g, 1)?.owner === g.local, focus: { building: (g) => g.ms?.forts[1] ?? 0 },
+        satisfy: (g) => { const b = fortAt(g, 1); if (b) handOver(g, b, g.local); },
+      },
+      {
+        id: 'hold', text: 'Hold them: both manned, no rebel left in the field', hint: 'A captured tower wants a garrison. The deserters send a band to take theirs back.',
+        done: (g) => [0, 1].every((k) => { const b = fortAt(g, k); return !!b && b.owner === g.local && b.occupied; }) && !rebelsAfield(g) && tally(g, 'raid') > 0,
+        progress: (g) => rebelsAfield(g) ? 'rebels in the field' : tally(g, 'raid') ? 'held' : 'waiting',
+        satisfy: (g) => { for (const s of [...g.settlers.values()]) if (s.owner === 1 && !s.inside) g.removeSettler(s); g.emit({ type: 'raid', owner: 1, x: 0, z: 0 }); },
+      },
+    ],
+    tips: [
+      { id: 'march', on: 'attack', title: 'They march.', detail: 'Swordsmen in front, bowmen behind. The tower\u2019s garrison comes out to meet them.' },
+      { id: 'taken', on: 'captured', title: 'Captured.', detail: 'A taken tower keeps its land. One man of yours mans it now; it wants more.' },
+      { id: 'raid', on: 'raid', title: 'The deserters come for their tower.', detail: 'Select a tower of yours and Call out its garrison to meet them. R sends the men back.', focus: { building: (g) => g.ms?.forts[0] ?? 0 } },
+      { id: 'group', on: 'time', when: (g) => g.time > 90, title: 'Groups.', detail: 'Box-select soldiers, then Ctrl (or Option) and a number key keeps them under it. The number picks them again; twice takes you there.' },
+    ],
+    voice: { raid: 'They are coming for it. Call out the garrison, legate; a tower is worth a fight.' },
+    probe: (g) => {
+      if (g.ms?.forts.length !== 2) return 'two rebel towers should stand';
+      if (!g.ms.forts.every((id) => g.buildings.get(id)?.occupied)) return 'a rebel tower is not manned';
+      if (pop(g).soldiers < 10) return `only ${pop(g).soldiers} soldiers`;
+      return spineProbe(g);
+    },
+  },
+  // ---------------------------------------------------------------- X
+  {
+    id: 'dei',
+    title: 'Dei',
+    subtitle: 'The Gods',
+    briefing: [
+      'The priests have written to the Senate, and the Senate has written to me. A province without a temple is a camp, they say, whatever its walls.',
+      'A Vineyard grows the wine; carriers take it to a Temple, where the priest offers it and the gods answer in mana. The Faith tab holds what you can ask of them.',
+      'Blessed Harvest ripens every field and vine in its circle at once. Healing Light mends your soldiers and puts iron in their arms for a minute. Both reach only so far from your strongholds. Ask for both; I want to see the priests earn their keep.',
+    ],
+    debrief: 'The priests are content and the fields are early. I distrust both, but I will take the grain.',
+    hook: 'Next: donkeys.',
+    map: { size: 128, seed: 7, players: 1, aiLevel: 0, islands: false },
+    unlocks: ['vineyard', 'temple'],
+    tools: ['spells'],
+    setup: (g) => {
+      coreC(g);
+      const hq = hqOf(g), wt = nearestWater(g);
+      prebuilt(g, 'farm', hq.cx + 9, hq.cz + 8, 14);
+      if (wt) prebuilt(g, 'waterworks', wt.x, wt.z, 10);
+      stockUp(g, { wine: 4 });
+      revealAround(g, hq.cx, hq.cz, 30);
+    },
+    goals: [
+      {
+        id: 'vines', text: 'Plant a Vineyard', hint: 'It wants open ground around it, like a farm. The vines fruit in two minutes.',
+        done: (g) => has(g, 'vineyard'), focus: { build: 'vineyard' },
+        satisfy: (g) => { const hq = hqOf(g); prebuilt(g, 'vineyard', hq.cx - 9, hq.cz + 9, 14); },
+      },
+      {
+        id: 'temple', text: 'Build a Temple', hint: 'Four boards, six stone, and a priest from among your carriers.',
+        done: (g) => has(g, 'temple'), focus: { build: 'temple' },
+        satisfy: (g) => { const hq = hqOf(g); prebuilt(g, 'temple', hq.cx + 10, hq.cz - 8, 14); },
+      },
+      {
+        id: 'harvest', text: 'Call Blessed Harvest over your fields', hint: 'Faith tab, fifteen mana, then click the farm. Everything growing in the circle ripens.',
+        done: (g) => tally(g, 'spell:harvest') > 0, progress: (g) => tally(g, 'spell:harvest') ? 'called' : `${Math.floor(me(g).mana)}/15 mana`,
+        focus: { tool: 'spells' },
+        satisfy: (g) => { const hq = hqOf(g); g.emit({ type: 'spell', kind: 'harvest', owner: g.local, x: hq.cx, z: hq.cz }); },
+      },
+      {
+        id: 'heal', text: 'Call Healing Light on your soldiers', hint: 'Twenty mana, over the headquarters. Wounds close and blows land harder for a minute.',
+        done: (g) => tally(g, 'spell:heal') > 0, progress: (g) => tally(g, 'spell:heal') ? 'called' : `${Math.floor(me(g).mana)}/20 mana`,
+        focus: { tool: 'spells' },
+        satisfy: (g) => { const hq = hqOf(g); g.emit({ type: 'spell', kind: 'heal', owner: g.local, x: hq.cx, z: hq.cz }); },
+      },
+    ],
+    tips: [
+      { id: 'wine', on: 'produced', when: (_g, e) => e.good === 'wine', title: 'Wine.', detail: 'Carriers take it to the temple; the priest offers it. Nobody drinks it, which I find hard to believe.' },
+      { id: 'offering', on: 'offering', title: 'An offering.', detail: 'Three mana a cycle, up to a hundred and fifty. Spells need a temple, a priest at his post and reach from a stronghold.' },
+      { id: 'cast', on: 'spell', title: 'The gods answered.', detail: 'Four seconds, and the priests can ask again.' },
+    ],
+    probe: (g) => spineProbe(g) ?? (has(g, 'farm') && has(g, 'waterworks') ? null : 'the farm and the waterworks should stand') ?? roomFor(g, ['vineyard', 'temple'], 14),
+  },
+  // ---------------------------------------------------------------- XI
+  {
+    id: 'mercatura',
+    title: 'Mercatura',
+    subtitle: 'Trade',
+    briefing: [
+      'The far side of the mountain has the better veins, so the mines are there, with a storehouse and a watchtower, and the food is here. The miners are eating the walk.',
+      'A Market Place is the end of a road. Build one here and one there; in one, choose the other as destination and click + on the goods to send, and carriers stock them. A Donkey Ranch breeds the donkeys that carry them, two goods a trip, fed on grain and water.',
+      'Twelve goods delivered up the road, and the miners will stop writing to me.',
+    ],
+    debrief: 'The mines are fed and the donkeys are not consulted. That is trade.',
+    hook: 'Next: the sea.',
+    map: { size: 160, seed: 7, players: 1, aiLevel: 0, islands: false },
+    unlocks: ['market', 'donkeyfarm'],
+    setup: (g) => {
+      coreB(g);
+      const hq = hqOf(g), m = mountainCentre(g);
+      // the far camp: a watchtower beyond the mountain, its mines and a store; the food stays at home
+      const far = borderToward(g, m, 30)!;
+      // (on nobody's land: the tower stands beyond the border and makes its own)
+      const a = placeNear(g, g.local, 'tower_l', far.x, far.z, 14, true);
+      if (!a) throw new Error(`campaign: no room for the far watchtower near ${far.x.toFixed(0)},${far.z.toFixed(0)}`);
+      const tower = g.addBuilding('tower_l', g.local, a.x, a.y, true);
+      moveGarrison(g, hq, tower, 1);
+      recomputeTerritory(g);
+      for (const t of ['coalmine', 'ironmine'] as const) {
+        const site = bestMineSite(g, t, g.local, 16, { x: tower.cx, z: tower.cz });
+        if (!site || site.ore < 15) throw new Error(`campaign: no far vein for a ${t}`);
+        knowOre(g, g.local, site.x + 1, site.y + 1, 5);
+        g.addBuilding(t, g.local, site.x, site.y, true);
+      }
+      prebuilt(g, 'storehouse', tower.cx, tower.cz, 10);
+      prebuilt(g, 'farm', hq.cx + 9, hq.cz + 8, 14);
+      const wt = nearestWater(g);
+      if (wt) prebuilt(g, 'waterworks', wt.x, wt.z, 10);
+      stockUp(g, { grain: 20, water: 20, bread: 16, fish: 12, meat: 10, board: 50, stone: 30 });
+      revealAround(g, hq.cx, hq.cz, 30);
+      revealAround(g, tower.cx, tower.cz, 20);
+    },
+    goals: [
+      {
+        id: 'ranch', text: 'Build a Donkey Ranch', hint: 'Grain and water in, a donkey out every so often. Two donkeys, and four more for every market.',
+        done: (g) => has(g, 'donkeyfarm'), focus: { build: 'donkeyfarm' },
+        satisfy: (g) => { const hq = hqOf(g); prebuilt(g, 'donkeyfarm', hq.cx - 9, hq.cz + 8, 14); },
+      },
+      {
+        id: 'markets', text: 'Two Market Places: one at the camp, one at the mines', hint: 'Then, in one, choose the other as destination and click + on bread, fish or meat.',
+        done: (g) => has(g, 'market', 2), progress: (g) => `${Math.min(2, g.countBuildings(g.local, 'market', false))}/2`,
+        focus: { build: 'market', spot: (g) => { const t = mine(g).find((b) => b.type === 'tower_l'); return t ? { x: t.cx, z: t.cz, r: 5 } : null; } },
+        satisfy: (g) => { const hq = hqOf(g), t = mine(g).find((b) => b.type === 'tower_l')!; prebuilt(g, 'market', hq.cx + 7, hq.cz - 7, 12); prebuilt(g, 'market', t.cx, t.cz + 4, 12); },
+      },
+      {
+        id: 'caravan', text: 'Send food up the road: 12 goods delivered by caravan', hint: 'The market panel: destination, then + on the goods. Carriers stock the pile; donkeys carry it.',
+        done: (g) => me(g).traded >= 12, progress: (g) => `${Math.min(12, me(g).traded)}/12`,
+        focus: { building: (g) => first(g, 'market')?.id ?? 0 },
+        satisfy: (g) => { me(g).traded = 12; },
+      },
+    ],
+    tips: [
+      { id: 'market', on: 'built', when: (g, e) => g.buildings.get(e.b ?? 0)?.type === 'market', title: 'A market.', detail: 'The end of a road. Its panel: choose the other market, then + on the goods to send.' },
+      { id: 'donkey', on: 'donkey', title: 'A donkey.', detail: 'It waits at a market with goods to carry; two a trip.' },
+      { id: 'caravan', on: 'caravan', title: 'Delivered.', detail: 'Carriers at the far end take it on to whoever needs it.' },
+    ],
+    probe: (g) => {
+      const tower = mine(g).find((b) => b.type === 'tower_l');
+      if (!tower || !tower.occupied) return 'the far watchtower should stand manned';
+      if (!liveMine(g, 'coalmine') || !liveMine(g, 'ironmine')) return 'the far mines sit on no ore';
+      if (Math.hypot(tower.cx - hqOf(g).cx, tower.cz - hqOf(g).cz) < 24) return 'the far camp is not far';
+      if (!placeNear(g, g.local, 'market', tower.cx, tower.cz + 4, 12)) return 'no room for a market at the far camp';
+      return roomFor(g, ['market', 'donkeyfarm'], 14);
+    },
+  },
+  // ---------------------------------------------------------------- XII
+  {
+    id: 'mare',
+    title: 'Mare Nostrum',
+    subtitle: 'Our Sea',
+    briefing: [
+      'There is an island off this coast, and the fishermen say it glitters. The Senate has heard the fishermen.',
+      'A Harbour goes on the shore beside deep water; a Shipyard likewise, and it builds a ship from ten boards. A harbour can send an expedition: a builder, a digger, a soldier, two carriers and the makings of a second harbour, by ship, to found a colony where you point.',
+      'Once the colony stands and a soldier mans it, ships carry goods between your harbours by themselves, or as you order.',
+    ],
+    debrief: 'A harbour, a ship, a colony. Rome began smaller, though it did not have to swim.',
+    hook: 'Next: engines.',
+    map: { size: 160, seed: 27, players: 1, aiLevel: 0, islands: true },
+    unlocks: ['harbour', 'shipyard'],
+    setup: (g) => {
+      coreC(g);
+      stockUp(g, { board: 60, stone: 30 });
+      const hq = hqOf(g), isle = nearestIsle(g);
+      revealAround(g, hq.cx, hq.cz, 30);
+      if (isle) revealAround(g, isle.x, isle.y, isle.r + 7);
+    },
+    goals: [
+      {
+        id: 'harbour', text: 'Build a Harbour on the coast', hint: 'Beside deep water: the markers show where a ship can moor.',
+        done: (g) => !!homeHarbour(g), focus: { build: 'harbour', spot: (g) => { const i = seaNear(g, hqOf(g).cx, hqOf(g).cz, 24); return i < 0 ? null : { x: g.world.nx(i), z: g.world.ny(i), r: 3 }; } },
+        satisfy: (g) => { const hq = hqOf(g); prebuilt(g, 'harbour', hq.cx, hq.cz, 15); },
+      },
+      {
+        id: 'yard', text: 'Build a Shipyard', hint: 'On the coast too. Ten boards make a ship.',
+        done: (g) => has(g, 'shipyard'), focus: { build: 'shipyard' },
+        satisfy: (g) => { const hb = homeHarbour(g) ?? hqOf(g); prebuilt(g, 'shipyard', hb.cx, hb.cz, 15); },
+      },
+      {
+        id: 'ship', text: 'Launch a ship', hint: 'The shipyard\u2019s panel shows the hull on the slipway.',
+        done: (g) => ownShip(g), focus: { building: (g) => first(g, 'shipyard')?.id ?? 0 },
+        satisfy: (g) => { const y = first(g, 'shipyard'); if (y) launchShip(g, g.local, y); },
+      },
+      {
+        id: 'colony', text: 'Found a colony on the island', hint: 'The harbour\u2019s panel: Expedition, then click the island\u2019s shore. The party gathers, sails, and builds.',
+        done: colonyHarbour, focus: { building: (g) => homeHarbour(g)?.id ?? 0 },
+        satisfy: (g) => { foundColony(g); },
+      },
+      {
+        id: 'cargo', text: 'A ship unloads at the colony', hint: 'The harbour\u2019s Shipping section: choose the colony and + on boards.', optional: true,
+        done: (g) => tally(g, 'unloaded') > 0,
+        satisfy: (g) => { const hq = hqOf(g); g.emit({ type: 'unloaded', owner: g.local, x: hq.cx, z: hq.cz }); },
+      },
+    ],
+    tips: [
+      { id: 'launch', on: 'launch', title: 'A ship.', detail: 'Twenty goods or twelve settlers. It waits at your harbour for orders.' },
+      { id: 'expedition', on: 'expedition', title: 'An expedition gathers.', detail: 'Five people and a harbour\u2019s worth of boards and stone at the dock; the ship takes them over.' },
+      { id: 'landed', on: 'landed', title: 'Landed.', detail: 'The colony\u2019s harbour holds the shore until its soldier mans it.' },
+      { id: 'unloaded', on: 'unloaded', title: 'Unloaded.', detail: 'Ships keep a colony supplied by themselves; Shipping orders send what you choose.' },
+    ],
+    probe: (g) => {
+      const hq = hqOf(g);
+      if (seaNear(g, hq.cx, hq.cz, 16) < 0) return 'no sea within 16 of the headquarters';
+      if (!placeNear(g, g.local, 'harbour', hq.cx, hq.cz, 15)) return 'no harbour site by the headquarters';
+      if (!placeNear(g, g.local, 'shipyard', hq.cx, hq.cz, 15)) return 'no shipyard site by the headquarters';
+      if (!colonySpot(g)) return 'no island coast for a colony';
+      return spineProbe(g);
+    },
+  },
+  // ---------------------------------------------------------------- XIII
+  {
+    id: 'machinae',
+    title: 'Machinae',
+    subtitle: 'Engines',
+    briefing: [
+      'The Ninth again: a watchtower and two guard towers on the hill road, and this time they have bowmen on the walls. Men at the door of a manned watchtower die at the door.',
+      'A Siege Workshop builds catapults from boards and iron. Select one and right-click a stronghold: its stones kill the garrison first, then bring the walls down. It cannot fight, so send swordsmen with it, formed up in front, and tell them to stand firm.',
+      'Their tower is out of the catapult\u2019s range from your land, so it must roll out beyond the border. Escort it.',
+    ],
+    debrief: 'The tower fell without a man of ours at its door. Engineers are worth their iron.',
+    hook: 'Next: the fleet.',
+    map: { size: 160, seed: 12, players: 2, aiLevel: 0, islands: true },
+    unlocks: ['siegeworks'],
+    rules: { rivals: [{ mode: 'dormant', noPeople: true, name: 'The Ninth' }], reveal: 'strongholds' },
+    setup: (g) => {
+      coreD(g, 12);
+      stockUp(g, { iron: 10 });
+      fort(g, { type: 'tower_l', owner: 1, near: { dist: [28, 32], toward: 'rival' }, garrison: { sword: 1, bow: 2 } });
+      fort(g, { type: 'tower_s', owner: 1, near: { dist: [27, 33], toward: 'rival', spread: Math.PI / 2 }, garrison: { sword: 1, bow: 0 } });
+      fort(g, { type: 'tower_s', owner: 1, near: { dist: [27, 33], toward: 'rival', spread: Math.PI / 2 }, garrison: { sword: 1, bow: 0 } });
+      const hq = hqOf(g);
+      revealAround(g, hq.cx, hq.cz, 30);
+    },
+    goals: [
+      {
+        id: 'works', text: 'Build a Siege Workshop', hint: 'Military tab. Boards and iron; an engineer with a hammer.',
+        done: (g) => has(g, 'siegeworks'), focus: { build: 'siegeworks' },
+        satisfy: (g) => { const hq = hqOf(g); prebuilt(g, 'siegeworks', hq.cx - 9, hq.cz + 9, 14); },
+      },
+      {
+        id: 'engine', text: 'A catapult rolls out', hint: 'Six boards and four iron, in four stages. It parks in the yard.',
+        done: (g) => pop(g).catapults >= 1, focus: { building: (g) => first(g, 'siegeworks')?.id ?? 0 },
+        satisfy: (g) => { const w = first(g, 'siegeworks'); if (w) spawnCatapult(g, w); },
+      },
+      {
+        id: 'tower', text: 'Bring down the rebel watchtower', hint: 'Select the catapult, right-click the watchtower. Swordsmen in front of it: the garrison sallies at anything within reach.',
+        done: (g) => fortDown(g, 0), focus: { building: (g) => g.ms?.forts[0] ?? 0 },
+        satisfy: (g) => { const b = fortAt(g, 0); if (b) handOver(g, b, g.local); },
+      },
+      {
+        id: 'road', text: 'Clear the road: both guard towers', hint: 'Stones or swords, as you like.', optional: true,
+        done: (g) => fortDown(g, 1) && fortDown(g, 2),
+        satisfy: (g) => { for (const k of [1, 2]) { const b = fortAt(g, k); if (b) handOver(g, b, g.local); } },
+      },
+    ],
+    tips: [
+      { id: 'machine', on: 'machine', title: 'A catapult.', detail: 'Select it and right-click a stronghold. It cannot fight back: send swordsmen along.' },
+      { id: 'hit', on: 'siegehit', title: 'A stone through the roof.', detail: 'One of the garrison falls with each hit; an empty tower loses its walls.' },
+      { id: 'razed', on: 'razed', title: 'Walls down.', detail: 'A ruined tower gives its land back.' },
+      { id: 'firm', on: 'time', when: (g) => g.time > 60, title: 'Stand firm.', detail: 'Select the escort and set a formation and Stand firm in their panel: they hold their line instead of chasing.' },
+    ],
+    probe: (g) => {
+      if (g.ms?.forts.length !== 3) return 'three rebel towers should stand';
+      if (!g.ms.forts.every((id) => g.buildings.get(id)?.occupied)) return 'a rebel tower is not manned';
+      return spineProbe(g) ?? roomFor(g, ['siegeworks'], 14);
+    },
+  },
+  // ---------------------------------------------------------------- XIV
+  {
+    id: 'classis',
+    title: 'Classis',
+    subtitle: 'The Fleet',
+    briefing: [
+      'The Ninth have taken to the water: a tower on the shore north of the harbour and a ship that stops ours. Land is my business; this is yours.',
+      'The shipyard\u2019s panel has a switch: Warship. Twelve boards and three iron fittings, and a catapult on the foredeck. Select the warship and right-click an enemy ship to hunt it, or a stronghold by the water to shell it; it stands off beyond the archers\u2019 reach where the coast allows.',
+      'A battered ship mends at its harbour. Bring it home between fights.',
+    ],
+    debrief: 'A warship of our own. Varro will have heard the news by now.',
+    hook: 'Next: Varro.',
+    map: { size: 160, seed: 29, players: 2, aiLevel: 0, islands: true },
+    unlocks: [],
+    tools: ['warships'],
+    rules: { rivals: [{ mode: 'dormant', noPeople: true, name: 'The Ninth' }], reveal: 'strongholds' },
+    setup: (g) => {
+      coreD(g, 8);
+      const hq = hqOf(g);
+      const hb = prebuilt(g, 'harbour', hq.cx, hq.cz, 15);
+      prebuilt(g, 'shipyard', hb.cx, hb.cz, 15);
+      stockUp(g, { board: 40, iron: 8 });
+      fort(g, { type: 'tower_s', owner: 1, near: { dist: [24, 34], toward: 'rival', spread: Math.PI }, garrison: { sword: 1, bow: 1 }, coastal: true });
+      const w = g.world, dock = w.nx(hb.dock), dz = w.ny(hb.dock);
+      ship(g, { kind: 'trade', owner: 1, x: dock + (dock - hb.cx) * 6, z: dz + (dz - hb.cz) * 6, r: 30 });
+      revealAround(g, hq.cx, hq.cz, 30);
+      const sh = g.ships.get(g.ms!.ships[0]);
+      if (sh) revealAround(g, sh.x, sh.z, 10);
+    },
+    goals: [
+      {
+        id: 'warship', text: 'Set the yard to warships and launch one', hint: 'The switch in the shipyard\u2019s panel; then twelve boards and three iron.',
+        done: (g) => ownShip(g, 'war'), focus: { tool: 'warships', building: (g) => first(g, 'shipyard')?.id ?? 0 },
+        satisfy: (g) => { const y = first(g, 'shipyard'); if (y) launchShip(g, g.local, y, 'war'); },
+      },
+      {
+        id: 'shore', text: 'Shell the rebel tower on the shore', hint: 'Select the warship, right-click the tower. It finds its own water within range.',
+        done: (g) => fortDown(g, 0) && tally(g, `siegehit:ship:${g.ms?.forts[0]}`) > 0, focus: { building: (g) => g.ms?.forts[0] ?? 0 },
+        satisfy: (g) => { const b = fortAt(g, 0); if (b) { g.emit({ type: 'siegehit', b: b.id, owner: g.local, kind: 'ship', x: b.cx, z: b.cz }); handOver(g, b, g.local); } },
+      },
+      {
+        id: 'sink', text: 'Sink the rebel ship', hint: 'Right-click it with the warship selected. Everyone aboard goes down with it.',
+        done: (g) => tally(g, `sinking:${g.ms?.ships[0]}`) > 0,
+        focus: { spot: (g) => { const sh = g.ships.get(g.ms?.ships[0] ?? 0); return sh ? { x: sh.x, z: sh.z, r: 4 } : null; } },
+        satisfy: (g) => { const sh = g.ships.get(g.ms!.ships[0]); if (sh) sinkShip(g, sh, g.local); },
+      },
+    ],
+    tips: [
+      { id: 'warship', on: 'warship', title: 'A warship.', detail: 'Right-click a ship to hunt it, a shore tower to shell it. It keeps beyond the archers where it can.' },
+      { id: 'broadside', on: 'broadside', title: 'A stone from the foredeck.', detail: 'Twenty of a ship\u2019s hundred and twenty; a tower\u2019s garrison falls a man a hit.' },
+      { id: 'sinking', on: 'sinking', title: 'She goes down.', detail: 'Everyone aboard is lost with a ship. Mend yours at a harbour between fights.' },
+    ],
+    probe: (g) => {
+      if (!homeHarbour(g) || !has(g, 'shipyard')) return 'the harbour and the shipyard should stand';
+      const f = fortAt(g, 0);
+      if (!f || !f.occupied) return 'the shore tower should stand manned';
+      if (seaNear(g, f.cx, f.cz, 8) < 0) return 'the shore tower is not by the water';
+      if (!g.ships.get(g.ms!.ships[0])) return 'the rebel ship should be at sea';
+      return spineProbe(g);
+    },
+  },
+  // ---------------------------------------------------------------- XV
+  {
+    id: 'provincia',
+    title: 'Provincia',
+    subtitle: 'The Province',
+    briefing: [
+      'Quintus Varro, legate of Nova Ostia, has declared his colony independent of the Senate, and therefore of us. He has a headquarters, towers, a harbour and ambitions.',
+      'You have everything this province has taught you, and the Senate has opened its last doors: the Castle, and the Great Temple with the Wrath of the Heavens in it.',
+      'Take or raze his strongholds one after another until the last lays down its arms. A colony whose headquarters falls cannot hide its towers, and one down to its last three will yield. The sea gives you ten minutes\u2019 truce. Use them.',
+    ],
+    debrief: 'The last of Varro\u2019s towers strikes its colours. Terra Nova is a province of Rome, and you are its governor. I have counted everything. It comes to: enough.',
+    hook: 'The maps beyond are yours to draw: Free play, any size, any rivals.',
+    map: { size: 160, seed: 9, players: 2, aiLevel: 1, islands: true },
+    unlocks: ['greattemple', 'castle'],
+    rules: { rivals: [{ mode: 'ai', level: 1, name: 'Nova Ostia' }], truce: 600 },
+    setup: (g) => {
+      coreD(g, 10);
+      const hq = hqOf(g), wt = nearestWater(g);
+      prebuilt(g, 'farm', hq.cx + 9, hq.cz + 8, 14);
+      if (wt) prebuilt(g, 'waterworks', wt.x, wt.z, 10);
+      prebuilt(g, 'mill', hq.cx - 7, hq.cz - 7, 14);
+      prebuilt(g, 'bakery', hq.cx + 7, hq.cz - 8, 14);
+      stockUp(g, { board: 60, stone: 40, coal: 12, iron: 10, sword: 4, bow: 2, bread: 16, fish: 12, meat: 10 });
+      revealAround(g, hq.cx, hq.cz, 30);
+    },
+    goals: [
+      {
+        id: 'varro', text: 'Break the colony of Nova Ostia', hint: 'Its headquarters first makes the rest easy: a fallen realm cannot hide its towers, and at three or fewer it yields.',
+        done: allRivalsDefeated, progress: (g) => g.players[1]?.alive ? `${strongholdsOf(g, 1).length} strongholds stand` : 'fallen',
+        satisfy: (g) => { for (const b of strongholdsOf(g, 1)) g.destroyBuilding(b, false); },
+      },
+      {
+        id: 'wrath', text: 'Raise a Great Temple and call down the Wrath of the Heavens', hint: 'Eight boards, fourteen stone; fifty mana; lightning on his soldiers.', optional: true,
+        done: (g) => has(g, 'greattemple') && tally(g, 'spell:wrath') > 0, focus: { build: 'greattemple' },
+        satisfy: (g) => { const hq = hqOf(g); prebuilt(g, 'greattemple', hq.cx, hq.cz, 26); g.emit({ type: 'spell', kind: 'wrath', owner: g.local, x: hq.cx, z: hq.cz }); },
+      },
+      {
+        id: 'overseas', text: 'Hold a colony overseas at the end', hint: 'A harbour, a ship, an expedition: as in Mare Nostrum.', optional: true,
+        done: colonyHarbour,
+        satisfy: (g) => { foundColony(g); },
+      },
+    ],
+    tips: [
+      { id: 'truce', on: 'truceover', title: 'The truce is over.', detail: 'Varro may march at any time. Towers on the road towards him, manned.' },
+      { id: 'fallen', on: 'time', when: (g) => !!g.players[1]?.fallen && !!g.players[1]?.alive, title: 'His headquarters is down.', detail: 'His towers show through the fog now. Three left and no castle: he yields.' },
+      { id: 'castle', on: 'built', when: (g, e) => g.buildings.get(e.b ?? 0)?.type === 'castle', title: 'A castle.', detail: 'Ten men and the widest circle a stronghold claims. A realm with a castle never yields.' },
+    ],
+    voice: { truceover: 'The truce is over. Varro may march at any time. I would have towers on the road by now.' },
+    probe: (g) => {
+      if (g.ai.length !== 1 || g.ai[0].level !== 1 || g.ai[0].mode !== 'ai') return 'Nova Ostia should be a Normal computer kingdom';
+      if (g.players[1].name !== 'Nova Ostia') return 'the rival should be Nova Ostia';
+      if (pop(g).soldiers < 10) return `only ${pop(g).soldiers} soldiers`;
+      return spineProbe(g) ?? (has(g, 'bakery') ? null : 'the bread chain should stand');
+    },
   },
 ];

@@ -13,7 +13,7 @@ Arma (AR-ma), Prima Pugna (PREE-ma POOG-na), Dei (DAY-ee), Mercatura (mer-ka-TOO
 Each line below is one recording, saved as `public/voice/<id>.mp3` (mono, 64–96 kbps is plenty). The
 game plays whichever recordings are there and leaves the rest to the text on screen, so the lines can
 arrive in any order. This file is generated from `src/game/missions.ts` by `scripts/voicelines.ts`;
-edit the missions, not this file. 51 lines, about 1426 words.
+edit the missions, not this file. 91 lines, about 2719 words.
 
 ## Everywhere
 
@@ -268,3 +268,205 @@ edit the missions, not this file. 51 lines, about 1426 words.
 - `arma.tip.idle` — *A tip, the first time: after a while*
 
   The barracks keep four carriers free. Build homes for more men, or they train nobody.
+
+## Mission IX · Prima Pugna — First Blood
+
+- `pugna.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  Deserters of the Ninth Legion hold two towers on the road east and call themselves free men. The Senate calls them something shorter.
+
+  Select a tower of theirs and press Attack, and your men march by themselves. Or command them: drag a box around your soldiers, right-click where they should go or what they should storm, and a number key with Ctrl keeps a group under it. A captured tower keeps its land and its walls.
+
+  They will not take it kindly. When they come, select a tower of yours, call out its garrison to meet them, and R sends the men back to their posts.
+
+- `pugna.debrief` — *The mission won*
+
+  The road is ours. The deserters were not many, and are fewer. Next: the gods, who have been patient.
+
+- `pugna.tip.march` — *A tip, the first time: on "attack"*
+
+  They march. Swordsmen in front, bowmen behind. The tower’s garrison comes out to meet them.
+
+- `pugna.tip.taken` — *A tip, the first time: on "captured"*
+
+  Captured. A taken tower keeps its land. One man of yours mans it now; it wants more.
+
+- `pugna.tip.raid` — *A tip, the first time: on "raid"*
+
+  The deserters come for their tower. Select a tower of yours and Call out its garrison to meet them. R sends the men back.
+
+- `pugna.tip.group` — *A tip, the first time: after a while*
+
+  Groups. Box-select soldiers, then Ctrl (or Option) and a number key keeps them under it. The number picks them again; twice takes you there.
+
+- `pugna.raid` — *On "raid"*
+
+  They are coming for it. Call out the garrison, legate; a tower is worth a fight.
+
+## Mission X · Dei — The Gods
+
+- `dei.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  The priests have written to the Senate, and the Senate has written to me. A province without a temple is a camp, they say, whatever its walls.
+
+  A Vineyard grows the wine; carriers take it to a Temple, where the priest offers it and the gods answer in mana. The Faith tab holds what you can ask of them.
+
+  Blessed Harvest ripens every field and vine in its circle at once. Healing Light mends your soldiers and puts iron in their arms for a minute. Both reach only so far from your strongholds. Ask for both; I want to see the priests earn their keep.
+
+- `dei.debrief` — *The mission won*
+
+  The priests are content and the fields are early. I distrust both, but I will take the grain. Next: donkeys.
+
+- `dei.tip.wine` — *A tip, the first time: on "produced"*
+
+  Wine. Carriers take it to the temple; the priest offers it. Nobody drinks it, which I find hard to believe.
+
+- `dei.tip.offering` — *A tip, the first time: on "offering"*
+
+  An offering. Three mana a cycle, up to a hundred and fifty. Spells need a temple, a priest at his post and reach from a stronghold.
+
+- `dei.tip.cast` — *A tip, the first time: on "spell"*
+
+  The gods answered. Four seconds, and the priests can ask again.
+
+## Mission XI · Mercatura — Trade
+
+- `mercatura.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  The far side of the mountain has the better veins, so the mines are there, with a storehouse and a watchtower, and the food is here. The miners are eating the walk.
+
+  A Market Place is the end of a road. Build one here and one there; in one, choose the other as destination and click + on the goods to send, and carriers stock them. A Donkey Ranch breeds the donkeys that carry them, two goods a trip, fed on grain and water.
+
+  Twelve goods delivered up the road, and the miners will stop writing to me.
+
+- `mercatura.debrief` — *The mission won*
+
+  The mines are fed and the donkeys are not consulted. That is trade. Next: the sea.
+
+- `mercatura.tip.market` — *A tip, the first time: on "built"*
+
+  A market. The end of a road. Its panel: choose the other market, then + on the goods to send.
+
+- `mercatura.tip.donkey` — *A tip, the first time: on "donkey"*
+
+  A donkey. It waits at a market with goods to carry; two a trip.
+
+- `mercatura.tip.caravan` — *A tip, the first time: on "caravan"*
+
+  Delivered. Carriers at the far end take it on to whoever needs it.
+
+## Mission XII · Mare Nostrum — Our Sea
+
+- `mare.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  There is an island off this coast, and the fishermen say it glitters. The Senate has heard the fishermen.
+
+  A Harbour goes on the shore beside deep water; a Shipyard likewise, and it builds a ship from ten boards. A harbour can send an expedition: a builder, a digger, a soldier, two carriers and the makings of a second harbour, by ship, to found a colony where you point.
+
+  Once the colony stands and a soldier mans it, ships carry goods between your harbours by themselves, or as you order.
+
+- `mare.debrief` — *The mission won*
+
+  A harbour, a ship, a colony. Rome began smaller, though it did not have to swim. Next: engines.
+
+- `mare.tip.launch` — *A tip, the first time: on "launch"*
+
+  A ship. Twenty goods or twelve settlers. It waits at your harbour for orders.
+
+- `mare.tip.expedition` — *A tip, the first time: on "expedition"*
+
+  An expedition gathers. Five people and a harbour’s worth of boards and stone at the dock; the ship takes them over.
+
+- `mare.tip.landed` — *A tip, the first time: on "landed"*
+
+  Landed. The colony’s harbour holds the shore until its soldier mans it.
+
+- `mare.tip.unloaded` — *A tip, the first time: on "unloaded"*
+
+  Unloaded. Ships keep a colony supplied by themselves; Shipping orders send what you choose.
+
+## Mission XIII · Machinae — Engines
+
+- `machinae.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  The Ninth again: a watchtower and two guard towers on the hill road, and this time they have bowmen on the walls. Men at the door of a manned watchtower die at the door.
+
+  A Siege Workshop builds catapults from boards and iron. Select one and right-click a stronghold: its stones kill the garrison first, then bring the walls down. It cannot fight, so send swordsmen with it, formed up in front, and tell them to stand firm.
+
+  Their tower is out of the catapult’s range from your land, so it must roll out beyond the border. Escort it.
+
+- `machinae.debrief` — *The mission won*
+
+  The tower fell without a man of ours at its door. Engineers are worth their iron. Next: the fleet.
+
+- `machinae.tip.machine` — *A tip, the first time: on "machine"*
+
+  A catapult. Select it and right-click a stronghold. It cannot fight back: send swordsmen along.
+
+- `machinae.tip.hit` — *A tip, the first time: on "siegehit"*
+
+  A stone through the roof. One of the garrison falls with each hit; an empty tower loses its walls.
+
+- `machinae.tip.razed` — *A tip, the first time: on "razed"*
+
+  Walls down. A ruined tower gives its land back.
+
+- `machinae.tip.firm` — *A tip, the first time: after a while*
+
+  Stand firm. Select the escort and set a formation and Stand firm in their panel: they hold their line instead of chasing.
+
+## Mission XIV · Classis — The Fleet
+
+- `classis.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  The Ninth have taken to the water: a tower on the shore north of the harbour and a ship that stops ours. Land is my business; this is yours.
+
+  The shipyard’s panel has a switch: Warship. Twelve boards and three iron fittings, and a catapult on the foredeck. Select the warship and right-click an enemy ship to hunt it, or a stronghold by the water to shell it; it stands off beyond the archers’ reach where the coast allows.
+
+  A battered ship mends at its harbour. Bring it home between fights.
+
+- `classis.debrief` — *The mission won*
+
+  A warship of our own. Varro will have heard the news by now. Next: Varro.
+
+- `classis.tip.warship` — *A tip, the first time: on "warship"*
+
+  A warship. Right-click a ship to hunt it, a shore tower to shell it. It keeps beyond the archers where it can.
+
+- `classis.tip.broadside` — *A tip, the first time: on "broadside"*
+
+  A stone from the foredeck. Twenty of a ship’s hundred and twenty; a tower’s garrison falls a man a hit.
+
+- `classis.tip.sinking` — *A tip, the first time: on "sinking"*
+
+  She goes down. Everyone aboard is lost with a ship. Mend yours at a harbour between fights.
+
+## Mission XV · Provincia — The Province
+
+- `provincia.brief` — *The briefing, as the mission opens (pause at each paragraph break)*
+
+  Quintus Varro, legate of Nova Ostia, has declared his colony independent of the Senate, and therefore of us. He has a headquarters, towers, a harbour and ambitions.
+
+  You have everything this province has taught you, and the Senate has opened its last doors: the Castle, and the Great Temple with the Wrath of the Heavens in it.
+
+  Take or raze his strongholds one after another until the last lays down its arms. A colony whose headquarters falls cannot hide its towers, and one down to its last three will yield. The sea gives you ten minutes’ truce. Use them.
+
+- `provincia.debrief` — *The mission won*
+
+  The last of Varro’s towers strikes its colours. Terra Nova is a province of Rome, and you are its governor. I have counted everything. It comes to: enough. The maps beyond are yours to draw: Free play, any size, any rivals.
+
+- `provincia.tip.truce` — *A tip, the first time: on "truceover"*
+
+  The truce is over. Varro may march at any time. Towers on the road towards him, manned.
+
+- `provincia.tip.fallen` — *A tip, the first time: after a while*
+
+  His headquarters is down. His towers show through the fog now. Three left and no castle: he yields.
+
+- `provincia.tip.castle` — *A tip, the first time: on "built"*
+
+  A castle. Ten men and the widest circle a stronghold claims. A realm with a castle never yields.
+
+- `provincia.truceover` — *On "truceover"*
+
+  The truce is over. Varro may march at any time. I would have towers on the road by now.

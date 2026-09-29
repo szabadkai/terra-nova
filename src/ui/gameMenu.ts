@@ -215,7 +215,8 @@ export class GameMenu {
       if (it.id === '-') { this.nav.appendChild(h('div', 'gm-sep')); continue; }
       if ((it.id === 'save' || it.id === 'load') && !this.o.saves) continue;
       const extra = it.soon ? '<span class="tag">Soon</span>' : it.kbd ? `<kbd>${it.kbd}</kbd>` : '';
-      const b = h('button', `gm-item ${it.cls ?? ''}`, `<span class="ic">${it.icon}</span><span>${it.label}</span>${extra}`) as HTMLButtonElement;
+      const label = it.id === 'restart' && g.mission ? 'Restart mission' : it.label;
+      const b = h('button', `gm-item ${it.cls ?? ''}`, `<span class="ic">${it.icon}</span><span>${label}</span>${extra}`) as HTMLButtonElement;
       b.dataset.id = it.id;
       if (it.soon) b.disabled = true;
       b.onclick = () => {
@@ -551,7 +552,7 @@ export class GameMenu {
       <div class="crest">${restart ? '↻' : '⏏'}</div>
       <p>${restart ? mission ? 'Start this mission again from the beginning?' : 'Start this map again from the beginning? The land, the seed and your rivals stay the same.' : 'Leave this game and return to the title screen?'}</p>
       <p class="muted">${restart ? 'The autosave is replaced by the new start — save the game first to keep it.' : 'Your game stays in the autosave; continue it from the title screen.'}</p>
-      <div class="row"><button class="wide" data-a="no">Keep playing</button><button class="wide danger" data-a="yes">${restart ? 'Restart map' : 'Quit to title'}</button></div>`);
+      <div class="row"><button class="wide" data-a="no">Keep playing</button><button class="wide danger" data-a="yes">${restart ? mission ? 'Restart mission' : 'Restart map' : 'Quit to title'}</button></div>`);
     c.appendChild(box);
     const no = box.querySelector<HTMLButtonElement>('[data-a=no]')!;
     no.onclick = () => { this.o.audio.play('ui'); this.show('overview'); };

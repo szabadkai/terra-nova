@@ -11,6 +11,7 @@ Rules that apply to every item:
 - **Every player action is a command** (`src/game/commands.ts`): the interface never calls into the game or writes it; it issues a command and hears how it went through a `cmd` event (the HUD's `issue()`). A game with a friend replays the same commands on both machines (`src/net/lockstep.ts`), so anything the interface did to the game directly would drift them apart. Game logic reads each player's own fog from `world.seen` (a bit per player); `world.explored` is only this machine's view. `npx tsx scripts/lockstep.ts` fails on a direct call or write from `src/ui`, `src/render` or `src/main.ts`, and plays a jittery three-machine game to catch a drift.
 - **The game's arithmetic is the same in every browser**: no `Math.sin/cos/atan2/hypot/pow` and no `**` in `src/game` (the engines round them differently in the last bit); use `sin`, `cos`, `atan2`, `hypot` and `sq` from `src/core/fmath.ts`. Render code may use `Math.*` freely. `scripts/lockstep.ts` checks.
 - **Each gameplay feature gets a headless check** in `scripts/`.
+- **The campaign is data** (`src/game/missions.ts`, framework `src/game/campaign.ts`): a mission is a map, cumulative unlocks, rules for its rivals, a setup run once on a fresh game, goals with `done()`, and the quaestor's tips; every goal has a `satisfy()` and every mission a `probe()`, which `npx tsx scripts/campaign.ts` drives (`seeds <id> <from> <to>` finds maps that fit, `time <id>` lets a level-1 AI play it). Everything the game does for a mission is gated on `opts.mission`, so free play and the passive baseline stay bit-identical. The narration (`voice/SCRIPT.md`, `voice/lines.json`) is generated from the missions by `scripts/voicelines.ts`: change the words there, never in the script; the recordings go to `public/voice/<id>.mp3` and `--check` lists the ones still missing.
 - **A new heavy effect gets its switch in each detection level** (`PRESETS` in `src/render/hardware.ts`, checked by `scripts/hardware.ts`): new players get the level their machine was timed to hold, so an effect that is on everywhere by default lands on machines that were never timed with it.
 
 ---
@@ -23,39 +24,43 @@ At 3440×1440 the GPU is the limit: a 25-minute town at High with AO takes about
 - **The terrain** is the next big one (its flat floor of PBR, environment, shadows and fog is about 2 ms of it; a baked far-terrain colour would take most of that far out).
 - Passes are cheap only on an idle GPU: with other pages drawing on it the bloom's 12 small passes took 1.4–1.7 ms instead of 0.45, about 0.1 ms each however small. Folding passes together (as the bloom's bright pass now is, into its first blur) pays more on a busy machine than quiet measurements show.
 
-## 2. A livelier UI
+## 2. The campaign's voice and a second chapter
+
+The fifteen missions of the campaign stand (Castra to Provincia) and every line of the quaestor's is scripted, but not yet recorded: `voice/SCRIPT.md` is the script, the game plays whatever is in `public/voice/` and leaves the rest to the text. Once the recordings are there, a listen through each mission's briefing, debrief and tips for lines that read well on paper and badly aloud. After that, a second chapter is cheap - the framework takes any mission - and the natural one picks up the finale's hook: bigger maps, several rivals, the sea war.
+
+## 3. A livelier UI
 
 - Small icons pop out of a building as each good is made ("+1 plank"), using the existing `produced` event.
 - Panels animate in and out, and numbers count up and down.
 
 (The ring build menu was dropped.)
 
-## 3. Morning mist and sun shafts
+## 4. Morning mist and sun shafts
 
 Height fog pools in valleys and over water at dawn and burns off by mid-morning, driven by the existing day cycle in `sky.ts`. Add sun shafts as a cheap screen-space pass (a radial blur of what blocks the sun, from depth), folded into the single final pass in `postfx.ts`. There's nothing like either yet. It costs GPU time, so it comes after the performance items.
 
-## 4. Bigger maps
+## 5. Bigger maps
 
 Buildings are batched (`buildingBatches.ts`), so a bigger town adds instances rather than draw calls, and the simulation has plenty of headroom: a 50 ms tick costs 0.05–0.08 ms on average (0.25 ms at the 95th percentile) at 10–45 minutes of AI-vs-AI, so it never needs a Web Worker. Today towns peak around 290 settlers and 90 buildings on the 160 map. Recheck the AI deadlocks listed in the balance notes on larger maps. The worn paths (`src/render/trails.ts`, four texels a node) are tuned on towns of the 160 map (`A0`: about the busiest tenth of the walked-over ground goes bare), so a much busier town wears more of itself bare: look at them again there.
 
-## 5. Photo mode
+## 6. Photo mode
 
 Hide the UI and use a free camera. Scrub the time of day and the season, and set the focus distance for the tilt-shift blur. It's cheap given what already exists.
 
-## 6. More for warships
+## 7. More for warships
 
 - **Landing troops on an enemy coast** first: it is what lets island wars be won.
 - Boarding enemy ships.
 - Deck archers shooting at soldiers on the shore.
 
-## 7. A smarter AI army and economy
+## 8. A smarter AI army and economy
 
 - **Formations**: the AI uses the formations players have (`planFormation` in `src/game/orders.ts`) for its attacks and defence.
 - **More trade outposts**: `AIController.tradeStep` sets up only one far outpost (storehouse plus market). Let it add a second as its realm grows.
 
 Either change will move the baselines on purpose. Record the new medians.
 
-## 8. Playing with a friend: what's left
+## 9. Playing with a friend: what's left
 
 Two people can play over the internet with no server (title screen → Play with a friend: WebRTC between the browsers, found through Trystero over public Nostr relays by a six-letter room code; deterministic lockstep at sixty ticks a second, turns of 100 ms, the input delay set by the host from the measured round trip, a state hash compared every turn). Left for later:
 
