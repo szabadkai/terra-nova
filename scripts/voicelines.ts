@@ -40,7 +40,7 @@ const md = `# The quaestor's script
 
 Gaius Sestius, quaestor of the province of Terra Nova, speaks every line of the campaign. One voice
 throughout: a dry, exact man in his fifties who counts things and is faintly amused by everything
-else; unhurried, about 140 words a minute, no stage-Roman accent. He pauses a beat at every paragraph
+else; unhurried and measured, with a slight Italian accent, never stage-Roman. He pauses a beat at every paragraph
 break and never raises his voice, not even for the Senate.
 
 Latin titles are said the classical way: Castra (KAS-tra), Domus (DOH-moos), Piscis et Venatio
@@ -48,7 +48,7 @@ Latin titles are said the classical way: Castra (KAS-tra), Domus (DOH-moos), Pis
 Arma (AR-ma), Prima Pugna (PREE-ma POOG-na), Dei (DAY-ee), Mercatura (mer-ka-TOO-ra), Mare Nostrum
 (MAH-reh NOS-troom), Machinae (MA-ki-nye), Classis (KLAS-sis), Provincia (pro-WIN-ki-a). Varro is VAR-roh.
 
-Each line below is one recording, saved as \`public/voice/<id>.mp3\` (mono, 64–96 kbps is plenty). The
+Each line below is one recording, saved as \`public/voice/<id>.mp3\` (mono, 128 kbps; \`scripts/voicesynth.ts\` makes them with ElevenLabs). The
 game plays whichever recordings are there and leaves the rest to the text on screen, so the lines can
 arrive in any order. This file is generated from \`src/game/missions.ts\` by \`scripts/voicelines.ts\`;
 edit the missions, not this file. ${lines.length} lines, about ${words} words.
