@@ -65,6 +65,8 @@ export interface SaveMeta {
   buildings: number;
   over: boolean;
   won: boolean;
+  /** the campaign mission being played, by id */
+  mission?: string;
   thumb?: string; // small data URL
 }
 
@@ -129,7 +131,8 @@ export function describe(g: Game): SaveMeta {
   return {
     savedAt: Date.now(), time: g.time, seed: g.opts.seed, size: g.opts.size, players: g.players.length,
     aiLevel: g.ai[0]?.level ?? g.opts.aiLevel, pop: pop.total, soldiers: pop.soldiers,
-    buildings: g.countBuildings(g.local, undefined, false), over: g.over, won: g.over && g.winner === g.local,
+    buildings: g.countBuildings(g.local, undefined, false), over: g.over, won: (g.over && g.winner === g.local) || !!g.ms?.won,
+    mission: g.opts.mission,
   };
 }
 

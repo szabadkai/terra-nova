@@ -19,6 +19,7 @@ import { updateSigns } from './geology';
 import { updateTrade } from './trade';
 import { sampleFlow, type FlowSample } from './flow';
 import { atan2, sq } from '../core/fmath';
+import { allowedTools, allowedTypes, beginMission, missionById, missionStep, rivalRule, tallyEvent, type Mission, type MissionState, type RivalMode, type Tool } from './campaign';
 
 export interface PlayerState {
   id: number;
@@ -56,6 +57,8 @@ export interface GameOptions {
   humans?: number;
   /** the player this machine plays (its fog, its messages); default 0 */
   local?: number;
+  /** the campaign mission this game plays (missions.ts), by id; none in free play */
+  mission?: string;
 }
 
 export const OUT_CAP = 8;
@@ -119,6 +122,33 @@ export class Game {
   winner = -1;
   over = false;
   starts: { x: number; y: number }[] = [];
+  /** the campaign mission's state (campaign.ts): plain data, so it is saved like any other field; null in free play */
+  ms: MissionState | null = null;
+
+  /** The campaign mission this game plays, from its options (a getter: never saved, always current after a load). */
+  get mission(): Mission | null {
+    let m = missionOf.get(this);
+    if (m === undefined) {
+      m = this.opts.mission ? missionById(this.opts.mission) ?? null : null;
+      missionOf.set(this, m);
+    }
+    return m;
+  }
+
+  /** How a computer kingdom plays in this mission: as in free play unless the mission says otherwise. */
+  rivalMode(p: number): RivalMode {
+    return rivalRule(this.mission, p)?.mode ?? 'ai';
+  }
+
+  /** Whether the Senate has granted the player this building yet (free play: everything, always). */
+  canBuildType(owner: number, type: BuildingType) {
+    const m = this.mission;
+    return !m || owner !== this.local || allowedTypes(m).has(type);
+  }
+  canUseTool(owner: number, tool: Tool) {
+    const m = this.mission;
+    return !m || owner !== this.local || allowedTools(m).has(tool);
+  }
 
   /** `generate = false` leaves an empty world and no players, for restoring a saved game into. */
   constructor(opts: GameOptions, generate = true) {
@@ -142,10 +172,17 @@ export class Game {
     for (let p = 0; p < opts.players; p++) {
       this.players.push(this.newPlayer(p));
       this.setupStart(p, gen.starts[p].x, gen.starts[p].y);
-      if (!this.isHuman(p)) this.ai.push(new AIController(this, p, opts.aiLevel));
+      if (this.isHuman(p)) continue;
+      // a mission may leave a rival without a mind (dormant), or with one that never marches (builder)
+      const rule = rivalRule(this.mission, p);
+      if (rule?.mode === 'dormant') continue;
+      const a = new AIController(this, p, rule?.level ?? opts.aiLevel);
+      if (rule?.mode === 'builder') a.mode = 'builder';
+      this.ai.push(a);
     }
     recomputeTerritory(this);
     this.updateExplored(true);
+    beginMission(this);
   }
 
   id() {
@@ -170,6 +207,7 @@ export class Game {
   emit(e: GameEvent) {
     this.events.push(e);
     if (this.events.length > 2000) this.events.splice(0, 1000);
+    if (this.ms) tallyEvent(this, e);
   }
 
   /** A message for the local player; `b`, a building a click on it opens. */
@@ -343,6 +381,7 @@ export class Game {
 
   /** Returns null if placeable, otherwise a reason. `unclaimed` checks a colony site on no-one's land instead. */
   placeError(type: BuildingType, owner: number, x: number, y: number, unclaimed = false): string | null {
+    if (!this.canBuildType(owner, type)) return 'The Senate has not granted this building yet';
     const def = BUILDINGS[type];
     const w = this.world;
     const size = def.size;
@@ -692,15 +731,17 @@ export class Game {
     // economy dispatch per player
     for (const p of this.players) {
       if (!p.alive) continue;
+      // a mission's dormant rival runs no economy and sends no reinforcements; its strongholds still defend themselves
+      const dormant = !!this.ms && p.ai && this.rivalMode(p.id) === 'dormant';
       p.dispatchT -= dt;
       if (p.dispatchT <= 0) {
         p.dispatchT = 0.3;
-        updateEconomy(this, p.id);
+        if (!dormant) updateEconomy(this, p.id);
       }
       p.militaryT -= dt;
       if (p.militaryT <= 0) {
         p.militaryT = 0.5;
-        updateMilitary(this, p.id);
+        updateMilitary(this, p.id, dormant);
       }
     }
     for (const ai of this.ai) ai.update(dt);
@@ -717,6 +758,7 @@ export class Game {
     if (this.checkT <= 0) {
       this.checkT = 2;
       this.checkVictory();
+      if (this.ms) missionStep(this);
       this.recordHistory();
       sampleFlow(this);
       updateSigns(this);
@@ -825,9 +867,10 @@ export class Game {
         reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
       }
       for (const sh of this.ships.values()) if (sh.owner === p.id) reveal(sh.x, sh.z, 8);
-      // a realm whose headquarters has fallen can hide its strongholds no longer
+      // a realm whose headquarters has fallen can hide its strongholds no longer (nor can any rival's in a mission that says so)
+      const shown = this.mission?.rules?.reveal === 'strongholds';
       for (const b of this.buildings.values()) {
-        if (b.owner === p.id || !b.def.military || b.state !== 'done' || !this.players[b.owner]?.fallen) continue;
+        if (b.owner === p.id || !b.def.military || b.state !== 'done' || !(shown || this.players[b.owner]?.fallen)) continue;
         reveal(b.cx, b.cz, b.size + 3);
       }
     }
@@ -847,7 +890,9 @@ export class Game {
         if (p.id !== this.local) this.message(this.local, `The headquarters of ${p.name} has fallen! Its ${forts.length} remaining stronghold${forts.length > 1 ? 's are' : ' is'} marked on the map.`, near.cx, near.cz, 'good', near.id);
       }
       p.fallen = fallen;
-      const yields = fallen && forts.length > 0 && forts.length <= YIELD_FORTS && !forts.some((b) => b.type === 'castle') && this.ai.some((a) => a.p === p.id);
+      // (a mission's scripted rivals never yield, nor any when the mission says so)
+      const computer = this.ai.some((a) => a.p === p.id && a.mode === 'ai') && !this.mission?.rules?.noYield;
+      const yields = fallen && forts.length > 0 && forts.length <= YIELD_FORTS && !forts.some((b) => b.type === 'castle') && computer;
       if (!forts.length || yields) {
         p.alive = false;
         this.emit({ type: 'defeated', owner: p.id, text: yields ? `${p.name} yields! Its last stronghold${forts.length > 1 ? 's lay' : ' lays'} down their arms.` : `${p.name} has been defeated!` });
@@ -865,7 +910,8 @@ export class Game {
         this.over = true;
         this.winner = alive.length ? alive[0].id : -1;
         this.emit({ type: 'gameover', owner: this.winner });
-      } else if (alive.length === 1) {
+      } else if (alive.length === 1 && !this.mission) {
+        // (a mission is won by its goals, and may have no rival at all)
         this.over = true;
         this.winner = alive[0].id;
         this.emit({ type: 'gameover', owner: this.winner });
@@ -888,6 +934,9 @@ export class Game {
     }
   }
 }
+
+/** the mission each game plays, looked up once (kept off the object, so saves never see it) */
+const missionOf = new WeakMap<Game, Mission | null>();
 
 /** A player's manned strongholds (military buildings, harbours included): what keeps the realm alive. */
 export function strongholdsOf(g: Game, owner: number): Building[] {

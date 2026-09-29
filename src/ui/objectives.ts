@@ -1,19 +1,13 @@
-// Guided objectives: a light campaign-style chain that teaches the economy.
-import { BUILDINGS, BuildingType } from '../game/defs';
+// Guided objectives: the free-play "Chronicle", a light chain that teaches the economy, and the panel
+// that shows it — or a campaign mission's goals (missions.ts), which come with a "Show me".
+import { BuildingType } from '../game/defs';
 import type { Game } from '../game/game';
-
-interface Objective {
-  id: string;
-  text: string;
-  hint: string;
-  done: (g: Game) => boolean;
-  progress?: (g: Game) => string;
-}
+import type { FocusSpec, Goal } from '../game/campaign';
 
 const has = (g: Game, t: BuildingType, n = 1) => g.countBuildings(g.local, t, false) >= n;
 const hasAny = (g: Game, ts: BuildingType[]) => ts.some((t) => has(g, t));
 
-export const OBJECTIVES: Objective[] = [
+export const OBJECTIVES: Goal[] = [
   { id: 'wood', text: "Build a Woodcutter's Hut", hint: 'Place it next to a forest — it fells mature trees.', done: (g) => has(g, 'woodcutter') },
   { id: 'saw', text: 'Build a Sawmill', hint: 'Sawmills turn logs into the boards every building needs.', done: (g) => has(g, 'sawmill') },
   { id: 'stone', text: "Build a Stonecutter's Hut", hint: 'Place it close to grey rock outcrops.', done: (g) => has(g, 'stonecutter') },
@@ -52,10 +46,16 @@ export const OBJECTIVES: Objective[] = [
 
 export class Objectives {
   el: HTMLElement;
+  /** how many goals, in order, have been announced as done (saved with the view, so a reload does not repeat them) */
   index = 0;
   private t = 0;
   private open = false;
-  constructor(private game: Game, parent: HTMLElement, private onComplete: (text: string) => void) {
+  /**
+   * `goals`: the chain to follow (a mission puts its optional goals last: they never hold it up).
+   * `onFocus`: what "Show me" does; without it no button is shown. `label`: the panel's heading.
+   */
+  constructor(private game: Game, parent: HTMLElement, readonly goals: Goal[], private onComplete: (goal: Goal) => void,
+    private onFocus?: (f: FocusSpec) => void, private label = 'Chronicle') {
     this.el = document.createElement('div');
     this.el.className = 'panel objectives';
     parent.appendChild(this.el);
@@ -63,7 +63,19 @@ export class Objectives {
     this.render();
   }
 
+  /** The goal the panel points at, if any is left. */
+  get current(): Goal | undefined {
+    return this.goals[this.index];
+  }
+
+  /** Every goal a mission needs is done (the optional ones may still be open). */
+  get required() {
+    return this.goals.filter((o) => !o.optional).length;
+  }
+
   noteEvent(type: string, owner?: number) {
+    // free play only: a mission reads the game's own tally (campaign.ts)
+    if (this.game.mission) return;
     if (type === 'captured' && owner === this.game.local) (this.game as any).__captured = true;
     if (type === 'warship' && owner === this.game.local) (this.game as any).__warship = true;
   }
@@ -72,9 +84,10 @@ export class Objectives {
     this.t -= dt;
     if (this.t > 0) return;
     this.t = 1;
+    if (this.index > this.goals.length) this.index = this.goals.length;
     let changed = false;
-    while (this.index < OBJECTIVES.length && OBJECTIVES[this.index].done(this.game)) {
-      this.onComplete(OBJECTIVES[this.index].text);
+    while (this.index < this.goals.length && this.goals[this.index].done(this.game)) {
+      this.onComplete(this.goals[this.index]);
       this.index++;
       changed = true;
     }
@@ -83,28 +96,33 @@ export class Objectives {
   }
 
   private renderProgress() {
-    const o = OBJECTIVES[this.index];
+    const o = this.goals[this.index];
     const p = this.el.querySelector('.prog');
     if (o && o.progress && p) p.textContent = o.progress(this.game);
   }
 
   render() {
-    const o = OBJECTIVES[this.index];
-    const pct = Math.round((this.index / OBJECTIVES.length) * 100);
+    const o = this.goals[this.index];
+    const required = this.required;
+    const doneReq = Math.min(required, this.index);
+    const pct = Math.round((doneReq / Math.max(1, required)) * 100);
+    const head = (text: string) => `<div class="ohead"><span class="crest-s">⚜</span><span class="olabel">${text}</span><span class="ochev">${this.open ? '▴' : '▾'}</span></div>`;
+    const list = this.open
+      ? `<ol class="olist">${this.goals.map((x, i) => `<li class="${i < this.index ? 'done' : i === this.index ? 'cur' : ''}${x.optional ? ' opt' : ''}">${x.text}${x.optional ? ' <small>(optional)</small>' : ''}</li>`).join('')}</ol>`
+      : '';
     if (!o) {
-      this.el.innerHTML = `<div class="ohead"><span class="crest-s">⚜</span><b>Chronicle complete</b></div>`;
+      this.el.innerHTML = `${head(`${this.label} complete`)}${list}`;
       return;
     }
-    const list = this.open
-      ? `<ol class="olist">${OBJECTIVES.map((x, i) => `<li class="${i < this.index ? 'done' : i === this.index ? 'cur' : ''}">${x.text}</li>`).join('')}</ol>`
-      : '';
+    const show = o.focus && this.onFocus ? '<button class="oshow" type="button">Show me</button>' : '';
+    const done = o.optional;
     this.el.innerHTML = `
-      <div class="ohead"><span class="crest-s">⚜</span><span class="olabel">Chronicle · ${this.index + 1}/${OBJECTIVES.length}</span><span class="ochev">${this.open ? '▴' : '▾'}</span></div>
-      <div class="otext">${o.text} <span class="prog">${o.progress ? o.progress(this.game) : ''}</span></div>
-      <div class="ohint">${o.hint}</div>
+      ${head(done ? `${this.label} complete` : `${this.label} · ${this.index + 1}/${required}`)}
+      <div class="otext">${done ? '<span class="muted">Optional:</span> ' : ''}${o.text} <span class="prog">${o.progress ? o.progress(this.game) : ''}</span></div>
+      <div class="ohint">${o.hint}</div>${show}
       <div class="obar"><i style="width:${pct}%"></i></div>
       ${list}`;
+    const btn = this.el.querySelector<HTMLElement>('.oshow');
+    if (btn) btn.onclick = (e) => { e.stopPropagation(); this.onFocus?.(o.focus!); };
   }
 }
-
-void BUILDINGS;

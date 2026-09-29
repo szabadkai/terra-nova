@@ -18,6 +18,8 @@ export interface Prefs {
   musicOn: boolean;
   sfx: number;
   ambience: number;
+  /** the campaign's narration (0 = off) */
+  voice: number;
   edgeScroll: boolean;
   scrollSpeed: number;
   /** the wheel zooms towards the pointer rather than the middle of the screen */
@@ -51,6 +53,7 @@ export const defaultPrefs = (): Prefs => ({
   musicOn: true,
   sfx: 1,
   ambience: 1,
+  voice: 1,
   edgeScroll: true,
   scrollSpeed: 1,
   zoomToPointer: true,
@@ -144,4 +147,5 @@ export function applyAudioPrefs(audio: Audio) {
   // music off as well, so the soundtrack stops streaming rather than playing silently
   audio.setMusic(prefs.soundOn && prefs.musicOn);
   audio.setMix(prefs.music, prefs.sfx, prefs.ambience);
+  audio.setVoice(prefs.voice);
 }

@@ -31,7 +31,9 @@ import { aName, causeLine, causeOf, causeSteps, rootCauses } from '../game/cause
 import { FLOW_WINDOW, flowHistory, flowReport, trend } from '../game/flow';
 import { gameNear } from '../game/wildlife';
 import { Minimap } from './minimap';
-import { Objectives } from './objectives';
+import { OBJECTIVES, Objectives } from './objectives';
+import { missionIndex, numeralOf, type FocusSpec, type Tool } from '../game/campaign';
+import { QUAESTOR_ICON, briefingOverlay, debriefOverlay, lockNote, toolLockNote } from './campaign';
 import { prefs, savePrefs } from './prefs';
 import { AUTO_STEPS, framePace } from '../render/framePace';
 import { LowFpsWatch, lowFpsAdvice } from '../render/hardware';
@@ -43,6 +45,8 @@ const IMM_OFF = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" str
 
 const SEASON_ICON = ['🌸', '🌿', '🍂', '❄'];
 
+/** a small stable hash of a string, for picking one of a few lines */
+const hash = (s: string) => { let x = 7; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x; };
 const h = (tag: string, cls = '', html = '') => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -91,6 +95,10 @@ export interface HudHooks {
   /** whether this player sets the game's pace (alone, or the host of a game with a friend) */
   isHost(): boolean;
   restart(): void;
+  /** the same map again from the start (a mission again, in the campaign) */
+  restartMap(): void;
+  /** the campaign's next mission */
+  nextMission(): void;
   /** the Esc menu, on the Graphics page when asked */
   openMenu(page?: 'graphics'): void;
 }
@@ -137,6 +145,14 @@ export class HUD {
   private watch: StallWatch;
   /** the good the Statistics tab charts */
   private chartGood: Good = 'board';
+  /** campaign: the card (or tab) "Show me" is pointing at, until it is picked */
+  private teach: BuildingType | Tool | null = null;
+  /** campaign: the quaestor's tips already given in this mission (saved with the view) */
+  private seenTips = new Set<string>();
+  /** a briefing or debrief is up: the game waits, and keys go to it */
+  modal: HTMLElement | null = null;
+  /** the briefing's narration the browser held back until a click */
+  private briefRetry: string | null = null;
 
   constructor(private game: Game, private gr: GameRenderer, private audio: Audio, private hooks: HudHooks, parent: HTMLElement) {
     this.root = h('div', 'hud');
@@ -152,10 +168,14 @@ export class HUD {
     // The chronicle and the messages share one column, so messages always sit below the chronicle however tall it grows.
     const rcol = h('div', 'rcol');
     this.root.appendChild(rcol);
-    this.objectives = new Objectives(this.game, rcol, (text) => {
-      this.message(`✔ Objective complete: ${text}`, undefined, undefined, 'good');
+    const m = game.mission;
+    this.objectives = new Objectives(this.game, rcol, m?.goals ?? OBJECTIVES, (goal) => {
+      if (m) {
+        this.toast({ title: `✔ ${goal.text}`, icon: QUAESTOR_ICON, kind: 'good', ttl: 8 });
+        if (!goal.optional) void this.audio.say(`quaestor.noted.${1 + (hash(goal.id) % 4)}`);
+      } else this.message(`✔ Objective complete: ${goal.text}`, undefined, undefined, 'good');
       this.audio.play('built');
-    });
+    }, (f) => this.focus(f), m ? `Mission ${numeralOf(missionIndex(m.id))}` : 'Chronicle');
     this.msgs = h('div', 'msgs');
     rcol.appendChild(this.msgs);
     this.tip = h('div', 'tip hidden');
@@ -304,25 +324,35 @@ export class HUD {
     c.appendChild(cats);
     const grid = h('div', 'bgrid');
     const st = this.game.totalStock(this.game.local);
+    const g = this.game;
+    // (locked cards stay in the grid, in order: the affordability refresh in update() matches cards to BUILD_ORDER by position)
     for (const t of BUILD_ORDER[this.cat]) {
       const d = BUILDINGS[t];
       const afford = st.board >= d.cost.board && st.stone >= d.cost.stone;
-      const card = h('button', 'bcard' + (this.gr.placing === t ? ' on' : '') + (afford ? '' : ' poor'));
+      const locked = !g.canBuildType(g.local, t);
+      const card = h('button', 'bcard' + (this.gr.placing === t ? ' on' : '') + (afford ? '' : ' poor') + (locked ? ' locked' : '') + (this.teach === t ? ' teach' : ''));
       card.innerHTML = `<img src="${buildingIcons.get(t) ?? ''}" alt="">
         <div class="bname">${d.name}</div>
-        <div class="bcost">${this.icon('board', 'ci')}${d.cost.board}${d.cost.stone ? ` ${this.icon('stone', 'ci')}${d.cost.stone}` : ''}</div>`;
-      card.onmouseenter = (e) => this.showTip(e as MouseEvent, this.buildTip(t));
+        ${locked ? `<div class="block">${lockNote(t)}</div>` : `<div class="bcost">${this.icon('board', 'ci')}${d.cost.board}${d.cost.stone ? ` ${this.icon('stone', 'ci')}${d.cost.stone}` : ''}</div>`}`;
+      if (locked) card.setAttribute('aria-disabled', 'true');
+      card.onmouseenter = (e) => this.showTip(e as MouseEvent, this.buildTip(t) + (locked ? `<br><span class="muted">The Senate grants it in ${lockNote(t, true)}.</span>` : ''));
       card.onmouseleave = () => this.hideTip();
       card.onclick = () => { this.startPlacing(t); };
       grid.appendChild(card);
     }
+    const toolCard = (tool: Tool, on: boolean, glyph: string, name: string, cost: string) => {
+      const locked = !g.canUseTool(g.local, tool);
+      const card = h('button', 'bcard geo' + (on ? ' on' : '') + (locked ? ' locked' : '') + (this.teach === tool ? ' teach' : ''));
+      card.innerHTML = `<div class="geoicon">${glyph}</div>
+        <div class="bname">${name}</div>
+        ${locked ? `<div class="block">${toolLockNote(tool)}</div>` : `<div class="bcost">${cost}</div>`}`;
+      if (locked) card.setAttribute('aria-disabled', 'true');
+      return card;
+    };
     if (this.cat === 'industry') {
       // not a building: an order for a geologist to prospect a mountain
       const busy = geologistsAtWork(this.game, this.game.local);
-      const card = h('button', 'bcard geo' + (this.gr.prospecting ? ' on' : ''));
-      card.innerHTML = `<div class="geoicon">⛏</div>
-        <div class="bname">Geologist</div>
-        <div class="bcost">${busy ? `${busy} at work` : 'Prospect'}</div>`;
+      const card = toolCard('geologist', this.gr.prospecting, '⛏', 'Geologist', busy ? `${busy} at work` : 'Prospect');
       card.onmouseenter = (e) => this.showTip(e as MouseEvent, `<b>Send a geologist</b><br>Click a mountain inside your borders. He probes ${PROBES} spots and leaves signs: black lumps for coal, rust for iron, gold nuggets, grey granite — one to three for a poor, fair or rich vein, a red cross for nothing. Ore he finds glitters in the rock.<br><span class="muted">Any free carrier can take up the trade.</span>`);
       card.onmouseleave = () => this.hideTip();
       card.onclick = () => this.startProspecting(!this.gr.prospecting);
@@ -331,10 +361,7 @@ export class HUD {
     if (this.cat === 'military') {
       // not a building either: pioneers stake out free land beside the border
       const busy = pioneersAtWork(this.game, this.game.local);
-      const card = h('button', 'bcard geo' + (this.gr.pioneering ? ' on' : ''));
-      card.innerHTML = `<div class="geoicon">⚑</div>
-        <div class="bname">Pioneer</div>
-        <div class="bcost">${busy ? `${busy} at work` : 'Claim land'}</div>`;
+      const card = toolCard('pioneer', this.gr.pioneering, '⚑', 'Pioneer', busy ? `${busy} at work` : 'Claim land');
       card.onmouseenter = (e) => this.showTip(e as MouseEvent, `<b>Send a pioneer</b><br>Click free land just beyond your border. He digs in at the edge nearest the spot and stakes out the land around it, patch by patch — no tower or soldier needed. Staked land can be built on, but a foreign stronghold's borders take it for good.<br><span class="muted">A free carrier takes a shovel and becomes a pioneer; send several to work faster.</span>`);
       card.onmouseleave = () => this.hideTip();
       card.onclick = () => this.startPioneering(!this.gr.pioneering);
@@ -355,6 +382,8 @@ export class HUD {
   }
 
   startPlacing(t: BuildingType | null) {
+    if (t && !this.game.canBuildType(this.game.local, t)) { this.message(`${BUILDINGS[t].name}: the Senate grants it in ${lockNote(t, true)}`, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+    if (t && this.teach === t) this.teach = null;
     if (t) { this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; this.gr.pioneering = false; }
     this.gr.placing = t;
     if (t && window.innerWidth <= 700) this.left.classList.remove('open');
@@ -466,7 +495,8 @@ export class HUD {
   /** Switch the left panel to a tab, as its button does. */
   private openTab(id: Tab) {
     this.tab = id;
-    this.left.querySelectorAll<HTMLElement>('.tab').forEach((x) => x.classList.toggle('on', x.dataset.tab === id));
+    if (id === 'faith' && this.teach === 'spells') this.teach = null;
+    this.left.querySelectorAll<HTMLElement>('.tab').forEach((x) => { x.classList.toggle('on', x.dataset.tab === id); x.classList.toggle('teach', x.dataset.tab === 'faith' && this.teach === 'spells'); });
     this.audio.play('ui');
     this.renderTab();
   }
@@ -576,7 +606,7 @@ export class HUD {
     const list = h('div', 'spells');
     for (const id of SPELL_ORDER) {
       const d = SPELLS[id];
-      const lock = !st.temples ? 'Needs a Temple' : d.great && !st.great ? 'Needs a Great Temple' : !st.priests ? 'No priest serving' : p.mana < d.cost ? `${Math.floor(p.mana)}/${d.cost} mana` : '';
+      const lock = !g.canUseTool(g.local, 'spells') ? `The Senate allows it in ${toolLockNote('spells', true)}` : !st.temples ? 'Needs a Temple' : d.great && !st.great ? 'Needs a Great Temple' : !st.priests ? 'No priest serving' : p.mana < d.cost ? `${Math.floor(p.mana)}/${d.cost} mana` : '';
       const col = `rgb(${d.color.map((v) => Math.round(Math.min(1, v) * 255)).join(',')})`;
       const card = h('button', 'spell' + (lock ? ' locked' : '') + (this.gr.casting === id ? ' on' : ''), `
         <div class="sglyph" style="--sc:${col}">${d.glyph}</div>
@@ -721,6 +751,8 @@ export class HUD {
 
   /** Geologist targeting: click a mountain inside the borders. */
   startProspecting(on: boolean) {
+    if (on && !this.game.canUseTool(this.game.local, 'geologist')) { this.message(`Geologists: the Senate sends them in ${toolLockNote('geologist', true)}`, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+    if (on && this.teach === 'geologist') this.teach = null;
     this.gr.prospecting = on;
     if (on) { this.gr.placing = null; this.gr.casting = null; this.gr.expedition = 0; this.gr.pioneering = false; }
     if (on && window.innerWidth <= 700) this.left.classList.remove('open');
@@ -744,6 +776,8 @@ export class HUD {
 
   /** Pioneer targeting: click free land beside the border. */
   startPioneering(on: boolean) {
+    if (on && !this.game.canUseTool(this.game.local, 'pioneer')) { this.message(`Pioneers: the Senate allows them in ${toolLockNote('pioneer', true)}`, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+    if (on && this.teach === 'pioneer') this.teach = null;
     this.gr.pioneering = on;
     if (on) { this.gr.placing = null; this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; }
     if (on && window.innerWidth <= 700) this.left.classList.remove('open');
@@ -1366,7 +1400,8 @@ export class HUD {
       }
       if (b.type === 'shipyard' && mine) {
         const war = this.field(b, 'shipKind') === 'war';
-        body += `<div class="kv"><span>Build</span><b><span class="kindseg"><button class="mini${war ? '' : ' on'}" data-act="kind|trade" title="Trade ships carry goods and settlers between your harbours and sail expeditions">⛵ Trade ship</button><button class="mini${war ? ' on' : ''}" data-act="kind|war" title="Warships carry a catapult: they sink enemy ships and bombard strongholds by the water. Boards and iron.">⚔ Warship</button></span></b></div>`;
+        if (g.canUseTool(g.local, 'warships')) body += `<div class="kv"><span>Build</span><b><span class="kindseg${this.teach === 'warships' ? ' teach' : ''}"><button class="mini${war ? '' : ' on'}" data-act="kind|trade" title="Trade ships carry goods and settlers between your harbours and sail expeditions">⛵ Trade ship</button><button class="mini${war ? ' on' : ''}" data-act="kind|war" title="Warships carry a catapult: they sink enemy ships and bombard strongholds by the water. Boards and iron.">⚔ Warship</button></span></b></div>`;
+        else body += `<div class="kv"><span>Build</span><b>⛵ Trade ships <small class="muted">· warships in ${toolLockNote('warships', true)}</small></b></div>`;
         body += `<div class="kv"><span>Hull on the slipway</span><b>${Math.round(b.shipProgress * 100)}%</b></div>${pct(b.shipProgress)}`;
         if (war) body += `<div class="kv"><span>Iron for the fittings</span><b>${this.icon('iron', 'ci')}${b.stock.iron}<small>/${WARSHIP_IRON}</small>${warshipWantsIron(b) ? ' · needed now' : ''}</b></div>`;
         body += `<div class="kv"><span>Trade ships · warships</span><b>⛵ ${tradeShipsOf(g, b.owner)}/${MAX_SHIPS} · ⚔ ${warshipsOf(g, b.owner)}/${MAX_WARSHIPS}</b></div>`;
@@ -1759,9 +1794,11 @@ export class HUD {
   private raiseAlert(a: Alert) {
     const b = a.b;
     let action: { label: string; run: () => void } | undefined;
-    if (a.kind === 'exhausted') action = { label: '⛏ Send a geologist', run: () => { this.gr.cam.jumpTo(b.cx, b.cz + 2); this.startProspecting(true); } };
-    else if (a.kind === 'settlers') action = { label: `⚒ Build a ${BUILDINGS.residence_s.name}`, run: () => this.startPlacing('residence_s') };
-    else if (a.build && BUILDINGS[a.build].buildable !== false) { const t = a.build; action = { label: `⚒ Build ${BUILDINGS[t].name}`, run: () => this.startPlacing(t) }; }
+    const g = this.game;
+    // (a campaign mission offers only what the Senate has granted so far)
+    if (a.kind === 'exhausted' && g.canUseTool(g.local, 'geologist')) action = { label: '⛏ Send a geologist', run: () => { this.gr.cam.jumpTo(b.cx, b.cz + 2); this.startProspecting(true); } };
+    else if (a.kind === 'settlers' && g.canBuildType(g.local, 'residence_s')) action = { label: `⚒ Build a ${BUILDINGS.residence_s.name}`, run: () => this.startPlacing('residence_s') };
+    else if (a.build && BUILDINGS[a.build].buildable !== false && g.canBuildType(g.local, a.build)) { const t = a.build; action = { label: `⚒ Build ${BUILDINGS[t].name}`, run: () => this.startPlacing(t) }; }
     const hint = a.build && a.hint === `Build ${aName(BUILDINGS[a.build].name)}` ? '' : a.hint; // the button says it
     this.toast({ title: a.title, detail: a.detail, hint, icon: buildingIcons.get(b.type), kind: 'bad', x: b.cx, z: b.cz, b: b.id, action, ttl: 14, key: `alert:${a.kind === 'exhausted' ? `exhausted:${b.id}` : a.kind}` });
     this.audio.play('warn');
@@ -1838,6 +1875,10 @@ export class HUD {
       this.refreshInfo();
     }
     if (e.type === 'msg' && e.text) this.message(e.text, e.x, e.z, e.kind, e.b);
+    if (e.type === 'missionwon') this.missionWon();
+    if (e.type !== 'cmd' && e.type !== 'msg') this.tipFor(e);
+    // the quaestor's word on a scripted turn of events
+    if (this.game.mission?.voice?.[e.type]) void this.audio.say(`${this.game.mission.id}.${e.type}`, { interrupt: true });
     if (e.type === 'defeated' && e.text) this.message(e.text, undefined, undefined, e.owner === this.game.local ? 'bad' : 'good');
     // one's own fall is the end (the game may go on for the others); a win comes with the game's end
     if (e.type === 'defeated' && e.owner === this.game.local) this.gameOver(false);
@@ -1881,18 +1922,116 @@ export class HUD {
     const mm = Math.floor(g.time / 60);
     let produced = 0;
     for (const gd of GOODS) produced += p.produced[gd];
+    const mission = g.mission;
+    if (mission && !won) void this.audio.say('campaign.defeat', { interrupt: true });
     ov.innerHTML = `<div class="panel dialog">
-      <h1>${won ? 'Victory!' : 'Defeat'}</h1>
-      <p>${won ? 'All rival kingdoms have fallen. Your settlers celebrate across the land.' : 'Your last stronghold has fallen.'}</p>
+      <h1>${won ? 'Victory!' : mission ? 'The colony has fallen' : 'Defeat'}</h1>
+      <p>${won ? 'All rival kingdoms have fallen. Your settlers celebrate across the land.' : mission ? 'The Senate will want a report. I will write that the province was well begun and the legate learned quickly. Try again; the coast is still there.' : 'Your last stronghold has fallen.'}</p>
       <div class="kv"><span>Time played</span><b>${mm} min</b></div>
       <div class="kv"><span>Goods produced</span><b>${produced}</b></div>
       <div class="kv"><span>Population</span><b>${g.population(g.local).total}</b></div>
-      <div class="row"><button class="wide" data-act="cont">Keep watching</button><button class="wide primary" data-act="menu">Main menu</button></div>
+      <div class="row"><button class="wide" data-act="cont">Keep watching</button>${mission && !won ? '<button class="wide primary" data-act="retry">Try the mission again</button><button class="wide" data-act="menu">Campaign</button>' : '<button class="wide primary" data-act="menu">Main menu</button>'}</div>
     </div>`;
     this.root.appendChild(ov);
     ov.querySelector<HTMLElement>('[data-act=cont]')!.onclick = () => ov.remove();
     ov.querySelector<HTMLElement>('[data-act=menu]')!.onclick = () => this.hooks.restart();
+    const retry = ov.querySelector<HTMLElement>('[data-act=retry]');
+    if (retry) retry.onclick = () => { retry.setAttribute('disabled', ''); this.hooks.restartMap(); };
     this.audio.play(won ? 'fanfare' : 'death');
+  }
+
+  // ------------------------------------------------------------ campaign
+  /** The briefing before a mission: the game waits until Begin. */
+  showBriefing(onBegin: () => void) {
+    const m = this.game.mission;
+    if (!m || this.modal) return onBegin();
+    const line = `${m.id}.brief`;
+    const speak = () => { void this.audio.say(line, { interrupt: true }).then((ok) => { this.briefRetry = ok ? null : line; }); };
+    const ov = briefingOverlay(m, {
+      onBegin: () => {
+        this.modal = null;
+        // the browser may have held the narration back until this very click
+        if (this.briefRetry) { this.briefRetry = null; void this.audio.say(line, { interrupt: true }); }
+        onBegin();
+      },
+      onReplay: speak,
+    });
+    this.modal = ov;
+    this.root.appendChild(ov);
+    speak();
+  }
+
+  /** The mission is won: the quaestor's word and the way on. */
+  private missionWon() {
+    const m = this.game.mission;
+    if (!m || this.root.querySelector('.brief-ov')) return;
+    const ov = debriefOverlay(m, this.game, {
+      next: () => { this.modal = null; this.hooks.nextMission(); },
+      keep: () => { this.modal = null; },
+      menu: () => { this.modal = null; this.hooks.restart(); },
+    });
+    this.modal = ov;
+    this.root.appendChild(ov);
+    this.audio.play('fanfare');
+    void this.audio.say(`${m.id}.debrief`, { interrupt: true });
+  }
+
+  /** Open the Build tab on a building's card and make it pulse until it is picked. */
+  showBuild(t: BuildingType) {
+    this.cat = BUILDINGS[t].category;
+    this.teach = t;
+    this.left.classList.add('open');
+    this.openTab('build');
+  }
+  /** Point at the Geologist or Pioneer card, the Faith tab, or the shipyard's warship switch. */
+  showTool(tool: Tool) {
+    this.teach = tool;
+    if (tool === 'spells') { this.left.classList.add('open'); this.openTab('faith'); return; }
+    if (tool === 'warships') { this.refreshInfo(); return; }
+    this.cat = tool === 'geologist' ? 'industry' : 'military';
+    this.left.classList.add('open');
+    this.openTab('build');
+  }
+  /** "Show me": what a goal or a tip points at. */
+  focus(f: FocusSpec) {
+    const g = this.game;
+    this.audio.play('ui');
+    if (f.build) this.showBuild(f.build);
+    else if (f.tool) this.showTool(f.tool);
+    if (f.building) {
+      const b = g.buildings.get(f.building(g));
+      if (b) { this.gr.cam.jumpTo(b.cx, b.cz + 2); this.select({ kind: 'building', id: b.id }); return; }
+    }
+    const spot = f.spot?.(g);
+    if (spot) {
+      this.select(null);
+      this.gr.cam.jumpTo(spot.x, spot.z + 2);
+      this.gr.cam.zoomTo(Math.min(this.gr.cam.dist, 24));
+      this.gr.teach = { x: spot.x, z: spot.z, r: spot.r ?? 3, until: this.gr.time + 8 };
+    }
+  }
+
+  /** The quaestor's tips: one the first time each thing happens in the mission. */
+  private tipFor(e: GameEvent) {
+    const m = this.game.mission;
+    if (!m?.tips) return;
+    if (e.owner !== undefined && e.owner !== this.game.local) return;
+    for (const t of m.tips) {
+      if (t.on !== e.type || this.seenTips.has(t.id) || (t.when && !t.when(this.game, e))) continue;
+      this.seenTips.add(t.id);
+      this.toast({
+        title: t.title, detail: t.detail, icon: QUAESTOR_ICON, key: 'quaestor', ttl: 14, x: e.x, z: e.z, b: e.b,
+        action: t.focus ? { label: 'Show me', run: () => this.focus(t.focus!) } : undefined,
+      });
+      void this.audio.say(`${m.id}.tip.${t.id}`);
+      return;
+    }
+  }
+  saveTips(): string[] {
+    return [...this.seenTips];
+  }
+  loadTips(ids: unknown) {
+    if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') this.seenTips.add(id);
   }
 
   // ------------------------------------------------------------ per frame
@@ -1908,6 +2047,8 @@ export class HUD {
       this.t = 0.5;
       // polled even when alerts are off, so switching them on doesn't bring a burst of old news
       for (const a of this.watch.poll(this.game)) if (prefs.stallAlerts) this.raiseAlert(a);
+      // the quaestor's tips that come with time rather than an event
+      if (this.game.mission && !this.modal) this.tipFor({ type: 'time' });
       this.refreshTop();
       if (this.tab === 'build') {
         // refresh affordability without re-rendering on hover

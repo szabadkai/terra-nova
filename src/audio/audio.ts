@@ -24,6 +24,10 @@ const SAMPLES: Record<string, { files: string[]; gain: number }> = {
 // quiet pieces stay quieter without dropping out. If the first track will not load (a build
 // without the files, or no AAC decoder) the generative lute plays instead.
 const MUSIC_DIR = 'music/';
+// The campaign's narration (the quaestor's lines, voice/SCRIPT.md), served next to the page like the
+// music; a missing recording leaves the line to the text on screen.
+const VOICE_DIR = 'voice/';
+const VOICE_EXT = '.mp3';
 const TRACKS: { file: string; loudness: number }[] = [
   { file: '01.m4a', loudness: -22.4 },
   { file: '02.m4a', loudness: -22.8 },
@@ -91,6 +95,14 @@ export class Audio {
   ambVol = 1;
   /** a menu is open: ambience is ducked and the birds fall silent */
   private paused = false;
+  // the campaign's narration: recorded lines served from public/voice, one at a time, over ducked music
+  private voiceGain!: GainNode;
+  voiceVol = 1;
+  private voiceEl: HTMLAudioElement | null = null;
+  /** a line is playing: the music stands back */
+  private speaking = false;
+  /** lines whose recording is not there: asked for once, silent after */
+  private missingVoice = new Set<string>();
   private musicT = 0;
   private birdT = 2;
   private recent = new Map<string, number>();
@@ -117,6 +129,9 @@ export class Audio {
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = this.musicLevel();
     this.musicGain.connect(this.master);
+    this.voiceGain = ctx.createGain();
+    this.voiceGain.gain.value = this.voiceVol;
+    this.voiceGain.connect(this.master);
     // the generative lute, with a simple reverb
     this.synthGain = ctx.createGain();
     this.synthGain.gain.value = 0.22;
@@ -256,10 +271,56 @@ export class Audio {
   }
 
   private musicLevel() {
-    return this.musicOn ? this.musicVol : 0;
+    return this.musicOn ? this.musicVol * (this.speaking ? 0.35 : 1) : 0;
   }
   private ambLevel() {
-    return 0.5 * this.ambVol * (this.paused ? 0.3 : 1);
+    return 0.5 * this.ambVol * (this.paused ? 0.3 : 1) * (this.speaking ? 0.5 : 1);
+  }
+
+  /**
+   * Speak a line of the campaign's narration (public/voice/<id>.mp3). Resolves true once it plays;
+   * false when the recording is not there, another line is speaking (unless `interrupt`), or the
+   * browser wants a click first (call again from one).
+   */
+  say(id: string, o: { interrupt?: boolean } = {}): Promise<boolean> {
+    const ctx = this.ctx;
+    if (!ctx || this.voiceVol <= 0 || this.missingVoice.has(id)) return Promise.resolve(false);
+    if (this.voiceEl) { if (!o.interrupt) return Promise.resolve(false); this.stopVoice(); }
+    const el = document.createElement('audio');
+    el.preload = 'auto';
+    el.src = `${VOICE_DIR}${id}${VOICE_EXT}`;
+    const src = ctx.createMediaElementSource(el);
+    src.connect(this.voiceGain);
+    const done = () => {
+      if (this.voiceEl !== el) return;
+      this.voiceEl = null;
+      this.speaking = false;
+      this.ramp(this.musicGain, this.musicLevel());
+      this.ramp(this.amb, this.ambLevel());
+      src.disconnect();
+    };
+    el.onplaying = () => { this.speaking = true; this.ramp(this.musicGain, this.musicLevel()); this.ramp(this.amb, this.ambLevel()); };
+    el.onended = done;
+    el.onerror = () => { this.missingVoice.add(id); done(); };
+    this.voiceEl = el;
+    if (ctx.state === 'suspended') void ctx.resume();
+    return el.play().then(() => true, () => { done(); return false; });
+  }
+  /** Cut the narration short (a new mission, the title screen). */
+  stopVoice() {
+    const el = this.voiceEl;
+    if (!el) return;
+    this.voiceEl = null;
+    this.speaking = false;
+    el.pause();
+    el.src = '';
+    this.ramp(this.musicGain, this.musicLevel());
+    this.ramp(this.amb, this.ambLevel());
+  }
+  setVoice(v: number) {
+    this.voiceVol = v;
+    this.ramp(this.voiceGain, v);
+    if (v <= 0) this.stopVoice();
   }
   private ramp(g: GainNode | undefined, v: number) {
     if (this.ctx && g) g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);

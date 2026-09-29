@@ -7,9 +7,11 @@ export interface MenuOptions {
   size: number;
   players: number;
   ai: number;
+  /** the campaign mission being played (missions.ts), none in free play */
+  mission?: string;
 }
 
-export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void) {
+export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void, onCampaign?: () => void) {
   const el = document.createElement('div');
   el.className = 'menu';
   el.innerHTML = `
@@ -34,7 +36,8 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
           </div></div>
         <div class="field"><label>World seed</label>
           <div class="seedrow"><input type="number" value="${opts.seed}" id="seed"><button id="dice" title="Random world">🎲</button></div></div>
-        <button class="wide primary big" id="start">Found your settlement</button>
+        <button class="wide primary big" id="campaign" title="Fifteen missions that teach the game one lesson at a time, told by your quaestor">Campaign<small class="camp-sub"></small></button>
+        <button class="wide big" id="start">Free play</button>
         <button class="wide" id="friend" title="Two players over the internet: one hosts, the other joins with a code">Play with a friend</button>
         <div class="row"><button class="wide" id="help">How to play</button><button class="wide" id="load">Load game</button><button class="wide" id="options">Options</button></div>
       </div>
@@ -58,7 +61,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   parent.appendChild(el);
   const cur = { ...opts };
   el.querySelectorAll<HTMLElement>('.seg').forEach((seg) => {
-    const k = seg.dataset.k as keyof MenuOptions;
+    const k = seg.dataset.k as 'size' | 'players' | 'ai';
     seg.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
       if (Number(b.dataset.v) === cur[k]) b.classList.add('on');
       b.onclick = () => {
@@ -74,10 +77,12 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   el.querySelector<HTMLButtonElement>('#dice')!.onclick = () => { cur.seed = Math.floor(Math.random() * 99999) + 1; onRegenerate(cur); };
   el.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     opts.ai = cur.ai;
+    delete opts.mission;
     el.classList.add('leaving');
     setTimeout(() => el.remove(), 700);
     onStart();
   };
+  el.querySelector<HTMLButtonElement>('#campaign')!.onclick = () => onCampaign?.();
   const help = el.querySelector<HTMLElement>('#helpbox')!;
   el.querySelector<HTMLButtonElement>('#help')!.onclick = () => help.classList.remove('hidden');
   el.querySelector<HTMLButtonElement>('#helpclose')!.onclick = () => help.classList.add('hidden');
@@ -89,13 +94,17 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     if (el.querySelector('.continue')) return;
     const box = document.createElement('div');
     box.className = 'continue';
-    box.innerHTML = `<button class="wide primary big">Continue your reign</button><small></small>`;
+    box.innerHTML = `<button class="wide primary big">${meta.mission ? 'Continue the campaign' : 'Continue your reign'}</button><small></small>`;
     box.querySelector('small')!.textContent = saveSubtitle(meta);
     const b = box.querySelector('button')!;
     b.onclick = () => { b.disabled = true; go(); };
     el.querySelector('.menu-card')!.prepend(box);
-    el.querySelector('#start')!.classList.remove('primary');
-    el.querySelector('#start')!.textContent = 'Found a new settlement';
+    el.querySelector('#campaign')!.classList.remove('primary');
+  };
+  /** The line under the Campaign button: what comes next. */
+  const setCampaignSub = (text: string) => {
+    const s = el.querySelector<HTMLElement>('#campaign .camp-sub');
+    if (s) s.textContent = text;
   };
   /** A line at the foot of the card, with a link-like button. */
   const note = (text: string, link: string, go: () => void) => {
@@ -109,7 +118,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     p.appendChild(b);
     el.querySelector('.menu-card')!.appendChild(p);
   };
-  return { el, cur, offerContinue, note };
+  return { el, cur, offerContinue, note, setCampaignSub };
 }
 
 export function showLoading(parent: HTMLElement, text: string) {

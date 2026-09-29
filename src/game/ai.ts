@@ -11,6 +11,7 @@ import { afloat, bombardSpot, orderShipBombard, orderShipHome, tradeShipsOf, war
 import { ORDER_STEP, placeOrder } from './trade';
 import { availableAt } from './economy';
 import { DX8, DY8 } from './world';
+import { truced } from './campaign';
 import type { Building } from './types';
 import { cos, hypot, sin, sq } from '../core/fmath';
 
@@ -35,9 +36,11 @@ interface Want { type: BuildingType; n: number; cond?: () => boolean; }
 
 export class AIController {
   private t: number;
-  private attackT: number;
+  attackT: number;
   private expandT = 0;
   private aggressive = false;
+  /** builder: a campaign rival that raises its realm and defends it but never marches (campaign.ts) */
+  mode: 'ai' | 'builder' = 'ai';
   constructor(private g: Game, public p: number, public level: number) {
     this.t = 2 + p;
     this.attackT = [600, 420, 280][level] ?? 420;
@@ -191,7 +194,7 @@ export class AIController {
     // expansion pressure (towards the enemy once an army exists)
     if (this.expandT <= 0 && stock.board >= 4 && stock.stone >= 2) {
       const army = this.enemyPressure();
-      this.aggressive = army >= [16, 12, 8][this.level];
+      this.aggressive = this.mode === 'ai' && army >= [16, 12, 8][this.level];
       this.expandT = (this.aggressive ? [150, 90, 60] : [240, 160, 100])[this.level] ?? 160;
       // out of rocks and no quarry possible: grow towards the nearest outcrops first
       const stoneStarved = stock.stone < 8 && this.stonesInTerritory() < 3;
@@ -393,7 +396,7 @@ export class AIController {
     if (!navy.length) return;
     // battered ships go home to mend
     for (const sh of navy) if (sh.hp < sh.maxHp * 0.4 && sh.state !== 'guard') orderShipHome(g, this.p, [sh.id]);
-    if (g.time < 1800) return;
+    if (g.time < 1800 || this.mode === 'builder' || truced(g)) return;
     const idle = navy.filter((sh) => sh.state === 'guard' && !sh.target && sh.hp > sh.maxHp * 0.75);
     if (!idle.length || navy.some((sh) => sh.state === 'bombard')) return;
     // the weakest enemy stronghold by the water, nearest first
@@ -765,6 +768,8 @@ export class AIController {
 
   private attackStep() {
     const g = this.g;
+    // a campaign's builder never marches; a truce holds every computer kingdom back for a while
+    if (this.mode === 'builder' || truced(g)) return;
     let best: Building | null = null, bs = -Infinity;
     for (const b of g.buildings.values()) {
       if (b.owner === this.p || !b.def.military || b.state !== 'done' || !b.occupied) continue;

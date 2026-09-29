@@ -74,7 +74,8 @@ export function recomputeTerritory(g: Game) {
 }
 
 // ------------------------------------------------------------------ dispatch
-export function updateMilitary(g: Game, owner: number) {
+/** `dormant`: a campaign rival that keeps its garrisons where they stand (no reinforcements, no reshuffling); they still defend. */
+export function updateMilitary(g: Game, owner: number, dormant = false) {
   const p = g.players[owner];
   // morale from gold
   const st = g.totalStock(owner);
@@ -102,7 +103,7 @@ export function updateMilitary(g: Game, owner: number) {
   }
   const hq = g.buildings.get(p.hq);
   for (const b of mil) {
-    if (b.type === 'hq') continue;
+    if (b.type === 'hq' || dormant) continue;
     let need = b.desiredSoldiers - b.garrison.length - b.soldiersIncoming;
     const r = regB(g, b);
     while (need > 0) {

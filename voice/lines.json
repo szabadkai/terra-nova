@@ -1,0 +1,16 @@
+{
+  "quaestor.noted.1": "Noted.",
+  "quaestor.noted.2": "Counted.",
+  "quaestor.noted.3": "Good. Next.",
+  "quaestor.noted.4": "I have written it down.",
+  "campaign.defeat": "The Senate will want a report. I will write that the province was well begun and the legate learned quickly. Try again; the coast is still there.",
+  "castra.brief": "Legate. The Senate has given you a legion’s worth of tools and a coastline nobody wanted. This is Terra Nova; that hill is your camp.\n\nRome was not built in a day, but it was built of boards and stone. So: a woodcutter for logs, a sawmill to make boards of them, a stonecutter for the rocks, and a forester, because woodcutters are thorough.\n\nI am Gaius Sestius, your quaestor. I count things. Give me something to count.",
+  "castra.debrief": "Fifty boards, forty stone. The Senate would call it a start. I call it a camp that will not run out of nails. Next: the men are sleeping under carts.",
+  "castra.tip.site": "A site. Diggers level it, carriers bring boards and stone, builders raise it. Click it to watch.",
+  "castra.tip.tool": "He took an axe from the store. Every trade needs its tool. The store has a few of each; a toolsmith makes more, later.",
+  "castra.tip.log": "A log on the pile. A carrier will fetch it to the sawmill. Nobody needs a road.",
+  "castra.tip.board": "Boards. Now you can build anything the Senate allows.",
+  "castra.tip.panel": "Click a building to see what it is doing. Its panel shows the worker, the goods and why it might be waiting.",
+  "castra.tip.camera": "Getting your bearings? The wheel zooms, right-drag moves the view, Option-drag or Shift + wheel turns it. Esc → Controls has the rest.",
+  "castra.tip.speed": "Waiting is for senators. The 2× button in the top bar speeds the sun. Nothing else changes."
+}

@@ -23,6 +23,9 @@ import { lodReady } from './render/lod';
 import { framePace } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, warmUp } from './ui/saveStore';
+import { missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
+import { markDone, progress, saveProgress } from './ui/campaignStore';
+import { showCampaignPage } from './ui/campaign';
 
 let canvas = document.getElementById('c') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui')!;
@@ -38,6 +41,8 @@ const opts: MenuOptions = {
   players: num('players', 2),
   ai: num('ai', 1),
 };
+/** the free-play settings while a campaign mission's own are in `opts`, to go back to */
+let freeOpts: MenuOptions = { ...opts };
 
 const audio = new Audio();
 applyAudioPrefs(audio);
@@ -87,6 +92,7 @@ function capture(): { data: SaveData; meta: SaveMeta } {
     speed: driver.pausedSpeed,
     objective: hud?.objectives.index ?? 0,
     groups: hud?.saveGroups(),
+    tips: hud?.saveTips(),
     trails: gr.trails.save(),
   };
   const meta = describe(game);
@@ -199,10 +205,12 @@ async function buildWorld(from?: SaveData) {
   state = 'menu';
   if (loaded) {
     game = loaded;
-    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel });
+    // (the mission too, or "Restart" after loading a mission's save would play its map as free play)
+    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel, mission: game.opts.mission });
+    if (!opts.mission) delete opts.mission;
     islands = game.opts.islands !== false;
   } else {
-    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0 });
+    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0, mission: net ? undefined : opts.mission });
   }
   driver = new Lockstep(game, net ? net.seats.map((s) => s.slot).sort((a, b) => a - b) : [game.local], net?.delay ?? 0);
   if (net && room) {
@@ -253,13 +261,15 @@ function showMainMenu() {
     menuEl = null;
     await buildWorld();
     showMainMenu();
-  }, () => openOptions(), () => openOptions('load'), () => openLobby());
+  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => openCampaign());
   menuEl = menu.el;
+  const next = nextMission(progress.done);
+  menu.setCampaignSub(next ? `Next: ${numeralOf(missionIndex(next.id))} · ${next.title}` : 'The province is yours');
   const chosen = graphicsChosen();
   if (chosen) menu.note(`${chosen}.`, 'Change', () => openOptions());
-  // the last game, if there is one, can be picked up where it was left
+  // the last game, if there is one, can be picked up where it was left (a mission already won is not offered again)
   getSummary(AUTO).then((sum) => {
-    if (sum && menuEl === menu.el) menu.offerContinue(sum.meta, () => { void resumeAuto(menu.el); });
+    if (sum && menuEl === menu.el && !(sum.meta.mission && sum.meta.won)) menu.offerContinue(sum.meta, () => { void resumeAuto(menu.el); });
   }).catch(() => { /* no saves */ });
 }
 
@@ -300,8 +310,9 @@ function openGameMenu(page?: 'graphics') {
   });
 }
 
-/** Play the same map again from the start. */
+/** Play the same map again from the start (the same mission, in the campaign). */
 async function restartMap() {
+  audio.stopVoice();
   await buildWorld();
   startGame();
 }
@@ -311,9 +322,53 @@ async function restart() {
   autosave();
   setResume(false);
   leaveRoom();
+  audio.stopVoice();
+  // a mission's settings give way to the free-play ones again
+  if (opts.mission) { Object.assign(opts, freeOpts); delete opts.mission; islands = params.get('islands') !== '0'; }
   opts.seed = Math.floor(Math.random() * 99999) + 1;
   await buildWorld();
   showMainMenu();
+}
+
+// ---------------------------------------------------------------- the campaign
+/** The mission's map and rules take the place of the menu's settings. */
+function applyMissionOpts(id: string) {
+  const m = missionById(id);
+  if (!m) return false;
+  if (!opts.mission) freeOpts = { ...opts };
+  Object.assign(opts, { seed: m.map.seed, size: m.map.size, players: m.map.players, ai: m.map.aiLevel, mission: id });
+  islands = m.map.islands !== false;
+  progress.current = id;
+  saveProgress();
+  return true;
+}
+
+async function startMission(id: string) {
+  if (!applyMissionOpts(id)) return;
+  audio.stopVoice();
+  leaveRoom();
+  uiRoot.querySelector('#campbox')?.remove();
+  menuEl?.remove();
+  menuEl = null;
+  await buildWorld();
+  startGame();
+}
+
+/** The mission list over the title screen. Its current mission picks up the autosave when that is where it was left. */
+function openCampaign() {
+  showCampaignPage(uiRoot, progress, (id) => {
+    void (async () => {
+      const sum = await getSummary(AUTO).catch(() => null);
+      if (sum?.meta.mission === id && !sum.meta.won && !progress.done[id] && menuEl) return resumeAuto(menuEl);
+      await startMission(id);
+    })();
+  });
+}
+
+function markMissionDone() {
+  if (!game.opts.mission) return;
+  markDone(game.opts.mission, game.time);
+  autosave();
 }
 
 // ---------------------------------------------------------------- playing with a friend
@@ -444,7 +499,9 @@ async function boot() {
   await lodReady;
   // a game that was being played when the page went away carries on (unless the URL asks for a new one)
   let resumed: SaveData | null = null;
-  if (wantsResume() && !params.has('play') && !params.has('seed')) {
+  // ?mission=<id> goes straight into a campaign mission (handy while working on one)
+  const devMission = params.has('mission') && applyMissionOpts(params.get('mission')!);
+  if (wantsResume() && !params.has('play') && !params.has('seed') && !devMission) {
     try {
       resumed = await getSave(AUTO);
       if (resumed) await buildWorld(resumed);
@@ -459,7 +516,7 @@ async function boot() {
   if (params.has('tod')) gr.sky.timeOfDay = num('tod', 0.4);
   if (params.has('season')) gr.seasons.phase = num('season', 0.3) % 1;
   if (resumed) startGame(resumed.ui ?? {});
-  else if (params.get('play') === '1') startGame();
+  else if (params.get('play') === '1' || devMission) startGame();
   else showMainMenu();
   requestAnimationFrame(loop);
 }
@@ -470,7 +527,8 @@ function startGame(resumed?: Record<string, unknown>) {
   menuEl = null;
   G.uFogOn.value = 1;
   gr.cam.cinematic = false;
-  game.ai.forEach((a) => (a.level = opts.ai));
+  // (a mission sets its rivals' levels itself)
+  if (!game.mission) game.ai.forEach((a) => (a.level = opts.ai));
   const view = resumed as { cam?: { x: number; z: number; dist: number; yaw: number; tilt?: number }; tod?: number; season?: number; speed?: number; objective?: number } | undefined;
   const hq = game.buildings.get(game.players[game.local].hq);
   if (view?.cam) {
@@ -492,22 +550,28 @@ function startGame(resumed?: Record<string, unknown>) {
     issue: (c) => driver.issue(c),
     isHost: () => !net || driver.humans[0] === game.local,
     restart: () => { void restart(); },
+    restartMap: () => { void restartMap(); },
+    nextMission: () => { const n = nextMission(progress.done); if (n) void startMission(n.id); else void restart(); },
     openMenu: (page) => openGameMenu(page),
   }, uiRoot);
-  gr.onEvent = (e) => hud?.onEvent(e);
+  gr.onEvent = (e) => { if (e.type === 'missionwon') markMissionDone(); hud?.onEvent(e); };
   (window as any).hud = hud;
   if (view) {
     hud.loadGroups((resumed as { groups?: unknown }).groups);
+    hud.loadTips((resumed as { tips?: unknown }).tips);
     hud.objectives.index = view.objective ?? 0;
     hud.objectives.render();
-    hud.message(`Welcome back, my liege — ${playTime(game.time)} into your reign.`, undefined, undefined, 'good');
+    if (game.mission) { if (game.time >= 1) hud.message(`Welcome back, legate — ${playTime(game.time)} into the mission.`, undefined, undefined, 'good'); }
+    else hud.message(`Welcome back, my liege — ${playTime(game.time)} into your reign.`, undefined, undefined, 'good');
   } else if (net) {
     driver.onEvent = (e) => hud?.netEvent(e);
     const others = net.seats.filter((s) => s.slot !== game.local).map((s) => game.players[s.slot].name);
     hud.message(`${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} in the game with you${net.local === 0 ? '; you set its pace' : '; the host sets its pace'}.`, undefined, undefined, 'good');
-  } else {
+  } else if (!game.mission) {
     hud.message('Welcome, my liege! Build woodcutters, a sawmill and a stonecutter to begin.', undefined, undefined, 'good');
   }
+  // a mission opens with the quaestor's briefing; the clock waits for Begin (a reload during it hears it again)
+  if (game.mission && !net && (!view || game.time < 1)) hud.showBriefing(() => { /* the clock runs once the briefing is gone (hud.modal holds it) */ });
   const chosen = graphicsChosen();
   if (chosen) hud.toast({ title: chosen, detail: 'Change them in the menu: Esc → Graphics.', action: { label: '🖼 Graphics', run: () => openGameMenu('graphics') }, ttl: 12 });
   try { audio.start(); } catch { /* needs a gesture */ }
@@ -543,6 +607,12 @@ function setupGlobalInput() {
     // F fills the screen on the title screen as well as in a game (never Cmd/Ctrl+F: that is find)
     if ((k === 'f' || k === 'F') && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) { void toggleImmersive(); return; }
     if (state !== 'play' || !hud) return;
+    if (hud.modal) {
+      // a briefing or debrief is up: Enter takes its main button, nothing else reaches the game
+      if (k === 'Enter' || k === ' ') { e.preventDefault(); hud.modal.querySelector<HTMLElement>('button.primary')?.click(); }
+      else if (k === 'Escape' || k === 'F10') e.preventDefault();
+      return;
+    }
     if (k === 'F10') { e.preventDefault(); openGameMenu(); return; }
     if (k === 'Escape') {
       if (hud.cancelMode()) { /* left the targeting mode */ }
@@ -847,7 +917,8 @@ function loop() {
   last = now;
   if (game && gr) {
     if (state === 'play') {
-      driver.hold = !!gameMenu;
+      // the Esc menu and a mission's briefing hold the game (alone; with a friend it goes on)
+      driver.hold = !!gameMenu || !!hud?.modal;
       const gdt = driver.pump(now) * TICK;
       gr.handleEvents(game.events.splice(0));
       gr.frame(dt, gdt);

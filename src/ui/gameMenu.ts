@@ -7,7 +7,8 @@ import type { GameRenderer, Quality, RenderSettings, Resolution } from '../rende
 import { framePace, type FrameCap } from '../render/framePace';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
-import { OBJECTIVES, type Objectives } from './objectives';
+import type { Objectives } from './objectives';
+import { missionIndex, numeralOf } from '../game/campaign';
 import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, defaultRender, detectGraphics, prefs, savePrefs } from './prefs';
 import { LEVELS, LEVEL_NAMES, levelText } from '../render/hardware';
 import type { WheelMode } from '../render/camera';
@@ -275,13 +276,15 @@ export class GameMenu {
     for (const gd of GOODS) produced += me.produced[gd];
     const kv = (k: string, v: string) => c.appendChild(h('div', 'kv', `<span>${k}</span><b>${v}</b>`));
     c.appendChild(h('h3', '', 'This game'));
+    const m = g.mission;
+    if (m) kv('Mission', `${numeralOf(missionIndex(m.id))} · ${m.title}`);
     kv('Map', `${MAP_SIZES[g.opts.size] ?? `${g.opts.size}²`} · seed ${g.opts.seed}`);
-    kv('Rivals', `${g.players.length - 1} · ${AI_LEVELS[level] ?? 'Normal'}`);
+    if (g.players.length > 1) kv('Rivals', `${g.players.length - 1} · ${AI_LEVELS[level] ?? 'Normal'}`);
     kv('Time played', clock(g.time));
     kv('Goods produced', String(produced));
     if (this.o.objectives) {
-      const ob = OBJECTIVES[this.o.objectives.index];
-      kv('Chronicle', ob ? `${ob.text}${ob.progress ? ` <small>${ob.progress(g)}</small>` : ''}` : 'Complete');
+      const ob = this.o.objectives.current;
+      kv(m ? 'Goal' : 'Chronicle', ob ? `${ob.text}${ob.progress ? ` <small>${ob.progress(g)}</small>` : ''}` : 'Complete');
     }
     c.appendChild(h('h3', '', 'Kingdoms'));
     for (const p of g.players) {
@@ -497,9 +500,11 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Music'));
     c.appendChild(this.toggle('Play music', a.soundtrack ? 'The soundtrack in order; N skips to the next track' : 'A generative lute over a drone', () => prefs.musicOn, (v) => { prefs.musicOn = v; apply(); }));
     c.appendChild(this.slider('Music volume', '', 0, 1, 0.01, () => prefs.music, (v) => { prefs.music = v; apply(); }, pct));
+    c.appendChild(h('h3', '', 'Narration'));
+    c.appendChild(this.slider('The quaestor', 'His briefings and tips in the campaign, when their recordings are there', 0, 1, 0.01, () => prefs.voice, (v) => { prefs.voice = v; apply(); }, pct, () => { void a.say('quaestor.noted.1', { interrupt: true }); }));
     this.resetButton(c, 'Reset sound to defaults', () => {
       const d = defaultPrefs();
-      Object.assign(prefs, { soundOn: d.soundOn, volume: d.volume, sfx: d.sfx, ambience: d.ambience, musicOn: d.musicOn, music: d.music });
+      Object.assign(prefs, { soundOn: d.soundOn, volume: d.volume, sfx: d.sfx, ambience: d.ambience, musicOn: d.musicOn, music: d.music, voice: d.voice });
       apply();
     });
   }
@@ -541,9 +546,10 @@ export class GameMenu {
 
   private renderConfirm(c: HTMLElement, page: 'restart' | 'quit') {
     const restart = page === 'restart';
+    const mission = !!this.o.game.mission;
     const box = h('div', 'gm-confirm', `
       <div class="crest">${restart ? '↻' : '⏏'}</div>
-      <p>${restart ? 'Start this map again from the beginning? The land, the seed and your rivals stay the same.' : 'Leave this game and return to the title screen?'}</p>
+      <p>${restart ? mission ? 'Start this mission again from the beginning?' : 'Start this map again from the beginning? The land, the seed and your rivals stay the same.' : 'Leave this game and return to the title screen?'}</p>
       <p class="muted">${restart ? 'The autosave is replaced by the new start — save the game first to keep it.' : 'Your game stays in the autosave; continue it from the title screen.'}</p>
       <div class="row"><button class="wide" data-a="no">Keep playing</button><button class="wide danger" data-a="yes">${restart ? 'Restart map' : 'Quit to title'}</button></div>`);
     c.appendChild(box);

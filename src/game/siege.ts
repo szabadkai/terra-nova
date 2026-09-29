@@ -170,7 +170,7 @@ export function siegeHit(g: Game, p: Projectile) {
     return;
   }
   b.underAttackT = Math.max(b.underAttackT, 12);
-  g.emit({ type: 'siegehit', b: b.id, x: p.tx, z: p.tz, owner: p.owner });
+  g.emit({ type: 'siegehit', b: b.id, x: p.tx, z: p.tz, owner: p.owner, kind: p.by ? 'ship' : 'catapult' });
   if (b.garrison.length) {
     // the stone comes through the roof: one of the garrison falls
     const id = b.garrison[b.garrison.length - 1];
