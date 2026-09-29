@@ -50,17 +50,31 @@ export class Objectives {
   index = 0;
   private t = 0;
   private open = false;
+  /** the panel is put away entirely (the top bar's scroll button brings it back); remembered between games */
+  hidden = false;
   /**
    * `goals`: the chain to follow (a mission puts its optional goals last: they never hold it up).
    * `onFocus`: what "Show me" does; without it no button is shown. `label`: the panel's heading.
    */
   constructor(private game: Game, parent: HTMLElement, readonly goals: Goal[], private onComplete: (goal: Goal) => void,
-    private onFocus?: (f: FocusSpec) => void, private label = 'Chronicle') {
+    private onFocus?: (f: FocusSpec) => void, readonly label = 'Chronicle') {
     this.el = document.createElement('div');
     this.el.className = 'panel objectives';
     parent.appendChild(this.el);
     this.el.onclick = () => { this.open = !this.open; this.render(); };
+    try { this.hidden = localStorage.getItem(this.key) === '1'; } catch { /* private window: shown */ }
+    this.el.classList.toggle('hidden', this.hidden);
     this.render();
+  }
+
+  private get key() {
+    return `terra-nova.hide-${this.goals === OBJECTIVES ? 'chronicle' : 'mission'}`;
+  }
+
+  setHidden(v: boolean) {
+    this.hidden = v;
+    this.el.classList.toggle('hidden', v);
+    try { localStorage.setItem(this.key, v ? '1' : '0'); } catch { /* not remembered */ }
   }
 
   /** The goal the panel points at, if any is left. */
@@ -101,17 +115,26 @@ export class Objectives {
     if (o && o.progress && p) p.textContent = o.progress(this.game);
   }
 
+  private wireClose() {
+    const x = this.el.querySelector<HTMLElement>('.oclose');
+    if (x) x.onclick = (e) => { e.stopPropagation(); this.setHidden(true); this.onToggle?.(); };
+  }
+
+  /** called when the panel is hidden or shown from inside it, so the top bar's button can follow */
+  onToggle?: () => void;
+
   render() {
     const o = this.goals[this.index];
     const required = this.required;
     const doneReq = Math.min(required, this.index);
     const pct = Math.round((doneReq / Math.max(1, required)) * 100);
-    const head = (text: string) => `<div class="ohead"><span class="crest-s">⚜</span><span class="olabel">${text}</span><span class="ochev">${this.open ? '▴' : '▾'}</span></div>`;
+    const head = (text: string) => `<div class="ohead"><span class="crest-s">⚜</span><span class="olabel">${text}</span><span class="ochev">${this.open ? '▴' : '▾'}</span><button class="oclose" type="button" title="Hide (the ${this.label.startsWith('Mission') ? 'goals' : 'chronicle'} button in the top bar brings it back)" aria-label="Hide">✕</button></div>`;
     const list = this.open
       ? `<ol class="olist">${this.goals.map((x, i) => `<li class="${i < this.index ? 'done' : i === this.index ? 'cur' : ''}${x.optional ? ' opt' : ''}">${x.text}${x.optional ? ' <small>(optional)</small>' : ''}</li>`).join('')}</ol>`
       : '';
     if (!o) {
       this.el.innerHTML = `${head(`${this.label} complete`)}${list}`;
+      this.wireClose();
       return;
     }
     const show = o.focus && this.onFocus ? '<button class="oshow" type="button">Show me</button>' : '';
@@ -122,6 +145,7 @@ export class Objectives {
       <div class="ohint">${o.hint}</div>${show}
       <div class="obar"><i style="width:${pct}%"></i></div>
       ${list}`;
+    this.wireClose();
     const btn = this.el.querySelector<HTMLElement>('.oshow');
     if (btn) btn.onclick = (e) => { e.stopPropagation(); this.onFocus?.(o.focus!); };
   }

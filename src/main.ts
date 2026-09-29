@@ -1,7 +1,7 @@
 import './style.css';
 import { Game, TICK } from './game/game';
 import { Lockstep, SPEEDS, TURN_S, type TurnPacket } from './net/lockstep';
-import { BUILD, GameRoom, cleanCode, newCode, type Seat, type StartMsg } from './net/room';
+import { BUILD, GameRoom, cleanCode, newCode, parseIce, type RoomOptions, type Seat, type StartMsg } from './net/room';
 import { Lobby } from './ui/lobby';
 import { GameRenderer } from './render/renderer';
 import { HUD } from './ui/hud';
@@ -22,10 +22,10 @@ import { G } from './render/shaderPatch';
 import { lodReady } from './render/lod';
 import { framePace } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
-import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, warmUp } from './ui/saveStore';
+import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, timeAgo, warmUp } from './ui/saveStore';
 import { missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
 import { markDone, progress, saveProgress } from './ui/campaignStore';
-import { showCampaignPage } from './ui/campaign';
+import { campaignPage } from './ui/campaign';
 
 let canvas = document.getElementById('c') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui')!;
@@ -62,9 +62,9 @@ let net: { seats: Seat[]; local: number; delay: number } | null = null;
 /** the other player's turn packets that came before this machine's game was built */
 let earlyTurns: { slot: number; pkt: TurnPacket }[] = [];
 let lobby: Lobby | null = null;
-/** the player the building and goods icons were drawn for (their banner colour), -1 none yet */
-let iconsFor = -1;
 let islands = params.get('islands') !== '0';
+/** `?norender=1`: the game, its interface and the network run, but nothing is drawn (for tests in a browser with no GPU) */
+const norender = params.has('norender');
 
 // ---------------------------------------------------------------- saving
 /** Set while a game is being played, so reloading the page picks it up again. */
@@ -154,7 +154,7 @@ async function loadSave(id: string) {
 
 async function loadGame(data: SaveData) {
   await buildWorld(data);
-  startGame(data.ui ?? {});
+  await play(data.ui ?? {});
 }
 
 async function exportSave() {
@@ -182,18 +182,61 @@ const saveHooks = {
   importFile: importSave,
 };
 
+// ---------------------------------------------------------------- the world
+/** worlds are shaped one after another, never two at once (the title screen's may still be in hand when a game is picked) */
+let worlds: Promise<unknown> = Promise.resolve();
+/** worlds queued or being shaped */
+let shaping = 0;
+/** the title screen's world while it waits its turn: settings changed again meanwhile need no second one */
+let titleQueued: Promise<void> | null = null;
+/** the title screen's canvas stays hidden until its world has been drawn, then fades in (see loop) */
+let unseen = false;
+
+function queueWorld(job: () => Promise<void>): Promise<void> {
+  shaping++;
+  const run = worlds.then(job).finally(() => { shaping--; });
+  worlds = run.catch(() => undefined);
+  return run;
+}
+
 /** Create (or re-create) the world in place — no page reloads, so it also works inside sandboxed frames. */
-async function buildWorld(from?: SaveData) {
+function buildWorld(from?: SaveData): Promise<void> {
+  // (the loading screen at once, while the title screen's world may still be being finished)
   const loading = showLoading(uiRoot, from ? 'Unrolling the map…' : 'Shaping the land…');
+  return queueWorld(() => shapeWorld(from, loading));
+}
+
+/**
+ * The title screen's world, shaped behind the menu (which is up already, and can be used meanwhile)
+ * and faded in once it has been drawn. What playing needs on top of it is prepared after, a slice
+ * a frame while the menu is read.
+ */
+function titleWorld(): Promise<void> {
+  if (titleQueued) return titleQueued;
+  const run = queueWorld(async () => {
+    titleQueued = null;
+    await shapeWorld(undefined, null);
+    titleView();
+    void prepare().done.catch(() => undefined);
+  });
+  titleQueued = run;
+  return run;
+}
+
+/** With no `loading` screen, for the title screen, which stays up over its world. */
+async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | null) {
+  const behind = !loading;
   await new Promise((r) => setTimeout(r, 30));
   let loaded: Game | null = null;
   if (from) {
     // a save that fails to load leaves the current world as it was
-    try { loaded = restore(from); } catch (e) { loading.remove(); throw e; }
+    try { loaded = restore(from); } catch (e) { loading?.remove(); throw e; }
   }
   gameMenu?.close();
-  menuEl?.remove();
-  menuEl = null;
+  if (!behind) {
+    menuEl?.remove();
+    menuEl = null;
+  }
   if (gr) {
     gr.dispose();
     const fresh = document.createElement('canvas');
@@ -201,6 +244,8 @@ async function buildWorld(from?: SaveData) {
     canvas.replaceWith(fresh);
     canvas = fresh;
   }
+  unseen = behind;
+  canvas.classList.toggle('unseen', behind);
   if (hud) { hud.root.remove(); hud = null; }
   state = 'menu';
   if (loaded) {
@@ -223,14 +268,14 @@ async function buildWorld(from?: SaveData) {
   applyRenderPrefs(gr);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
   bindCanvas(canvas);
-  if (iconsFor !== game.local) { generateIcons(game.local); iconsFor = game.local; }
   (window as any).game = game;
   (window as any).gr = gr;
   (window as any).driver = driver;
-  await gr.warmUp();
+  // the shaders for what is in view now (everything else: prepare)
+  if (!norender) await gr.warmScene();
   // the first run in this browser: the graphics are picked for the machine, once
-  if (firstRun && !prefs.hw.level) {
-    const text = loading.lastElementChild;
+  if (firstRun && !prefs.hw.level && !norender) {
+    const text = loading?.lastElementChild;
     if (text) text.textContent = 'Fitting the graphics to this machine…';
     await new Promise((r) => setTimeout(r, 30));
     const d = detectGraphics(gr, game);
@@ -238,7 +283,71 @@ async function buildWorld(from?: SaveData) {
     savePrefs();
     console.info(`Graphics: ${levelText(d.level, d.ao).toLowerCase()} for ${d.guess.gpu.label}${d.timed.length ? ` (timed ${d.timed.map(([q, ms, ao]) => `${q}${ao ? ' + AO' : ''} ${ms.toFixed(1)} ms`).join(', ')})` : ''}`);
   }
-  loading.remove();
+  loading?.remove();
+}
+
+/** What playing needs and the title screen does not, for the world `gr` draws (see prepare). */
+let prep: { gr: GameRenderer; done: Promise<void>; over: boolean } | null = null;
+/** set while a game waits for its preparations, behind the loading screen: they run flat out */
+let hurry = false;
+/** the building and goods icons being drawn, or drawn, and in whose colours */
+let icons: { owner: number; done: Promise<void> } | null = null;
+
+/** A turn of the event loop, without the few milliseconds a timer takes. */
+const nextTask = () => new Promise<void>((r) => {
+  const c = new MessageChannel();
+  c.port1.onmessage = () => r();
+  c.port2.postMessage(0);
+});
+/** Between two slices of the preparations: the next frame of the title screen (none in a hidden tab, which waits), or a turn of the event loop in a hurry. */
+const slice = () => (hurry ? nextTask() : new Promise<void>((r) => requestAnimationFrame(() => void nextTask().then(r))));
+
+/**
+ * The icons in the local player's colours for the interface, and every shader the game can come to
+ * show (GameRenderer.warmUp): some seconds of work, which the title screen does not need, so it is
+ * done there in slices between its frames. Started once for each world.
+ */
+function prepare() {
+  if (prep?.gr !== gr) {
+    const g = gr, owner = game.local;
+    const p = { gr: g, over: false, done: Promise.resolve() };
+    p.done = (async () => {
+      // (after a frame: the world is drawn first)
+      await slice();
+      await iconsIn(owner);
+      if (!norender) await g.warmUp(slice);
+    })().finally(() => { p.over = true; });
+    prep = p;
+  }
+  return prep;
+}
+
+/** The icons in `owner`'s colours: drawn once, after any others being drawn have stopped. */
+function iconsIn(owner: number): Promise<void> {
+  if (icons?.owner !== owner) {
+    const before = icons?.done ?? Promise.resolve();
+    const mine: { owner: number; done: Promise<void> } = { owner, done: before };
+    mine.done = before.catch(() => undefined).then(() => generateIcons(owner, slice, () => icons !== mine));
+    icons = mine;
+  }
+  return icons.done;
+}
+
+/** Start playing the world that was built once it has everything it needs, behind the loading screen while it has not. */
+async function play(resumed?: Record<string, unknown>) {
+  let loading: HTMLElement | null = null;
+  if (shaping || !prep || prep.gr !== gr || !prep.over) {
+    hurry = true;
+    loading = showLoading(uiRoot, shaping ? 'Shaping the land…' : 'Raising the buildings…');
+  }
+  try {
+    await worlds;
+    await prepare().done.catch((e) => console.warn('Could not prepare everything for the game:', e));
+  } finally {
+    hurry = false;
+    loading?.remove();
+  }
+  startGame(resumed);
 }
 
 /** Tell the player once what the detection chose: on the title screen, or in the first game. */
@@ -249,28 +358,41 @@ function graphicsChosen() {
   return `Graphics set to ${levelText(prefs.hw.level, prefs.hw.ao)} for this machine`;
 }
 
+/** the title screen's menu, while it is up */
+let titleMenu: ReturnType<typeof showMenu> | null = null;
+
+/** The title screen's menu. Its world may still be being shaped behind it (see titleWorld). */
 function showMainMenu() {
-  G.uFogOn.value = 0;
-  gr.cam.cinematic = true;
-  gr.cam.zoomTo(46, true);
-  gr.sky.timeOfDay = params.has('tod') ? num('tod', 0.62) : 0.62;
   menuEl?.remove();
-  const menu = showMenu(uiRoot, opts, () => startGame(), async (o) => {
+  const menu = showMenu(uiRoot, opts, () => { void play(); }, (o) => {
     Object.assign(opts, o);
-    menuEl?.remove();
-    menuEl = null;
-    await buildWorld();
-    showMainMenu();
-  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => openCampaign());
+    void titleWorld();
+  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => { void openCampaign(); });
   menuEl = menu.el;
+  titleMenu = menu;
   const next = nextMission(progress.done);
   menu.setCampaignSub(next ? `Next: ${numeralOf(missionIndex(next.id))} · ${next.title}` : 'The province is yours');
-  const chosen = graphicsChosen();
-  if (chosen) menu.note(`${chosen}.`, 'Change', () => openOptions());
+  graphicsNote();
   // the last game, if there is one, can be picked up where it was left (a mission already won is not offered again)
   getSummary(AUTO).then((sum) => {
     if (sum && menuEl === menu.el && !(sum.meta.mission && sum.meta.won)) menu.offerContinue(sum.meta, () => { void resumeAuto(menu.el); });
   }).catch(() => { /* no saves */ });
+}
+
+/** The title screen's view of its world: the camera circling high above, no fog of war. */
+function titleView() {
+  G.uFogOn.value = 0;
+  gr.cam.cinematic = true;
+  gr.cam.zoomTo(46, true);
+  gr.sky.timeOfDay = params.has('tod') ? num('tod', 0.62) : 0.62;
+  graphicsNote();
+}
+
+/** What the first run's detection chose, said on the title screen (once there is a choice to say). */
+function graphicsNote() {
+  if (!titleMenu || menuEl !== titleMenu.el) return;
+  const chosen = graphicsChosen();
+  if (chosen) titleMenu.note(`${chosen}.`, 'Change', () => openOptions());
 }
 
 async function resumeAuto(from: HTMLElement) {
@@ -282,7 +404,8 @@ async function resumeAuto(from: HTMLElement) {
 }
 
 function showMenuError(menu: HTMLElement, e: unknown) {
-  const card = menu.querySelector('.menu-card');
+  // (on the page that is up, where it keeps its errors, or on the start)
+  const card = menu.querySelector('.tm-page [data-err]') ?? menu.querySelector('.tm-page .tm-body') ?? menu.querySelector('.menu-card');
   card?.querySelector('.menu-err')?.remove();
   const p = document.createElement('p');
   p.className = 'menu-err';
@@ -293,7 +416,11 @@ function showMenuError(menu: HTMLElement, e: unknown) {
 /** Settings (and saved games) over the title screen. */
 function openOptions(page?: 'load') {
   if (gameMenu) return;
-  gameMenu = new GameMenu(uiRoot, { game, gr, audio, inGame: false, page, saves: saveHooks, onClose: () => { gameMenu = null; } });
+  // (the graphics settings show on the world behind, which may still be being shaped)
+  void worlds.then(() => {
+    if (gameMenu || state !== 'menu' || !gr) return;
+    gameMenu = new GameMenu(uiRoot, { game, gr, audio, inGame: false, page, saves: saveHooks, onClose: () => { gameMenu = null; } });
+  });
 }
 
 /** The Esc menu: pauses the game until it is closed. */
@@ -314,11 +441,12 @@ function openGameMenu(page?: 'graphics') {
 async function restartMap() {
   audio.stopVoice();
   await buildWorld();
-  startGame();
+  await play();
 }
 
-/** Back to the title screen. The game stays in the autosave slot, to be continued from there. */
+/** Back to the title screen (a mission's player to the campaign's page). The game stays in the autosave slot, to be continued from there. */
 async function restart() {
+  const fromMission = !!opts.mission;
   autosave();
   setResume(false);
   leaveRoom();
@@ -326,8 +454,13 @@ async function restart() {
   // a mission's settings give way to the free-play ones again
   if (opts.mission) { Object.assign(opts, freeOpts); delete opts.mission; islands = params.get('islands') !== '0'; }
   opts.seed = Math.floor(Math.random() * 99999) + 1;
-  await buildWorld();
+  // the title screen at once, a new world shaped behind it
+  gameMenu?.close();
+  if (hud) { hud.root.remove(); hud = null; }
+  state = 'menu';
   showMainMenu();
+  if (fromMission) void openCampaign();
+  await titleWorld();
 }
 
 // ---------------------------------------------------------------- the campaign
@@ -347,22 +480,24 @@ async function startMission(id: string) {
   if (!applyMissionOpts(id)) return;
   audio.stopVoice();
   leaveRoom();
-  uiRoot.querySelector('#campbox')?.remove();
   menuEl?.remove();
   menuEl = null;
   await buildWorld();
-  startGame();
+  await play();
 }
 
-/** The mission list over the title screen. Its current mission picks up the autosave when that is where it was left. */
-function openCampaign() {
-  showCampaignPage(uiRoot, progress, (id) => {
-    void (async () => {
-      const sum = await getSummary(AUTO).catch(() => null);
-      if (sum?.meta.mission === id && !sum.meta.won && !progress.done[id] && menuEl) return resumeAuto(menuEl);
-      await startMission(id);
-    })();
-  });
+/** The campaign's page of the title screen. A mission the autosave holds, still being played, can be continued there. */
+async function openCampaign() {
+  const menu = titleMenu;
+  if (!menu || menuEl !== menu.el) return;
+  const sum = await getSummary(AUTO).catch(() => null);
+  if (menuEl !== menu.el) return;
+  const saved = sum?.meta.mission && !sum.meta.won ? { id: sum.meta.mission, line: `${playTime(sum.meta.time)} played · saved ${timeAgo(sum.meta.savedAt)}` } : undefined;
+  menu.open(campaignPage(progress, {
+    saved,
+    start: (id) => startMission(id),
+    resume: () => resumeAuto(menu.el),
+  }));
 }
 
 function markMissionDone() {
@@ -395,9 +530,18 @@ function openLobby() {
 /** The game's options as the host has them set on the title screen (at least two kingdoms, for the two people). */
 const hostedOpts = () => ({ size: opts.size, seed: opts.seed, players: Math.max(2, opts.players), aiLevel: opts.ai, islands });
 
+/** The URL can name the STUN/TURN servers and Nostr relays to use (`?ice=stun:host:3478,turn:user:pass@host:3478&icepolicy=relay&relays=wss://...`), for tests of the network. */
+function roomOptions(): RoomOptions {
+  const o: RoomOptions = {};
+  if (params.has('ice')) o.ice = parseIce(params.get('ice')!);
+  if (params.get('icepolicy') === 'relay') o.policy = 'relay';
+  if (params.has('relays')) o.relays = params.get('relays')!.split(',').map((s) => s.trim()).filter(Boolean);
+  return o;
+}
+
 /** Join the room `code` names: the turn packets go to the driver once this machine's game is built, and wait until then. */
 function openRoom(code: string): GameRoom {
-  const r = new GameRoom(code);
+  const r = new GameRoom(code, roomOptions());
   room = r;
   r.onError = (text) => lobby?.status(`The relays could not be reached: ${text}`, true);
   r.onTurn = (peer, pkt) => {
@@ -417,15 +561,17 @@ function peerLeft(slot: number) {
 
 /** the seats of the game this machine hosts: the host first, the first friend to arrive second */
 let seats: Seat[] = [];
-function hostGame() {
-  const r = openRoom(newCode());
+/** `code`: a test's own room code (`?host=CODE`); with `?autostart`, the game starts as soon as the friend is seated. */
+function hostGame(code = newCode()) {
+  const r = openRoom(code);
   seats = [{ peer: r.me, slot: 0 }];
-  lobby?.showRoom(r.code, true);
+  lobby?.showRoom(r.code, true, `${location.origin}${location.pathname}?join=${r.code}`);
   const publish = () => {
     lobby?.setSeats(seats.map((s) => ({ slot: s.slot, who: s.peer === r.me ? 'you, the host' : 'your friend' })), hostedOpts().players, opts.ai);
     lobby?.canStart(seats.length >= 2);
     lobby?.status(seats.length >= 2 ? 'Your friend is here. Start when you are ready.' : 'Waiting for your friend to join with the code…');
     r.sendLobby({ opts: hostedOpts(), seats, host: r.me, build: BUILD });
+    if (seats.length >= 2 && params.has('autostart') && !net) void startHosted();
   };
   publish();
   r.onHello = (peer, build) => {
@@ -488,20 +634,33 @@ async function startNetGame(s: StartMsg) {
   lobby?.remove();
   lobby = null;
   await buildWorld();
-  startGame();
+  await play();
+  // how the game reaches the other machine, once the connection has settled
+  setTimeout(() => void r.stats().then((st) => {
+    for (const p of st) {
+      const seat = s.seats.find((x) => x.peer === p.peer);
+      const name = seat ? game.players[seat.slot]?.name : p.peer;
+      const how = p.local === 'relay' || p.remote === 'relay' ? 'through a relay' : p.local === 'host' && p.remote === 'host' ? 'directly' : 'through the NATs';
+      console.info(`Connected to ${name} ${how} (${p.local} ↔ ${p.remote}${p.rtt !== null ? `, ${p.rtt} ms round trip` : ''}, input delay ${s.delay} turns)`);
+      hud?.message(`Connected to ${name} ${how}${p.rtt !== null ? `, ${p.rtt} ms round trip` : ''}`, undefined, undefined, 'good');
+    }
+  }), 4000);
 }
 
 async function boot() {
-  // the display's refresh rate, read off a few empty animation frames before anything heavy runs
-  await framePace.probe();
-  void warmUp();
-  // models are simplified for the distance as the world is built
-  await lodReady;
-  // a game that was being played when the page went away carries on (unless the URL asks for a new one)
-  let resumed: SaveData | null = null;
   // ?mission=<id> goes straight into a campaign mission (handy while working on one)
   const devMission = params.has('mission') && applyMissionOpts(params.get('mission')!);
-  if (wantsResume() && !params.has('play') && !params.has('seed') && !devMission) {
+  // a game that was being played when the page went away carries on (unless the URL asks for a new one)
+  const resume = wantsResume() && !params.has('play') && !params.has('seed') && !devMission;
+  setupGlobalInput();
+  (window as any).netStats = () => room?.stats();
+  // every world waits for the display's refresh rate, read off a few animation frames before anything
+  // heavy runs, and for the simplifier that makes the models' copies for the distance
+  worlds = framePace.probe().then(() => { void warmUp(); return lodReady; });
+  requestAnimationFrame(loop);
+  if (!resume && params.get('play') !== '1' && !devMission) return title();
+  let resumed: SaveData | null = null;
+  if (resume) {
     try {
       resumed = await getSave(AUTO);
       if (resumed) await buildWorld(resumed);
@@ -511,14 +670,41 @@ async function boot() {
       setResume(false);
     }
   }
-  if (!resumed) await buildWorld();
-  setupGlobalInput();
+  if (resumed) {
+    viewParams();
+    await play(resumed.ui ?? {});
+  } else if (!resume) {
+    await buildWorld();
+    viewParams();
+    await play();
+  } else {
+    // (no game to resume after all)
+    await title();
+  }
+}
+
+/** The page opens on the title screen, at once: nothing on it waits for the world it looks out on, which is shaped behind it. */
+async function title() {
+  showMainMenu();
+  // (it fades in with its lettering, or without it if the fonts take long)
+  const m = menuEl!;
+  m.classList.add('waiting');
+  void m.offsetWidth;
+  void Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 600))]).then(() => m.classList.remove('waiting'));
+  if (params.has('join') || params.has('host')) {
+    // an invitation link (?join=CODE), or a test hosting a room of its own naming (?host=CODE)
+    openLobby();
+    if (params.has('host')) hostGame(cleanCode(params.get('host')!) || newCode());
+    else joinGame(params.get('join')!);
+  }
+  await titleWorld();
+  viewParams();
+}
+
+/** `?tod=` and `?season=` set the time of day and the season of the world the page opens on. */
+function viewParams() {
   if (params.has('tod')) gr.sky.timeOfDay = num('tod', 0.4);
   if (params.has('season')) gr.seasons.phase = num('season', 0.3) % 1;
-  if (resumed) startGame(resumed.ui ?? {});
-  else if (params.get('play') === '1' || devMission) startGame();
-  else showMainMenu();
-  requestAnimationFrame(loop);
 }
 
 /** Start playing the world that was built, fresh or (with `resumed`) from a save's view. */
@@ -915,13 +1101,14 @@ function loop() {
   if (!framePace.due(now)) { requestAnimationFrame(loop); return; }
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (game && gr) {
+  // (nothing drawn while a world is being shaped: it is not all there yet)
+  if (game && gr && !shaping) {
     if (state === 'play') {
       // the Esc menu and a mission's briefing hold the game (alone; with a friend it goes on)
       driver.hold = !!gameMenu || !!hud?.modal;
       const gdt = driver.pump(now) * TICK;
       gr.handleEvents(game.events.splice(0));
-      gr.frame(dt, gdt);
+      if (!norender) gr.frame(dt, gdt);
       if (!gameMenu) hud?.update(dt);
       // the world moves under a resting pointer too: soldiers walk by, the view scrolls
       if (pointer.inside && performance.now() - pointer.at > 120) refreshHover();
@@ -932,7 +1119,13 @@ function loop() {
       }
     } else {
       game.events.length = 0;
-      gr.frame(dt, dt * 0.3);
+      // (not while a game waits for its preparations behind the loading screen: they go faster)
+      if (!norender && !hurry) gr.frame(dt, dt * 0.3);
+    }
+    // the title screen's world shows once it has been drawn
+    if (unseen && !hurry) {
+      unseen = false;
+      canvas.classList.remove('unseen');
     }
     updateCursor();
     audio.setListener(gr.cam.target.x, gr.cam.target.z, gr.cam.dist);

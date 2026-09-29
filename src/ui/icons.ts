@@ -9,7 +9,11 @@ import { G } from '../render/shaderPatch';
 export const buildingIcons = new Map<string, string>();
 export const goodIcons = new Map<Good, string>();
 
-export function generateIcons(owner: number) {
+/**
+ * Draw the icons in `owner`'s colours, one at a time with a `pause` after each (the first drawing of
+ * each building builds its model too, which takes a while), until they are all done or `cancelled`.
+ */
+export async function generateIcons(owner: number, pause: () => Promise<void> = () => Promise.resolve(), cancelled: () => boolean = () => false) {
   const size = 144;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -27,13 +31,11 @@ export function generateIcons(owner: number) {
   scene.add(sun);
   scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x6a5a40, 1.3));
   const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-  const fogWas = G.uFogOn.value, lightsWas = G.uLightCount.value, nightWas = G.uNight.value;
-  G.uFogOn.value = 0;
-  G.uGrime.value = 0;
-  G.uLightCount.value = 0;
-  G.uNight.value = 0;
 
-  const shoot = (obj: THREE.Object3D, key: string, map: Map<any, string>, dist = 1) => {
+  const shoot = async (obj: THREE.Object3D, key: string, map: Map<any, string>, dist = 1) => {
+    // (its shaders first, compiled in parallel where the browser can, so the drawing does not wait on them)
+    await r.compileAsync(obj, cam, scene);
+    if (cancelled()) return;
     scene.add(obj);
     const box = new THREE.Box3().setFromObject(obj);
     const c = box.getCenter(new THREE.Vector3());
@@ -42,26 +44,40 @@ export function generateIcons(owner: number) {
     const d = rad / Math.tan((cam.fov * Math.PI) / 360) * 1.05;
     cam.position.set(c.x + d * 0.42, c.y + d * 0.55, c.z + d * 0.72);
     cam.lookAt(c);
-    r.render(scene, cam);
+    // no fog, grime, lamps or night on the icons; the uniforms are shared with the world, which is
+    // drawn between two icons, so they are put back at once
+    const was = [G.uFogOn.value, G.uGrime.value, G.uLightCount.value, G.uNight.value];
+    G.uFogOn.value = 0;
+    G.uGrime.value = 0;
+    G.uLightCount.value = 0;
+    G.uNight.value = 0;
+    try {
+      r.render(scene, cam);
+    } finally {
+      [G.uFogOn.value, G.uGrime.value, G.uLightCount.value, G.uNight.value] = was;
+    }
     map.set(key, canvas.toDataURL('image/png'));
     scene.remove(obj);
   };
 
-  for (const t of Object.keys(BUILDINGS) as BuildingType[]) {
-    const g = buildingBuilder(t, owner).build((k) => getMaterial(k));
-    shoot(g, t, buildingIcons);
+  try {
+    for (const t of Object.keys(BUILDINGS) as BuildingType[]) {
+      if (cancelled()) return;
+      const g = buildingBuilder(t, owner).build((k) => getMaterial(k));
+      await shoot(g, t, buildingIcons);
+      await pause();
+    }
+    const geos = buildGoodGeos();
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.1 });
+    for (const gd of GOODS) {
+      if (cancelled()) return;
+      const m = new THREE.Mesh(geos[gd], mat);
+      if (gd === 'log' || gd === 'board') m.rotation.y = 0.6;
+      await shoot(m, gd, goodIcons, 1.0);
+      await pause();
+    }
+  } finally {
+    r.dispose();
+    r.forceContextLoss();
   }
-  const geos = buildGoodGeos();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.1 });
-  for (const gd of GOODS) {
-    const m = new THREE.Mesh(geos[gd], mat);
-    if (gd === 'log' || gd === 'board') m.rotation.y = 0.6;
-    shoot(m, gd, goodIcons, 1.0);
-  }
-  G.uFogOn.value = fogWas;
-  G.uLightCount.value = lightsWas;
-  G.uNight.value = nightWas;
-  G.uGrime.value = 1;
-  r.dispose();
-  r.forceContextLoss();
 }

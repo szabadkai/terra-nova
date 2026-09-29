@@ -278,14 +278,30 @@ export class GameRenderer {
   private onResize = () => this.resize();
   /** materials kept only so that their shaders stay compiled (see warmUp) */
   private warmKeep: THREE.Material[] = [];
+  /** set by dispose: work spread over frames for this world stops there */
+  disposed = false;
+  /** while warmUp waits on the compiler with its samples in the scene, which are not for the eye: frames are let by (the canvas keeps the last one) */
+  private holding = false;
+
+  /** Compile the shaders for the scene as it stands (the title screen's view, or a game's start), without blocking where the browser can compile in parallel. */
+  async warmScene(maxMs = 5000) {
+    const rt = this.renderer.getRenderTarget();
+    // compiled for the target the world really renders into (linear, not tone mapped)
+    this.renderer.setRenderTarget(this.fx.sceneRT);
+    const ready = this.renderer.compileAsync(this.scene, this.cam.camera);
+    this.renderer.setRenderTarget(rt);
+    await Promise.race([ready, new Promise((r) => setTimeout(r, maxMs))]);
+  }
 
   /**
-   * Compile every shader the world can need while the loading screen is up: each kind of building
-   * for every player (and as a construction site), and everything that is hidden for now. Otherwise
-   * the first building of a new kind stalls the game for a tenth of a second or more while its
-   * shaders compile. Gives up waiting after `maxMs` (the programs keep compiling in the background).
+   * Compile every shader the world can need before it is played: each kind of building for every
+   * player (and as a construction site), and everything that is hidden for now. Otherwise the first
+   * building of a new kind stalls the game for a tenth of a second or more while its shaders compile.
+   * One kind of building at a time with a `pause` after each, so it can run behind the title screen;
+   * it stops if the renderer is disposed meanwhile. Gives up waiting on the compiler after `maxMs`
+   * (the programs keep compiling in the background).
    */
-  async warmUp(maxMs = 5000) {
+  async warmUp(pause: () => Promise<void> = () => Promise.resolve(), maxMs = 5000) {
     const extra = new THREE.Group();
     const t = this.cam.target;
     extra.position.set(t.x, t.y, t.z);
@@ -293,26 +309,39 @@ export class GameRenderer {
     // sites draw their shadow through this too (buildings.ts setClip)
     const clipDepth = patchedDepthMaterial({ clip: true });
     const finished: THREE.Group[] = [];
+    const rt = this.renderer.getRenderTarget();
     for (const type of Object.keys(BUILDINGS) as BuildingType[]) {
+      const kind = new THREE.Group();
       for (const p of this.game.players) {
         const mb = buildingBuilder(type, p.id);
         const g = mb.build((k) => getMaterial(k));
         finished.push(g);
-        extra.add(g);
+        kind.add(g);
         const site = mb.build((k) => { let m = clip.get(k); if (!m) { m = getClipMaterial(k); clip.set(k, m); } return m; });
         site.traverse((o) => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).customDepthMaterial = clipDepth; });
-        extra.add(site);
+        kind.add(site);
       }
+      // (lit by the world's lights, for the target it renders into)
+      this.renderer.setRenderTarget(this.fx.sceneRT);
+      try { this.renderer.compile(kind, this.cam.camera, this.scene); } finally { this.renderer.setRenderTarget(rt); }
+      extra.add(kind);
+      await pause();
+      if (this.disposed) return;
     }
     // Every site has materials of its own, disposed when it is finished, and a shader goes with the
     // last material using it: keeping these samples keeps the shaders, or the first site after a
     // while without any compiled a dozen of them in the middle of the game (~150 ms).
     this.warmKeep.push(...clip.values(), clipDepth);
     const ships = this.ships.samples(this.game.players.map((p) => p.id));
-    extra.add(ships);
     // (and both sides of the trees' full-leaf switch)
     const trees = this.trees.samples();
-    extra.add(trees);
+    for (const o of [ships, trees]) {
+      this.renderer.setRenderTarget(this.fx.sceneRT);
+      try { this.renderer.compile(o, this.cam.camera, this.scene); } finally { this.renderer.setRenderTarget(rt); }
+      extra.add(o);
+      await pause();
+      if (this.disposed) return;
+    }
     this.scene.add(extra);
     // and each finished one in the batches, as it will be drawn
     const batched = finished.map((g) => this.buildings.batches.add(g, (g.children.find((o) => o instanceof ScreenLod) as ScreenLod | undefined) ?? null));
@@ -320,12 +349,9 @@ export class GameRenderer {
     const hidden: THREE.Object3D[] = [];
     this.scene.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
     try {
-      // compiled for the target the world really renders into (linear, not tone mapped)
-      const rt = this.renderer.getRenderTarget();
-      this.renderer.setRenderTarget(this.fx.sceneRT);
-      const ready = this.renderer.compileAsync(this.scene, this.cam.camera);
-      this.renderer.setRenderTarget(rt);
-      await Promise.race([ready, new Promise((r) => setTimeout(r, maxMs))]);
+      this.holding = true;
+      try { await this.warmScene(maxMs); } finally { this.holding = false; }
+      if (this.disposed) return;
       // one frame with it all in view compiles the shadow-map variants too
       this.frame(0, 0);
       // frame() hides what has nothing to draw yet (empty rubble pools): once more with everything shown
@@ -342,10 +368,13 @@ export class GameRenderer {
       // (their instance buffers; the geometry is the trees' own)
       for (const o of trees.children) (o as THREE.InstancedMesh).dispose();
     }
+    // the view as it is over the one with every sample in it, before the page shows it (behind the title screen)
+    if (!this.disposed) this.frame(0, 0);
   }
 
   /** Release GPU resources and listeners so a new world can be created on a fresh canvas. */
   dispose() {
+    this.disposed = true;
     this.orders.dispose();
     this.priority.dispose();
     window.removeEventListener('resize', this.onResize);
@@ -987,6 +1016,7 @@ export class GameRenderer {
 
   // ------------------------------------------------------------ frame
   frame(dt: number, gameDt: number) {
+    if (this.holding) return;
     if (this.canvas.clientWidth !== this.lastW || this.canvas.clientHeight !== this.lastH) this.resize();
     // the automatic resolution has moved a step: the world's targets follow
     if (framePace.auto && framePace.scale !== this.fx.scale) { this.fx.scale = framePace.scale; this.resize(); }

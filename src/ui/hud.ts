@@ -176,6 +176,7 @@ export class HUD {
       } else this.message(`✔ Objective complete: ${goal.text}`, undefined, undefined, 'good');
       this.audio.play('built');
     }, (f) => this.focus(f), m ? `Mission ${numeralOf(missionIndex(m.id))}` : 'Chronicle');
+    this.objectives.onToggle = () => this.refreshTop();
     this.msgs = h('div', 'msgs');
     rcol.appendChild(this.msgs);
     this.tip = h('div', 'tip hidden');
@@ -194,7 +195,11 @@ export class HUD {
     this.top = h('div', 'panel topbar');
     this.root.appendChild(this.top);
     // the bar is redrawn twice a second, so the ⚠ button is handled here rather than on the button
-    this.top.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('#stalls')) this.nextStall((e as MouseEvent).shiftKey); });
+    this.top.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('#stalls')) this.nextStall((e as MouseEvent).shiftKey);
+      else if (t.closest('#chron')) { this.audio.play('ui'); this.objectives.setHidden(!this.objectives.hidden); this.refreshTop(); }
+    });
     this.top.addEventListener('mousemove', (e) => {
       if ((e.target as HTMLElement).closest('#stalls')) {
         // the chains behind it are walked at most twice a second, not on every move of the pointer
@@ -244,6 +249,7 @@ export class HUD {
       ${item('<span class="emo">⚔</span>', pop.soldiers, 'Soldiers')}
       ${item('<span class="emo">👥</span>', `${pop.idle}/${pop.total}`, 'Idle carriers / total population', pop.idle < 2)}
       <button class="res stallbtn${this.stalls.stalled.length ? ' on' : ''}" id="stalls" aria-label="${this.stalls.stalled.length} buildings stalled: go to the next (.)"><span class="emo">⚠</span><span>${this.stalls.stalled.length}</span></button>
+      ${this.objectives ? `<button class="res stallbtn chron${this.objectives.hidden ? '' : ' shown'}" id="chron" aria-pressed="${!this.objectives.hidden}" title="${this.objectives.hidden ? 'Show' : 'Hide'} the ${this.game.mission ? 'mission goals' : 'chronicle'}"><span class="emo">📜</span></button>` : ''}
       <div class="sep"></div>
       <div class="clock" title="${season.name}, day ${season.day(this.gr.sky.dayLength)}">${SEASON_ICON[season.index]} ${season.name}</div>
       <div class="clock" title="Time of day">${isNight ? '☾' : '☀'} ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</div>
