@@ -2,7 +2,7 @@
 import { BUILDINGS, BuildingType, GOODS, Good, MINE_ORE, emptyStock } from './defs';
 import type { Game } from './game';
 import { attackableSoldiers, launchAttack } from './military';
-import { SPELLS, castSpell, faithStatus } from './faith';
+import { MANA_MAX, SPELLS, castSpell, faithStatus } from './faith';
 import { colonySite, startExpedition } from './sea';
 import { PROBE_RADIUS, geologistsAtWork, prospectError, sendGeologist } from './geology';
 import { pioneerError, pioneersAtWork, sendPioneer } from './pioneers';
@@ -714,11 +714,11 @@ export class AIController {
     return 16;
   }
 
-  /** Priests at work: smite attackers, heal the wounded, speed up the forests. */
+  /** Priests at work: smite attackers, heal the wounded, speed up the forests, fill the waters. */
   private castStep() {
     const g = this.g;
     const p = g.players[this.p];
-    if (p.mana < SPELLS.harvest.cost || p.spellCd > 0) return;
+    if (p.mana < SPELLS.fish.cost || p.spellCd > 0) return;
     const st = faithStatus(g, this.p);
     if (!st.priests) return;
     if (st.great && this.level > 0) {
@@ -726,6 +726,8 @@ export class AIController {
       if (foe) {
         if (this.level >= 2 && foe.n >= 3 && castSpell(g, this.p, 'convert', foe.x, foe.z)) return;
         if (foe.n >= (this.level >= 2 ? 2 : 3) && castSpell(g, this.p, 'wrath', foe.x, foe.z)) return;
+        // too little mana for the storm: hold them fast for the garrisons instead
+        if (foe.n >= 3 && castSpell(g, this.p, 'freeze', foe.x, foe.z)) return;
       }
     }
     // heal wounded soldiers fighting in the field
@@ -736,13 +738,35 @@ export class AIController {
       wx += s.x; wz += s.z; wn++;
     }
     if (wn >= 2 && castSpell(g, this.p, 'heal', wx / wn, wz / wn)) return;
-    // spare mana: ripen a forest when wood runs low
+    // spare mana: ripen a forest when wood runs low (or plant one where the forester's ground is bare)
     const reserve = st.great ? SPELLS.wrath.cost + SPELLS.harvest.cost : SPELLS.heal.cost + SPELLS.harvest.cost;
     const stock = g.totalStock(this.p);
+    const w = g.world;
     if (p.mana >= reserve && stock.log + stock.board < 12) {
       for (const b of g.buildings.values()) {
-        if (b.owner === this.p && b.type === 'forester' && b.state === 'done' && castSpell(g, this.p, 'harvest', b.cx, b.cz)) return;
+        if (b.owner !== this.p || b.type !== 'forester' || b.state !== 'done') continue;
+        let trees = 0;
+        w.forRadius(b.cx, b.cz, SPELLS.forest.radius, (i) => { if (w.tree[i]) trees++; });
+        if (castSpell(g, this.p, trees < 8 ? 'forest' : 'harvest', b.cx, b.cz)) return;
       }
+    }
+    if (p.mana >= reserve) {
+      // a fisher whose waters are fished out
+      for (const b of g.buildings.values()) {
+        if (b.owner !== this.p || b.type !== 'fisher' || b.state !== 'done') continue;
+        let fish = 0, wx = 0, wz = 0, wn = 0;
+        w.forRadius(b.cx, b.cz, b.def.radius!, (i, x, y) => { if (w.isWater(i)) { fish += w.fish[i]; wx += x; wz += y; wn++; } });
+        if (wn && fish < wn * 0.5 && castSpell(g, this.p, 'fish', wx / wn, wz / wn)) return;
+      }
+      // iron piling up while the soldiers go without gold
+      if (stock.iron >= 12 && stock.gold < 4) {
+        for (const b of g.storages(this.p)) if (b.stock.iron >= 6 && castSpell(g, this.p, 'midas', b.cx, b.cz)) return;
+      }
+    }
+    // the offerings would go to waste at the brim: ask for a gift instead
+    if (p.mana >= MANA_MAX - 10) {
+      const hq = g.buildings.get(p.hq);
+      if (hq && hq.owner === this.p) castSpell(g, this.p, 'gift', hq.cx, hq.cz);
     }
   }
 

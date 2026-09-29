@@ -390,6 +390,10 @@ export class SettlersRenderer {
   private cJob = new THREE.Color();
   private white = new THREE.Color(1, 1, 1);
   private goldHelm = new THREE.Color(0xe0b040);
+  private iceCol = new THREE.Color(0.78, 0.9, 1.0);
+  private cSkin = new THREE.Color();
+  private cTrousers = new THREE.Color();
+  private cHair = new THREE.Color();
   private playerCols: THREE.Color[] = [];
   private sphere = new THREE.Sphere(new THREE.Vector3(), 0.8);
 
@@ -471,15 +475,17 @@ export class SettlersRenderer {
       const lv = V.px(sx, y0 + 0.5, sz) * FAR_ERR * SCALE < LOD_PIXELS ? 1 : 0;
       const L = this.look(s);
       const moving = s.next >= 0;
+      // held by Winter's Grasp: stock-still mid-stride or mid-swing, and rimed with frost
+      const ice = g.time < s.frozenUntil && !s.dead;
       let heading: number;
       if (shot) heading = shot.heading;
       else {
         let ph = this.phase.get(s.id) ?? s.seed * 10;
         // short legs take quick little steps
-        if (moving) ph += dt * Math.PI * 2 * 1.6 / Math.max(0.3, s.stepDur * 1.1);
+        if (moving && !ice) ph += dt * Math.PI * 2 * 1.6 / Math.max(0.3, s.stepDur * 1.1);
         this.phase.set(s.id, ph);
         pose(s, ph, moving, time, P);
-        heading = this.idle.apply(s, P, moving, y0);
+        heading = ice ? s.heading : this.idle.apply(s, P, moving, y0);
       }
 
       // --- skeleton
@@ -502,25 +508,32 @@ export class SettlersRenderer {
       const tunic = this.cTunic.copy(pc);
       if (!soldier && s.job !== 'carrier') tunic.lerp(this.cJob.set(JOB_LOOK[s.job].hatCol), s.job === 'priest' ? 0.8 : 0.15);
       tunic.multiplyScalar(L.tunicK);
+      let skin = L.skin, trousers = L.trousers, hairCol = L.hairCol;
+      if (ice) {
+        tunic.lerp(this.iceCol, 0.6);
+        skin = this.cSkin.copy(L.skin).lerp(this.iceCol, 0.55);
+        trousers = this.cTrousers.copy(L.trousers).lerp(this.iceCol, 0.6);
+        hairCol = this.cHair.copy(L.hairCol).lerp(this.iceCol, 0.7);
+      }
       const sleeve = this.cSleeve.copy(tunic);
 
       // --- legs
       for (const [side, ang, spl] of [[-1, P.legL, P.legSpL], [1, P.legR, P.legSpR]] as const) {
         this.mB.copy(this.mBase).multiply(this.mA.makeTranslation(side * RIG.hipX, RIG.hipY, 0));
         this.mB.multiply(spl ? this.mA.makeRotationFromEuler(this.e.set(ang, 0, side * spl)) : this.mA.makeRotationX(ang));
-        this.legs.add(lv, this.mB, L.trousers);
+        this.legs.add(lv, this.mB, trousers);
       }
       // --- torso, apron
       this.torsos.add(lv, body, tunic);
       if (L.apron) this.aprons.add(lv, body, L.apron);
       // --- head, eyes, hat
-      this.heads.get(L.hair)!.add(lv, head, L.skin, L.hairCol);
+      this.heads.get(L.hair)!.add(lv, head, skin, hairCol);
       const tb = (time + L.blinkO) % L.blinkP;
       const blink = Math.min(P.eyes, s.dead ? 0.12 : tb < 0.14 ? Math.max(0.12, Math.abs(tb - 0.07) / 0.07) : 1);
       this.mB.copy(head);
       if (blink < 1) this.mB.multiply(this.mA.makeTranslation(0, RIG.eyeY, 0)).multiply(this.mA.makeScale(1, blink, 1)).multiply(this.mA.makeTranslation(0, -RIG.eyeY, 0));
       this.eyes.add(lv, this.mB);
-      if (!L.hat && (L.hair === 'tousled' || L.hair === 'bearded')) this.tufts.add(lv, head, L.hairCol);
+      if (!L.hat && (L.hair === 'tousled' || L.hair === 'bearded')) this.tufts.add(lv, head, hairCol);
       if (L.hat) {
         let hc = L.hatCol;
         if (s.job === 'swordsman' && s.level > 0) hc = this.cJob.copy(L.hatCol).lerp(this.goldHelm, Math.min(1, s.level * 0.35));
@@ -531,7 +544,7 @@ export class SettlersRenderer {
         out.copy(body).multiply(this.mA.makeTranslation(side * RIG.shoulderX, RIG.shoulderY, 0));
         out.multiply(this.mA.makeRotationFromEuler(this.e.set(ang, 0, side * splay)));
         if (reach !== 1) out.multiply(this.mA.makeScale(1, reach, 1));
-        this.arms.add(lv, out, sleeve, L.skin);
+        this.arms.add(lv, out, sleeve, skin);
       }
       // --- tool
       let tool = TOOL[s.job];

@@ -338,7 +338,7 @@ export class Game {
       anim: 'idle', animT: this.rng.range(0, 10), carrying: null, actions: [], onAbort: null, idle: true,
       home: 0, task: '', hp: 100, maxHp: 100, level: 0, sstate: 'idle', target: 0, targetB: 0, engaged: 0,
       cooldown: 0, scanT: this.rng.range(0, 0.3), dead: false, deadT: 0, wanderT: this.rng.range(0, 6),
-      seed: this.rng.next(), blessUntil: 0, voyage: 0, voyageFrom: 0, aboard: 0, order: -1, fails: 0, pack: null,
+      seed: this.rng.next(), blessUntil: 0, frozenUntil: 0, voyage: 0, voyageFrom: 0, aboard: 0, order: -1, fails: 0, pack: null,
       drill: 'line', firm: false, face: null, pace: 1,
     };
     if (job === 'bowman') { s.hp = s.maxHp = 80; }

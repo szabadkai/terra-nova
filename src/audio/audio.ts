@@ -694,6 +694,21 @@ export class Audio {
         this.tone(t, 523.3, 0.9, 'triangle', 0.1, out, 1046.5, 0.05);
         [659.3, 784, 1046.5, 1318.5].forEach((f, k) => this.tone(t + 0.15 + k * 0.08, f, 1.1, 'sine', 0.06, out));
         life = 2.5;
+        break;      case 'frost':
+        // ice closing in: a glassy crackle under a falling shimmer
+        for (let k = 0; k < 7; k++) this.noise(t + k * 0.055 + Math.random() * 0.03, 0.07, 'highpass', 6500, 1, 0.07, out);
+        [3136, 2637, 2349, 1976].forEach((f, k) => this.tone(t + k * 0.07, f, 1.0, 'sine', 0.03, out, f * 0.7));
+        this.noise(t, 1.2, 'bandpass', 4000, 0.8, 0.05, out, 900);
+        life = 2;
+        break;
+      case 'coins':
+        // metal made gold: bright ticks tumbling onto a pile
+        for (let k = 0; k < 9; k++) {
+          const f = 2400 + Math.random() * 1600;
+          this.tone(t + k * 0.06 + Math.random() * 0.03, f, 0.18, 'sine', 0.05, out);
+          this.tone(t + k * 0.06, f * 1.51, 0.1, 'sine', 0.02, out);
+        }
+        life = 1.5;
         break;
     }
     setTimeout(() => { try { out.disconnect(); pan.disconnect(); } catch { /* */ } }, life * 1000);

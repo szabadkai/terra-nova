@@ -89,6 +89,7 @@ export interface Settler {
   wanderT: number;
   seed: number;
   blessUntil: number; // game time until which a Healing Light blessing lasts
+  frozenUntil: number; // game time until which Winter's Grasp holds him fast (no step, no blow)
   // seafaring
   voyage: number; // destination harbour id (or -expedition id) while travelling by sea, 0 otherwise
   voyageFrom: number; // harbour the settler waits at for a ship

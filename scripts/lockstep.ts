@@ -16,7 +16,7 @@ import { BUILD_ORDER, TOOLS } from '../src/game/defs';
 import { planFormation } from '../src/game/orders';
 import { canBombard } from '../src/game/naval';
 import { colonySite } from '../src/game/sea';
-import { castError, type SpellId } from '../src/game/faith';
+import { SPELL_ORDER, castError } from '../src/game/faith';
 import type { Formation } from '../src/game/types';
 
 const minutes = Number(process.argv[2] ?? 20), seed = Number(process.argv[3] ?? 7);
@@ -116,7 +116,7 @@ for (const [i, d] of drivers.entries()) d.onTurnEnd = (turn) => {
 const rnd = new RNG(seed * 13 + 5);
 const pick = <T>(a: T[]): T | undefined => (a.length ? a[rnd.int(0, a.length)] : undefined);
 const SHAPES: Formation[] = ['line', 'block', 'wedge', 'ring'];
-const SPELLS: SpellId[] = ['harvest', 'heal', 'wrath', 'convert'];
+const SPELLS = SPELL_ORDER;
 const TYPES = [...BUILD_ORDER.basic, ...BUILD_ORDER.food, ...BUILD_ORDER.military, ...BUILD_ORDER.industry, ...BUILD_ORDER.faith];
 function randomCmd(g: Game, owner: number): Cmd | null {
   const my = [...g.buildings.values()].filter((b) => b.owner === owner);
@@ -262,7 +262,7 @@ check(overs.every((o) => o.length === 1 && o[0] === 3), 'and of the one end');
     planFormation(g, 0, men, x, z, SHAPES[i % 4]);
     const t = TYPES[i % TYPES.length], a = g.anchorFor(t, Math.round(x), Math.round(z));
     g.placeError(t, 0, a.x, a.y);
-    castError(g, 0, SPELLS[i % 4], x, z);
+    castError(g, 0, SPELLS[i % SPELLS.length], x, z);
     if (ships.length && forts.length) canBombard(g, ships[i % ships.length], forts[i % forts.length]);
     if (harbours.length) colonySite(g, 0, harbours[i % harbours.length], x, z);
   }

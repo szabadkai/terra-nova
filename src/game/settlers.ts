@@ -197,6 +197,8 @@ function runAction(g: Game, s: Settler, dt: number): boolean {
 }
 
 export function updateSettler(g: Game, s: Settler, dt: number) {
+  // held fast by Winter's Grasp: no step, no blow, no thought, not even the swing of an arm
+  if (g.time < s.frozenUntil && !s.dead) return;
   s.animT += dt;
   if (s.dead) {
     s.deadT += dt;

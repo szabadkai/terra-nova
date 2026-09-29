@@ -602,23 +602,26 @@ export class HUD {
     c.appendChild(h('div', 'mana-gauge', `<div class="mana-orb">✦</div><div class="mana-body"><div class="kv"><span>Mana</span><b>${Math.floor(p.mana)} / ${MANA_MAX}</b></div><div class="bar mana"><i style="width:${Math.round((p.mana / MANA_MAX) * 100)}%"></i></div></div>`));
     c.appendChild(h('div', 'kv', `<span>Temples · priests serving</span><b>${st.temples} · ${st.priests}</b></div>`));
     c.appendChild(h('div', 'kv', `<span>Great Temple</span><b>${st.great ? 'Consecrated' : '<span class="muted">none</span>'}</b>`));
-    c.appendChild(h('h3', '', 'Divine spells'));
-    const list = h('div', 'spells');
-    for (const id of SPELL_ORDER) {
-      const d = SPELLS[id];
-      const lock = !g.canUseTool(g.local, 'spells') ? `The Senate allows it in ${toolLockNote('spells', true)}` : !st.temples ? 'Needs a Temple' : d.great && !st.great ? 'Needs a Great Temple' : !st.priests ? 'No priest serving' : p.mana < d.cost ? `${Math.floor(p.mana)}/${d.cost} mana` : '';
-      const col = `rgb(${d.color.map((v) => Math.round(Math.min(1, v) * 255)).join(',')})`;
-      const card = h('button', 'spell' + (lock ? ' locked' : '') + (this.gr.casting === id ? ' on' : ''), `
-        <div class="sglyph" style="--sc:${col}">${d.glyph}</div>
-        <div class="sbody"><div class="sname">${d.name}<span class="scost">✦ ${d.cost}</span></div><div class="sdesc">${d.desc}</div>${lock ? `<div class="slock">${lock}</div>` : ''}</div>`);
-      card.onclick = () => {
-        if (lock) { this.message(lock, undefined, undefined, 'bad'); this.audio.play('click'); return; }
-        this.startCasting(this.gr.casting === id ? null : id);
-      };
-      list.appendChild(card);
+    for (const [school, title] of [['plenty', 'The land and its plenty'], ['war', 'In war']] as const) {
+      c.appendChild(h('h3', '', title));
+      const list = h('div', 'spells');
+      for (const id of SPELL_ORDER) {
+        const d = SPELLS[id];
+        if (d.school !== school) continue;
+        const lock = !g.canUseTool(g.local, 'spells') ? `The Senate allows it in ${toolLockNote('spells', true)}` : !st.temples ? 'Needs a Temple' : d.great && !st.great ? 'Needs a Great Temple' : !st.priests ? 'No priest serving' : p.mana < d.cost ? `${Math.floor(p.mana)}/${d.cost} mana` : '';
+        const col = `rgb(${d.color.map((v) => Math.round(Math.min(1, v) * 255)).join(',')})`;
+        const card = h('button', 'spell' + (lock ? ' locked' : '') + (this.gr.casting === id ? ' on' : ''), `
+          <div class="sglyph" style="--sc:${col}">${d.glyph}</div>
+          <div class="sbody"><div class="sname">${d.name}<span class="scost">✦ ${d.cost}</span></div><div class="sdesc">${d.desc}</div>${lock ? `<div class="slock">${lock}</div>` : ''}</div>`);
+        card.onclick = () => {
+          if (lock) { this.message(lock, undefined, undefined, 'bad'); this.audio.play('click'); return; }
+          this.startCasting(this.gr.casting === id ? null : id);
+        };
+        list.appendChild(card);
+      }
+      c.appendChild(list);
     }
-    c.appendChild(list);
-    c.appendChild(h('p', 'note', 'A <b>Vineyard</b> makes wine. Carriers take it to a <b>Temple</b>, where the priest offers it to the gods as mana. Pick a spell, then click the ground within reach of your strongholds.'));
+    c.appendChild(h('p', 'note', 'A <b>Vineyard</b> makes wine. Carriers take it to a <b>Temple</b>, where the priest offers it to the gods as mana. Pick a spell, then click the ground within reach of your strongholds — the <b>All-Seeing Eye</b> reaches much further, into the fog.'));
   }
 
   startCasting(id: SpellId | null) {

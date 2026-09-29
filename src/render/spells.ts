@@ -1,8 +1,11 @@
-// Divine spell effects: lightning, light pillars, temple beams, storm clouds and the terrain rune circle.
+// Divine spell effects: lightning, light pillars, temple beams, storm clouds, the terrain rune circle
+// and the ice that holds the soldiers Winter's Grasp has seized.
 import * as THREE from 'three';
 import type { Game } from '../game/game';
 import type { GameEvent } from '../game/types';
-import { SPELLS, SpellId } from '../game/faith';
+import { FREEZE_TIME, SPELLS, SpellId } from '../game/faith';
+import { WATER_LEVEL } from '../game/world';
+import { hash2 } from '../core/rng';
 import { G } from './shaderPatch';
 import type { Particles } from './particles';
 
@@ -105,11 +108,30 @@ interface Fx { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; t: number; life: num
 
 interface Rune { x: number; z: number; r: number; col: THREE.Color; t: number; life: number; }
 
+/** A six-sided ice crystal with a pointed cap, a little taller than a settler. */
+function crystalGeo() {
+  const g = new THREE.LatheGeometry([
+    new THREE.Vector2(0.0, -0.02), new THREE.Vector2(0.4, 0.0), new THREE.Vector2(0.36, 0.78),
+    new THREE.Vector2(0.2, 1.08), new THREE.Vector2(0.0, 1.22),
+  ], 6);
+  return g.toNonIndexed();
+}
+const ICE_MAX = 64;
+
 export class SpellFX {
   group = new THREE.Group();
   private fx: Fx[] = [];
   private runes: Rune[] = [];
   private storms: { x: number; z: number; t: number; life: number }[] = [];
+  private blizzards: { x: number; z: number; r: number; t: number; life: number }[] = [];
+  /** game time until which some soldier may still be frozen (checked again now and then, for loaded games) */
+  private frostUntil = 0;
+  private frostScanT = 0;
+  private ice: THREE.InstancedMesh;
+  private m4 = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private v = new THREE.Vector3();
+  private sc = new THREE.Vector3();
   private flash = { x: 0, y: 0, z: 0, i: 0, col: new THREE.Color() };
   private pillarGeo = new THREE.CylinderGeometry(1, 1, 1, 32, 1, true).translate(0, 0.5, 0);
   preview: { x: number; z: number; r: number; col: THREE.Color; ok: boolean } | null = null;
@@ -119,7 +141,17 @@ export class SpellFX {
     private particles: Particles,
     private terrainU: Record<string, THREE.IUniform>,
     private onFlash: (amount: number, shake: number) => void,
-  ) {}
+  ) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(0.72, 0.88, 1.0), emissive: new THREE.Color(0.1, 0.22, 0.36), roughness: 0.08, metalness: 0.1,
+      transparent: true, opacity: 0.5, depthWrite: false, flatShading: true, side: THREE.DoubleSide,
+    });
+    this.ice = new THREE.InstancedMesh(crystalGeo(), mat, ICE_MAX);
+    this.ice.count = 0;
+    this.ice.frustumCulled = false;
+    this.ice.renderOrder = 5;
+    this.group.add(this.ice);
+  }
 
   private ground(x: number, z: number) {
     return this.game.world.heightAt(x, z);
@@ -200,6 +232,9 @@ export class SpellFX {
         this.runes.push({ x, z, r: def.radius, col, t: 0, life: long });
         if (e.kind === 'wrath') {
           this.storms.push({ x, z, t: 0, life: 5 });
+        } else if (e.kind === 'freeze') {
+          this.blizzards.push({ x, z, r: def.radius, t: 0, life: 2.6 });
+          this.makePillar(x, y - 0.5, z, def.radius * 0.8, 10, col, 2.4, 1.2, 0.45);
         } else {
           this.makePillar(x, y - 0.5, z, def.radius * 0.8, 16, col, 2.8, 1.3, 0.7);
           this.makePillar(x, y - 0.5, z, 0.3, 30, col, 2.4, 1.3, 0.55, 0.6);
@@ -231,10 +266,87 @@ export class SpellFX {
         } else if (e.kind === 'convert') {
           this.ringBurst(x, y + 0.2, z, def.radius, [c[0] * 1.5, c[1] * 2, c[2] * 2]);
           sound('chime');
+        } else if (e.kind === 'eye') {
+          // the fog parts: a ring runs out to the edge and motes rise all over the circle
+          this.ringBurst(x, y + 0.3, z, def.radius, [c[0] * 1.8, c[1] * 1.8, c[2] * 2.2]);
+          this.makePillar(x, y - 0.5, z, def.radius * 0.95, 6, new THREE.Color(...c), 2.2, 0.6, 0.5, 0.2);
+          for (let k = 0; k < 140; k++) {
+            const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * def.radius;
+            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+            P.emit({ x: px, y: this.ground(px, pz) + 0.2, z: pz, vy: 1.2 + Math.random(), spread: 0.2, life: 1.8, size: 0.07, color: [1.6, 1.3, 2.4], alpha: 1, gravity: -0.4, drag: 0.6, additive: true, kind: 1 });
+          }
+          sound('chime');
+        } else if (e.kind === 'gift') {
+          // parcels drop out of the sky onto the storehouse roof
+          for (let k = 0; k < 26; k++) {
+            const px = x + (Math.random() - 0.5) * 2.4, pz = z + (Math.random() - 0.5) * 2.4;
+            P.emit({ x: px, y: y + 9 + Math.random() * 5, z: pz, vy: -4, spread: 0.2, life: 1.6, size: 0.16, color: [1.8, 1.3, 0.9], color2: [1.2, 0.7, 1.0], alpha: 1, gravity: 5, drag: 0.4, additive: true, kind: 1 });
+          }
+          setTimeout(() => { P.sparkle(x, y + 2.2, z, 40, [2.2, 1.5, 1.8]); sound('coins', 0.7); }, 900);
+          this.makePillar(x, y, z, 1.6, 12, new THREE.Color(...c), 2.0, 0.9, 0.8, 0.3);
+          sound('chime');
+        } else if (e.kind === 'fish') {
+          // shoals break the surface all over the water in the circle
+          const w = this.game.world;
+          let n = 0;
+          for (let k = 0; k < 400 && n < 26; k++) {
+            const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * def.radius;
+            const px = Math.round(x + Math.cos(a) * d), pz = Math.round(z + Math.sin(a) * d);
+            if (!w.inBounds(px, pz) || !w.isWater(w.idx(px, pz))) continue;
+            n++;
+            const dir = Math.random() * Math.PI * 2, delay = Math.random() * 1400;
+            setTimeout(() => {
+              P.splash(px, WATER_LEVEL, pz);
+              P.emit({ x: px, y: WATER_LEVEL + 0.05, z: pz, vx: Math.cos(dir) * 0.9, vz: Math.sin(dir) * 0.9, vy: 2.6, life: 0.62, size: 0.09, color: [0.85, 0.9, 0.95], alpha: 1, gravity: 8.2, drag: 0, kind: 1 });
+            }, delay);
+            P.emit({ x: px, y: WATER_LEVEL + 0.1, z: pz, vy: 0.6, spread: 0.4, life: 1.4, size: 0.06, color: [0.8, 1.6, 2.4], alpha: 1, gravity: -0.2, drag: 0.8, additive: true, count: 3, kind: 1 });
+          }
+          this.ringBurst(x, WATER_LEVEL + 0.1, z, def.radius, [c[0] * 1.6, c[1] * 1.8, c[2] * 2.2]);
+          sound('splash');
+          setTimeout(() => sound('splash', 0.7), 500);
+          sound('chime', 0.6);
+        } else if (e.kind === 'forest') {
+          for (let k = 0; k < 110; k++) {
+            const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * def.radius;
+            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+            P.emit({ x: px, y: this.ground(px, pz) + 0.05, z: pz, vy: 0.9 + Math.random() * 0.9, spread: 0.3, life: 2.0, size: 0.07, color: [0.9, 2.2, 0.6], color2: [1.6, 1.8, 0.5], alpha: 1, gravity: -0.25, drag: 0.8, additive: true, kind: 1 });
+          }
+          for (let k = 0; k < 5; k++) {
+            const a = Math.random() * Math.PI * 2, d = Math.random() * def.radius * 0.8;
+            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+            P.leaves(px, this.ground(px, pz) + 0.6, pz, 10);
+          }
+          sound('chime');
+        } else if (e.kind === 'midas') {
+          this.ringBurst(x, y + 0.2, z, def.radius, [c[0] * 2.2, c[1] * 2, c[2] * 1.4]);
+          sound('chime');
+        } else if (e.kind === 'freeze') {
+          this.ringBurst(x, y + 0.2, z, def.radius, [c[0] * 1.8, c[1] * 2, c[2] * 2.4]);
+          P.emit({ x, y: y + 0.3, z, vy: 0.4, spread: def.radius * 0.9, vspread: 0.3, life: 2.4, size: 1.6, grow: 0.6, color: [0.82, 0.9, 1.0], alpha: 0.28, drag: 0.8, count: 22 });
+          sound('frost');
         }
         this.flashAt(x, y + 2.5, z, 3, new THREE.Color(...c));
         break;
       }
+      case 'transmuted': {
+        // a storehouse full of iron turns to gold
+        P.sparkle(x, y + 1.8, z, 45, [2.4, 1.8, 0.5]);
+        P.emit({ x, y: y + 1.2, z, vy: 1.6, spread: 1.2, life: 1.2, size: 0.07, color: [2.4, 1.9, 0.6], alpha: 1, gravity: 1.5, drag: 0.6, additive: true, count: 30, kind: 1 });
+        this.flashAt(x, y + 2.5, z, 4, new THREE.Color(1.0, 0.75, 0.25));
+        sound('coins');
+        break;
+      }
+      case 'frozen': {
+        this.frostUntil = Math.max(this.frostUntil, this.game.time + FREEZE_TIME);
+        P.sparkle(x, y + 0.7, z, 16, [1.6, 2.0, 2.4]);
+        P.emit({ x, y: y + 0.4, z, vy: 0.2, spread: 0.6, life: 1.4, size: 0.5, grow: 0.5, color: [0.85, 0.92, 1.0], alpha: 0.3, drag: 1, count: 3 });
+        break;
+      }
+      case 'thawed':
+        P.smoke(x, y + 0.5, z, 0.0, 0.6);
+        P.sparkle(x, y + 0.8, z, 12, [2.0, 1.9, 1.3]);
+        sound('hiss', 0.5);
+        break;
       case 'lightning': {
         this.makeBolt(x, z, new THREE.Color(0.6, 0.72, 1.0));
         P.sparks(x, y + 0.1, z, 26);
@@ -315,6 +427,19 @@ export class SpellFX {
         if (Math.random() < dt * 3) this.flashAt(s.x + (Math.random() - 0.5) * 6, gy + 10, s.z + (Math.random() - 0.5) * 6, 1.2, new THREE.Color(0.55, 0.65, 1.0));
       }
     }
+    // a whirl of snow over the target of Winter's Grasp while the priests call it
+    for (let i = this.blizzards.length - 1; i >= 0; i--) {
+      const b = this.blizzards[i];
+      b.t += dt;
+      if (b.t > b.life) { this.blizzards.splice(i, 1); continue; }
+      const gy = this.ground(b.x, b.z);
+      const n = Math.ceil(dt * 90);
+      for (let k = 0; k < n; k++) {
+        const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * b.r;
+        P.emit({ x: b.x + Math.cos(a) * d, y: gy + 3 + Math.random() * 4, z: b.z + Math.sin(a) * d, vx: -Math.sin(a) * 2.2, vz: Math.cos(a) * 2.2, vy: -1.6, spread: 0.3, life: 2.2, size: 0.06, color: [0.95, 0.97, 1.0], alpha: 0.95, drag: 0.3, kind: 1 });
+      }
+    }
+    this.updateIce(dt);
     // rune circle on the ground: the newest active spell, else the targeting preview
     const U = this.terrainU;
     let rune: Rune | null = null;
@@ -338,6 +463,38 @@ export class SpellFX {
     (G.uFlash.value as THREE.Vector4).set(F.x, F.y, F.z, F.i);
     (G.uFlashCol.value as THREE.Color).copy(F.col);
     F.i = Math.max(0, F.i - dt * (F.i > 3 ? 40 : 6));
+  }
+
+  /** Ice crystals around the frozen soldiers: they grow round them in a moment and melt away at the end. */
+  private updateIce(dt: number) {
+    const g = this.game;
+    this.frostScanT -= dt;
+    if (this.frostUntil <= g.time && this.frostScanT <= 0) {
+      // a game loaded mid-frost sends no 'frozen' events
+      this.frostScanT = 1;
+      for (const s of g.settlers.values()) if (s.frozenUntil > g.time) this.frostUntil = Math.max(this.frostUntil, s.frozenUntil);
+    }
+    let n = 0;
+    if (this.frostUntil > g.time) {
+      const w = g.world;
+      for (const s of g.settlers.values()) {
+        if (n >= ICE_MAX) break;
+        if (s.dead || s.hidden || s.frozenUntil <= g.time) continue;
+        if (!w.explored[w.idx(Math.round(s.x), Math.round(s.z))] && s.owner !== g.local) continue;
+        const left = s.frozenUntil - g.time, since = FREEZE_TIME - left;
+        const k = Math.min(1, since / 0.35) * Math.min(1, left / 0.8);
+        if (k <= 0.01) continue;
+        const j = hash2(s.id, 3, 71);
+        this.q.setFromAxisAngle(this.v.set(0, 1, 0), j * Math.PI);
+        this.sc.set(0.95 + j * 0.2, (1.0 + j * 0.15) * k, 0.95 + j * 0.2);
+        this.m4.compose(this.v.set(s.x, w.heightAt(s.x, s.z), s.z), this.q, this.sc);
+        this.ice.setMatrixAt(n++, this.m4);
+        // frost glitters on the ice
+        if (Math.random() < dt * 3) this.particles.sparkle(s.x, w.heightAt(s.x, s.z) + 0.3 + Math.random() * 0.8, s.z, 2, [1.6, 2.0, 2.6]);
+      }
+    }
+    this.ice.count = n;
+    if (n) this.ice.instanceMatrix.needsUpdate = true;
   }
 
   /** True while any effect is running (lets callers keep the preview hidden). */

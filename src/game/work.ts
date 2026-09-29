@@ -111,7 +111,8 @@ function woodcutter(g: Game, s: Settler, b: Building) {
   });
 }
 
-function plantable(g: Game, i: number, forTree: boolean) {
+/** Can a sapling (forTree) or a field be planted at node i? Open ground, off paths, clear of buildings. */
+export function plantable(g: Game, i: number, forTree: boolean) {
   const w = g.world;
   if (!w.walkable(i) || w.tree[i] || w.stone[i] || w.building[i] || w.reserve[i] || w.field[i]) return false;
   const t = w.terrain[i];
@@ -129,6 +130,17 @@ function plantable(g: Game, i: number, forTree: boolean) {
     if (forTree && w.tree[ni] && d < 4) return false;
   }
   return true;
+}
+
+/** What grows at a spot: palms on the sand, pines up high, now and then a fruit tree on a meadow. */
+function pickSpecies(g: Game, t: number, hh: number) {
+  if (t === T_SAND) return 3;
+  if (hh > 3.2) return 1;
+  if (t === T_MEADOW && g.rng.chance(0.3)) return 4;
+  return g.rng.pick([0, 0, 1, 2]);
+}
+export function treeSpecies(g: Game, i: number) {
+  return pickSpecies(g, g.world.terrain[i], g.world.h[i] - WATER_LEVEL);
 }
 
 function forester(g: Game, s: Settler, b: Building) {
@@ -153,12 +165,7 @@ function forester(g: Game, s: Settler, b: Building) {
     A.anim('plant', 2.6, spot),
     A.do(() => {
       if (!plantable(g, spot, true)) return;
-      let species: number;
-      if (t === T_SAND) species = 3;
-      else if (hh > 3.2) species = 1;
-      else if (t === T_MEADOW && g.rng.chance(0.3)) species = 4;
-      else species = g.rng.pick([0, 0, 1, 2]);
-      g.addTree(spot, species, 0.05);
+      g.addTree(spot, pickSpecies(g, t, hh), 0.05);
       g.emit({ type: 'plant', x: w.nx(spot), z: w.ny(spot) });
       b.prodCount++;
     }),
