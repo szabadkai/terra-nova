@@ -25,13 +25,13 @@ body { background: #0b1622; color: #f3e8d2; }
 .hidden { display: none !important; }
 button { font-family: var(--font); cursor: pointer; }
 
+/* no backdrop blur: the world under the panels changes every frame, so the browser would blur
+   it again every frame over the whole top bar and side panel (it showed through only 10% anyway) */
 .panel {
-  background: linear-gradient(180deg, rgba(48, 36, 24, 0.9), rgba(22, 16, 11, 0.9));
+  background: linear-gradient(180deg, rgba(48, 36, 24, 0.93), rgba(22, 16, 11, 0.93));
   border: 1px solid var(--line);
   border-radius: var(--panel-radius);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(10px) saturate(1.2);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
 }
 
 /* ------------------------------------------------ top bar */
@@ -225,7 +225,7 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
 
 /* ------------------------------------------------ messages, tooltip, hint */
 .msgs { display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
-.msg { pointer-events: auto; padding: 8px 12px; border-radius: 10px; background: rgba(20, 14, 10, 0.82); border: 1px solid var(--line); border-left: 4px solid var(--gold); font-size: 12.5px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); animation: slidein .35s ease-out; transition: opacity 1s, transform 1s; backdrop-filter: blur(8px); }
+.msg { pointer-events: auto; padding: 8px 12px; border-radius: 10px; background: rgba(20, 14, 10, 0.82); border: 1px solid var(--line); border-left: 4px solid var(--gold); font-size: 12.5px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); animation: slidein .35s ease-out; transition: opacity 1s, transform 1s; }
 .msg-good { border-left-color: var(--good); }
 .msg-bad { border-left-color: var(--bad); }
 .msg.link { cursor: pointer; }

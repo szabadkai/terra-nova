@@ -14,6 +14,7 @@ import { hash2 } from '../core/rng';
 import { burnPose, collapseAt } from './demolition';
 import { getBurnMaterial } from './materials';
 import { ScreenLod } from './lod';
+import { BuildingBatches, type Batched } from './buildingBatches';
 import type { WorkView } from './work';
 
 /** charred wood and soot, and the ember glow that shows through a burning wall */
@@ -40,11 +41,22 @@ interface BView {
   sea: Seaworks | null;
   /** near and far models, when the design has a far one */
   lod: ScreenLod | null;
+  /** how far past its footprint the nearest water is (Infinity: none close by), for the reflection */
+  waterGap: number;
+  /** its pieces in the batches, while it stands finished */
+  batched: Batched | null;
 }
+
+/** Water further than this from a building never needs checking: the reflection reach is capped here. */
+const WATER_SCAN = 24;
 
 export class BuildingsRenderer {
   group = new THREE.Group();
   views = new Map<number, BView>();
+  /** finished buildings, one draw per material (buildingBatches.ts); the renderer adds its group to the scene */
+  readonly batches = new BuildingBatches();
+  /** off: every building draws its own meshes (for comparisons); takes effect as buildings update */
+  batching = true;
   private scaffoldMat: THREE.Material;
   private ropeMat: THREE.Material;
 
@@ -86,12 +98,44 @@ export class BuildingsRenderer {
       id: b.id, type: b.type, owner: b.owner, group, anchors, height: Math.max(0.8, box.max.y - y),
       state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnMats: null, sea,
       lod: (group.children.find((o) => o instanceof ScreenLod) as ScreenLod | undefined) ?? null,
+      waterGap: this.waterGap(b, box),
+      batched: null,
     };
     this.views.set(b.id, v);
     return v;
   }
 
+  /** Distance from the edge of the building (its model's box, jetty included) to the nearest water or the map's edge. */
+  private waterGap(b: Building, box: THREE.Box3): number {
+    const w = this.game.world;
+    const r = Math.max(box.max.x - b.cx, b.cx - box.min.x, box.max.z - b.cz, b.cz - box.min.z, 0.5);
+    const R = Math.ceil(r + WATER_SCAN);
+    const x0 = Math.round(b.cx), z0 = Math.round(b.cz);
+    let best = Infinity;
+    for (let dz = -R; dz <= R; dz++)
+      for (let dx = -R; dx <= R; dx++) {
+        const x = x0 + dx, z = z0 + dz;
+        const d = Math.hypot(x - b.cx, z - b.cz);
+        if (d >= best) continue;
+        if (!w.inBounds(x, z) || w.isWater(w.idx(x, z))) best = d;
+      }
+    return Math.max(0, best - r - 1);
+  }
+
+  /**
+   * Buildings that can't show in the water: further from it than their height times `reach`
+   * (see reflectionReach). Adds their groups to `out`, for the reflection to leave out.
+   */
+  dry(out: THREE.Object3D[], reach: number) {
+    if (!Number.isFinite(reach)) return;
+    for (const v of this.views.values()) {
+      if (!v.group.visible) continue;
+      if (v.waterGap > Math.min(WATER_SCAN, v.height * reach)) out.push(v.group);
+    }
+  }
+
   private dispose(v: BView) {
+    if (v.batched) this.batches.remove(v.batched);
     this.group.remove(v.group);
     v.sea?.group.traverse((o) => { if (o.parent?.userData.own) (o as THREE.Mesh).geometry?.dispose(); });
     if (v.clipMats) for (const m of v.clipMats.values()) m.dispose();
@@ -256,6 +300,11 @@ export class BuildingsRenderer {
         if (v.scaffold) { v.group.remove(v.scaffold); v.scaffold = null; }
         if (v.stakes) { v.group.remove(v.stakes); v.stakes = null; }
       }
+      // a finished building is drawn in the batches; burning, it takes its own meshes back to char them
+      const batch = this.batching && b.state === 'done';
+      if (batch && !v.batched) v.batched = this.batches.add(v.group, v.lod);
+      else if (!batch && v.batched) { this.batches.remove(v.batched); v.batched = null; }
+      else if (v.batched) this.batches.move(v.group, v.batched);
       // burning: the walls char and glow from within, the frame trembles, then the roof comes down,
       // the walls crumple outwards and the wreck settles into the ground (timeline in demolition.ts)
       if (b.state === 'burning') {

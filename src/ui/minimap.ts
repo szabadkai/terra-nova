@@ -31,7 +31,9 @@ export class Minimap {
     this.canvas.height = w.H;
     this.canvas.className = 'minimap';
     parent.appendChild(this.canvas);
-    this.ctx = this.canvas.getContext('2d')!;
+    // drawn on the CPU: it is small, and the autosave's thumbnail reads it back, which from a GPU
+    // canvas waited ~80 ms for the frames queued ahead of it
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!;
     this.base = this.ctx.createImageData(w.W, w.H);
     this.buildBase();
     const at = (e: PointerEvent) => {

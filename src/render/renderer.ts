@@ -19,10 +19,10 @@ import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
 import { Seasons } from './seasons';
 import { PostFX } from './postfx';
-import { G, MAX_LIGHTS, patchMaterial } from './shaderPatch';
+import { G, MAX_LIGHTS, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
 import { getClipMaterial, getMaterial, setWindowGlow } from './materials';
-import { PlanarReflection } from './reflection';
+import { PlanarReflection, WaterCells, reflectionReach } from './reflection';
 import { BordersRenderer } from './borders';
 import { SpellFX } from './spells';
 import { SPELLS, SpellId, castError } from '../game/faith';
@@ -37,7 +37,7 @@ import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
 import { commitInstances, withInstanceColor } from './instancing';
-import { lodView } from './lod';
+import { ScreenLod, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
@@ -104,6 +104,12 @@ export class GameRenderer {
   /** the frame cap and automatic resolution (shared with the main loop and the menu) */
   readonly pace = framePace;
   reflection: PlanarReflection;
+  private waterCells: WaterCells;
+  /** the uv rectangle of the reflection the water in view samples, and what the reflection leaves out */
+  private reflRect = new THREE.Vector4();
+  private reflHide: THREE.Object3D[] = [];
+  /** off: the reflection draws everything over the whole texture (for comparisons) */
+  reflectionCull = true;
   borders: BordersRenderer;
   spells: SpellFX;
   demolition: Demolition;
@@ -205,6 +211,7 @@ export class GameRenderer {
     this.scene.add(this.piles.group);
     this.buildings = new BuildingsRenderer(game, this.piles);
     this.scene.add(this.buildings.group);
+    this.scene.add(this.buildings.batches.group);
     this.lanterns = new LanternsRenderer(game, this.buildings);
     this.scene.add(this.lanterns.group);
     this.pigs = new PigsRenderer(game, this.buildings, (n, x, z, v) => this.sound?.(n, x, z, v));
@@ -250,6 +257,7 @@ export class GameRenderer {
     this.scene.add(this.demolition.group);
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
+    this.waterCells = new WaterCells(game.world, WATER_LEVEL);
     const hq = game.buildings.get(game.players[game.local].hq);
     if (hq) {
       this.cam.jumpTo(hq.cx, hq.cz + 4, true);
@@ -260,6 +268,8 @@ export class GameRenderer {
   }
 
   private onResize = () => this.resize();
+  /** materials kept only so that their shaders stay compiled (see warmUp) */
+  private warmKeep: THREE.Material[] = [];
 
   /**
    * Compile every shader the world can need while the loading screen is up: each kind of building
@@ -272,16 +282,29 @@ export class GameRenderer {
     const t = this.cam.target;
     extra.position.set(t.x, t.y, t.z);
     const clip = new Map<string, THREE.Material>();
+    // sites draw their shadow through this too (buildings.ts setClip)
+    const clipDepth = patchedDepthMaterial({ clip: true });
+    const finished: THREE.Group[] = [];
     for (const type of Object.keys(BUILDINGS) as BuildingType[]) {
       for (const p of this.game.players) {
         const mb = buildingBuilder(type, p.id);
-        extra.add(mb.build((k) => getMaterial(k)));
-        extra.add(mb.build((k) => { let m = clip.get(k); if (!m) { m = getClipMaterial(k); clip.set(k, m); } return m; }));
+        const g = mb.build((k) => getMaterial(k));
+        finished.push(g);
+        extra.add(g);
+        const site = mb.build((k) => { let m = clip.get(k); if (!m) { m = getClipMaterial(k); clip.set(k, m); } return m; });
+        site.traverse((o) => { if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).customDepthMaterial = clipDepth; });
+        extra.add(site);
       }
     }
+    // Every site has materials of its own, disposed when it is finished, and a shader goes with the
+    // last material using it: keeping these samples keeps the shaders, or the first site after a
+    // while without any compiled a dozen of them in the middle of the game (~150 ms).
+    this.warmKeep.push(...clip.values(), clipDepth);
     const ships = this.ships.samples(this.game.players.map((p) => p.id));
     extra.add(ships);
     this.scene.add(extra);
+    // and each finished one in the batches, as it will be drawn
+    const batched = finished.map((g) => this.buildings.batches.add(g, (g.children.find((o) => o instanceof ScreenLod) as ScreenLod | undefined) ?? null));
     this.demolition.makePools();
     const hidden: THREE.Object3D[] = [];
     this.scene.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
@@ -294,10 +317,15 @@ export class GameRenderer {
       await Promise.race([ready, new Promise((r) => setTimeout(r, maxMs))]);
       // one frame with it all in view compiles the shadow-map variants too
       this.frame(0, 0);
+      // frame() hides what has nothing to draw yet (empty rubble pools): once more with everything shown
+      for (const o of hidden) o.visible = true;
+      this.renderer.setRenderTarget(this.fx.sceneRT);
+      this.renderer.render(this.scene, this.cam.camera);
+      this.renderer.setRenderTarget(rt);
     } finally {
       for (const o of hidden) o.visible = false;
+      for (const b of batched) this.buildings.batches.remove(b);
       this.scene.remove(extra);
-      for (const m of clip.values()) m.dispose();
       // (the sails' own cloth geometry; everything else is shared)
       ships.traverse((o) => { if ((o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry.userData.sail) (o as THREE.Mesh).geometry.dispose(); });
     }
@@ -314,6 +342,8 @@ export class GameRenderer {
       if (m.geometry) m.geometry.dispose();
     });
     this.fx.dispose();
+    this.buildings.batches.dispose();
+    for (const m of this.warmKeep) m.dispose();
     this.reflection.rt.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -1039,15 +1069,30 @@ export class GameRenderer {
     this.scene.matrixWorldAutoUpdate = false;
     this.renderer.shadowMap.autoUpdate = this.shadowsLive;
 
-    // planar water reflections (only when water is on screen); between two draws the water keeps the
-    // last picture with the matrix it was drawn by, so it stays put in the world while the view moves
+    // planar water reflections: only the part of the texture the water in view samples, and only
+    // what stands close enough to the water to show in it; between two draws the water keeps the
+    // last picture with the matrix and rectangle it was drawn by, so it stays put in the world while
+    // the view moves
     const U2 = this.water.uniforms;
-    const waterSeen = this.waterInView();
+    this.waterInView();
     this.frameNo++;
-    if (this.settings.reflections && waterSeen) {
+    let reflOn = false;
+    if (this.settings.reflections) {
+      this.reflection.setup(this.cam.camera);
+      reflOn = this.waterCells.rect(this.cam.camera, lodView.frustum, this.reflection.textureMatrix, dt, this.reflRect);
+      if (reflOn && !this.reflectionCull) this.reflRect.set(0, 0, 1, 1);
+    }
+    if (reflOn) {
       if (this.reflStale || this.frameNo % this.reflEvery === 0) {
-        this.reflection.render(this.renderer, this.scene, this.cam.camera, [this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones]);
+        const hide = this.reflHide;
+        hide.length = 0;
+        hide.push(this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones);
+        if (this.reflectionCull) this.buildings.dry(hide, reflectionReach(this.cam.camera));
+        this.reflection.render(this.renderer, this.scene, hide, this.reflRect);
         (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
+        // half a texel in, so the filtering never reaches texels that weren't drawn this frame
+        const d = this.reflection.drawn, rt = this.reflection.rt;
+        (U2.uReflRect.value as THREE.Vector4).set(d.x + 0.5 / rt.width, d.y + 0.5 / rt.height, d.z - 0.5 / rt.width, d.w - 0.5 / rt.height);
         this.reflStale = false;
       }
       U2.uReflOn.value = 1;

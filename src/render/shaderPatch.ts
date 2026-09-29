@@ -214,6 +214,9 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   (mat as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
   (mat as any).userData.uWindAmp = uWindAmp;
+  // what batching needs to know (buildingBatches.ts leaves wind-bent and clipped materials alone)
+  (mat as any).userData.wind = o.wind;
+  (mat as any).userData.clip = !!o.clip;
   const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.key ?? ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
@@ -244,7 +247,9 @@ ${o.vertexHead ?? ''}
     } else if (o.wind !== 'none') {
       windCode = `
   {
-    #ifdef USE_INSTANCING
+    #if defined(USE_BATCHING)
+      vec3 ip = vec3(batchingMatrix[3][0], batchingMatrix[3][1], batchingMatrix[3][2]);
+    #elif defined(USE_INSTANCING)
       vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
     #else
       vec3 ip = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
@@ -268,6 +273,9 @@ ${windCode}`);
     vs = vs.replace('#include <project_vertex>', `#include <project_vertex>
   {
     vec4 wpp = vec4(transformed, 1.0);
+    #ifdef USE_BATCHING
+      wpp = batchingMatrix * wpp;
+    #endif
     #ifdef USE_INSTANCING
       wpp = instanceMatrix * wpp;
     #endif

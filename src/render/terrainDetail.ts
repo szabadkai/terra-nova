@@ -445,12 +445,17 @@ export function getTerrainDetail(immediate = false) {
     [DETAIL.grass, grassLayer, 9, 2.2], [DETAIL.dirt, dirtLayer, 14, 2.6], [DETAIL.forest, forestLayer, 9, 2.4],
     [DETAIL.rock, rockLayer, 10, 2.6], [DETAIL.sand, sandLayer, 10, 1.5], [DETAIL.mud, mudLayer, 9, 1.8],
   ];
+  // Once an array is on the GPU only the painted layer goes up (six full uploads of both, 12 MB
+  // each time, stalled the first second of play by ~80 ms). Until then the whole array must go:
+  // a partial update on a texture's first upload would leave the other layers uninitialised.
+  const onGpu = new Set<THREE.Texture>();
+  for (const t of [c.albedo, c.normal]) t.onUpdate = () => onGpu.add(t);
   const paint = ([layer, g, str, cav]: (typeof gens)[number]) => {
     pack(g(), layer, alb, nrm, str, cav);
-    // full re-upload: a partial layer update on a texture's first upload would leave the
-    // other layers uninitialised
-    c.albedo.needsUpdate = true;
-    c.normal.needsUpdate = true;
+    for (const t of [c.albedo, c.normal]) {
+      if (onGpu.has(t)) t.addLayerUpdate(layer);
+      t.needsUpdate = true;
+    }
   };
   if (immediate) gens.forEach(paint);
   else {

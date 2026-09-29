@@ -1335,7 +1335,8 @@ const designs: Partial<Record<BuildingType, Design>> = {
     mb.add('soil', box(2.6, 0.03, 1.3), 0, 0.015, 0.7);
     mb.add('soil', box(1.1, 0.03, 1.2), 0.8, 0.015, -0.7);
     mb.add('wood', box(0.7, 0.16, 0.24, 3), 0.5, 0.08, 1.05);
-    mb.add('water', box(0.62, 0.02, 0.17), 0.5, 0.15, 1.05);
+    // (the water stands a hair above the rim: flush with it, the two faces fight over the pixels)
+    mb.add('water', box(0.62, 0.02, 0.17), 0.5, 0.155, 1.05);
     mb.add('iron', cyl(0.08, 0.07, 0.14, 8), 1.05, 0, 0.95);
     mb.add('water', new THREE.CircleGeometry(0.07, 8), 1.05, 0.13, 0.95, 0, -Math.PI / 2, 0);
     mb.add('hay', sphere(0.28, 10, 8, Math.PI * 2, Math.PI / 2), -0.95, 0, 0.9);

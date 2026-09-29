@@ -22,6 +22,7 @@ export class WaterRenderer {
       tReflect: { value: null },
       uReflMat: { value: new THREE.Matrix4() },
       uReflOn: { value: 0 },
+      uReflRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uWakes: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
       uWakeN: { value: 0 },
     };
@@ -43,6 +44,7 @@ uniform vec3 uSunCol;
 uniform sampler2D tReflect;
 uniform mat4 uReflMat;
 uniform float uReflOn;
+uniform vec4 uReflRect; // the part of tReflect drawn this frame, inset by half a texel
 uniform vec4 uWakes[8]; // ship x, z, heading, speed
 uniform float uWakeN;
 #define C(r,g,b) pow(vec3(float(r),float(g),float(b))/255.0, vec3(2.2))
@@ -133,7 +135,7 @@ vec3 wEmis;
     totalEmissiveRadiance += uSkyCol * fres * 0.25 * (1.0 - wFoam) * (1.0 - uReflOn) + wEmis;
     if (uReflOn > 0.5) {
       vec4 rc = uReflMat * vec4(vWPos, 1.0);
-      vec2 ruv = rc.xy / rc.w + wSlope * 0.06;
+      vec2 ruv = clamp(rc.xy / rc.w + wSlope * 0.06, uReflRect.xy, uReflRect.zw);
       vec3 refl = texture2D(tReflect, ruv).rgb;
       float k = clamp(0.1 + pow(1.0 - ndv, 3.0) * 0.6, 0.0, 1.0) * (1.0 - wFoam) * smoothstep(0.02, 0.35, wDepth);
       diffuseColor.rgb *= 1.0 - k * 0.3;

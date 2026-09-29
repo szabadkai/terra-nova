@@ -101,7 +101,8 @@ function thumbnail(): string | undefined {
     const sx = Math.max(0, Math.min(w.W - side, (x0 + x1 - side) / 2)), sy = Math.max(0, Math.min(w.H - side, (y0 + y1 - side) / 2));
     const c = document.createElement('canvas');
     c.width = c.height = 96;
-    c.getContext('2d')!.drawImage(mm, sx * mm.width / w.W, sy * mm.height / w.H, side * mm.width / w.W, side * mm.height / w.H, 0, 0, 96, 96);
+    // (a CPU canvas, like the minimap, so the thumbnail never waits on the GPU)
+    c.getContext('2d', { willReadFrequently: true })!.drawImage(mm, sx * mm.width / w.W, sy * mm.height / w.H, side * mm.width / w.W, side * mm.height / w.H, 0, 0, 96, 96);
     return c.toDataURL('image/jpeg', 0.8);
   } catch {
     return undefined;

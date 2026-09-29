@@ -158,6 +158,23 @@ export class Demolition {
   /** Every rubble pool, made up front so their shaders compile with the rest (see GameRenderer.warmUp). */
   makePools() {
     for (const keys of Object.values(KIND_KEYS)) for (const k of keys) this.pool(k);
+    // a scorch mark that never shows: each mark has a material of its own, disposed as it fades, and
+    // this one keeps their shader compiled between fires
+    if (!this.scorchProto) {
+      this.scorchProto = new THREE.Mesh(this.scorchGeo, this.scorchMaterial());
+      this.scorchProto.visible = false;
+      this.scorchProto.renderOrder = 1;
+      this.scorchProto.receiveShadow = true;
+      this.group.add(this.scorchProto);
+    }
+  }
+  private scorchProto: THREE.Mesh | null = null;
+
+  private scorchMaterial() {
+    return patchMaterial(new THREE.MeshStandardMaterial({
+      color: 0x0b0907, roughness: 1, alphaMap: this.scorchTex, transparent: true, opacity: 0, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    }), { snow: 0, grime: 0, key: 'scorch' });
   }
 
   private pool(key: string): Pool {
@@ -215,10 +232,7 @@ export class Demolition {
   }
 
   private makeScorch(w: Wreck) {
-    const mat = patchMaterial(new THREE.MeshStandardMaterial({
-      color: 0x0b0907, roughness: 1, alphaMap: this.scorchTex, transparent: true, opacity: 0, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
-    }), { snow: 0, grime: 0, key: 'scorch' });
+    const mat = this.scorchMaterial();
     const mesh = new THREE.Mesh(this.scorchGeo, mat);
     const r = (w.size - 1) / 2 + 0.45;
     mesh.scale.set(r, 1, r);
