@@ -191,6 +191,8 @@ const TERRAIN_MAP = /* glsl */ `
 
   vec3 col = vec3(0.0);
   float rough = 0.0;
+  // each layer's relief averages zero: one ground sitting higher than the next would make the
+  // height-blend contour between them a step, which the derivative bump draws as a dark, blocky rim
   float bump = 0.0;
 
   // grass
@@ -202,7 +204,7 @@ const TERRAIN_MAP = /* glsl */ `
     c *= dMod(dA0, detK);
     c = seasonGrass(c, n1.g);
     dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * v[0]; dCav += dM0.z * v[0]; dRough += dM0.w * v[0];
-    col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5) * 0.35 * (1.0 - detK) * v[0];
+    col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5 - 0.5) * 0.35 * (1.0 - detK) * v[0];
   }
   // meadow with flowers
   if (v[1] > 0.0) {
@@ -240,7 +242,7 @@ const TERRAIN_MAP = /* glsl */ `
       }
     }
     dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * (1.0 - f) * v[1]; dCav += mix(dM0.z, 1.0, f) * v[1]; dRough += dM0.w * v[1];
-    col += c * v[1]; rough += 0.93 * v[1]; bump += (n4.g * 0.4 * (1.0 - detK) + f * 0.6) * 0.35 * v[1];
+    col += c * v[1]; rough += 0.93 * v[1]; bump += ((n4.g - 0.5) * 0.4 * (1.0 - detK) + f * 0.6) * 0.35 * v[1];
   }
   // forest floor
   if (v[2] > 0.0) {
@@ -259,7 +261,7 @@ const TERRAIN_MAP = /* glsl */ `
     c *= 0.86 + 0.26 * mix(0.5, n4.b, farFade * (1.0 - detK));
     c *= dMod(dA1, detK);
     dg += vec3(dM1.x, 0.0, dM1.y) * 0.8 * v[2]; dCav += dM1.z * v[2]; dRough += dM1.w * v[2];
-    col += c * v[2]; rough += 0.97 * v[2]; bump += n4.b * 0.4 * (1.0 - detK) * v[2];
+    col += c * v[2]; rough += 0.97 * v[2]; bump += (n4.b - 0.5) * 0.4 * (1.0 - detK) * v[2];
   }
   // dirt / packed earth
   if (v[3] > 0.0) {
@@ -270,7 +272,7 @@ const TERRAIN_MAP = /* glsl */ `
     c = mix(c, c * 0.8, pathM * 0.35 * (1.0 - n4.r));
     c *= dMod(dA2, detK);
     dg += vec3(dM2.x, 0.0, dM2.y) * 0.9 * v[3]; dCav += dM2.z * v[3]; dRough += dM2.w * v[3];
-    col += c * v[3]; rough += 0.95 * v[3]; bump += (n3.r * 0.4 + peb * 0.8) * 0.4 * v[3];
+    col += c * v[3]; rough += 0.95 * v[3]; bump += ((n3.r - 0.5) * 0.4 + peb * 0.8) * 0.4 * v[3];
   }
   // sand
   if (v[4] > 0.0) {
@@ -281,7 +283,7 @@ const TERRAIN_MAP = /* glsl */ `
     c = mix(c, c * 0.58, wetS);
     c *= dMod(dA3, detK);
     dg += vec3(dM3.x, 0.0, dM3.y) * mix(0.6, 0.25, wetS) * v[4]; dCav += dM3.z * v[4]; dRough += dM3.w * v[4];
-    col += c * v[4]; rough += mix(0.9, 0.35, wetS) * v[4]; bump += rip * 0.25 * v[4];
+    col += c * v[4]; rough += mix(0.9, 0.35, wetS) * v[4]; bump += (rip - 0.5) * 0.25 * v[4];
   }
   // rock (triplanar so cliffs don't stretch)
   if (v[5] > 0.0) {
@@ -338,7 +340,7 @@ const TERRAIN_MAP = /* glsl */ `
       c = mix(c, C(250,200,60), gold);
       tEmis += C(255,190,60) * gold * (0.35 + 0.65 * pow(0.5 + 0.5 * sin(uTime * 2.5 + on1.a * 40.0), 8.0)) * 1.4;
     }
-    col += c * v[5]; rough += mix(0.72, 0.3, gold) * v[5]; bump += (r1.r * 0.3 + r2.r * 0.5 + r3.g * 0.3 - crack * 0.6) * 1.1 * v[5];
+    col += c * v[5]; rough += mix(0.72, 0.3, gold) * v[5]; bump += (r1.r * 0.3 + r2.r * 0.5 + r3.g * 0.3 - 0.55 - crack * 0.6) * 1.1 * v[5];
   }
   // snow
   if (v[6] > 0.0) {
@@ -347,7 +349,7 @@ const TERRAIN_MAP = /* glsl */ `
     tEmis += vec3(0.8, 0.9, 1.0) * pow(n5.a, 40.0) * 2.0 * farFade;
     c *= dMod(dA3, detK * 0.25);
     dg += vec3(dM3.x, 0.0, dM3.y) * 0.3 * v[6]; dCav += mix(1.0, dM3.z, 0.3) * v[6]; dRough += 0.5 * v[6];
-    col += c * v[6]; rough += 0.55 * v[6]; bump += n2.r * 0.4 * v[6];
+    col += c * v[6]; rough += 0.55 * v[6]; bump += (n2.r - 0.5) * 0.4 * v[6];
   }
   // swamp
   if (v[7] > 0.0) {
@@ -356,7 +358,7 @@ const TERRAIN_MAP = /* glsl */ `
     c = mix(c, C(34,46,44), pud * 0.85);
     c *= dMod(dA5, detK * (1.0 - pud * 0.8));
     dg += vec3(dM5.x, 0.0, dM5.y) * 0.7 * (1.0 - pud) * v[7]; dCav += mix(dM5.z, 1.0, pud) * v[7]; dRough += mix(dM5.w, 0.5, pud) * v[7];
-    col += c * v[7]; rough += mix(0.9, 0.08, pud) * v[7]; bump += (1.0 - pud) * n3.r * 0.4 * v[7];
+    col += c * v[7]; rough += mix(0.9, 0.08, pud) * v[7]; bump += ((1.0 - pud) * n3.r * 0.4 - 0.2) * v[7];
   }
 
   // tilled farm soil
