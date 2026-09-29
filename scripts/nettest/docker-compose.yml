@@ -1,0 +1,71 @@
+# The NAT lab: two browsers in two LANs, each behind its own router doing NAT (cone or symmetric, with
+# latency and loss to taste), a fake internet in between with the game's page and a STUN/TURN server, and
+# the real Nostr relays reachable through the routers. See run.sh for the scenarios.
+networks:
+  internet:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
+  lanA:
+    internal: true
+    ipam: { config: [{ subnet: 172.31.1.0/24 }] }
+  lanB:
+    internal: true
+    ipam: { config: [{ subnet: 172.31.2.0/24 }] }
+
+services:
+  web:
+    image: nginx:alpine
+    volumes: ['../../dist:/usr/share/nginx/html:ro']
+    networks: { internet: { ipv4_address: 172.30.0.10 } }
+
+  turn:
+    image: coturn/coturn:4.6-alpine
+    command: >
+      -n --log-file=stdout --listening-ip=172.30.0.20 --relay-ip=172.30.0.20 --external-ip=172.30.0.20
+      --verbose --realm=lab --user=tn:tn --lt-cred-mech --fingerprint --no-tls --no-dtls --min-port=49160 --max-port=49600
+    networks: { internet: { ipv4_address: 172.30.0.20 } }
+
+  routerA:
+    image: nettest-router
+    build: { context: ., dockerfile: router.Dockerfile }
+    cap_add: [NET_ADMIN]
+    sysctls: { net.ipv4.ip_forward: 1 }
+    environment: { NAT: '${NAT_A:-cone}', NETEM: '${NETEM_A:-}', TRACE: '${TRACE:-0}' }
+    networks:
+      internet: { ipv4_address: 172.30.0.101 }
+      lanA: { ipv4_address: 172.31.1.2 }
+
+  routerB:
+    image: nettest-router
+    build: { context: ., dockerfile: router.Dockerfile }
+    cap_add: [NET_ADMIN]
+    sysctls: { net.ipv4.ip_forward: 1 }
+    environment: { NAT: '${NAT_B:-cone}', NETEM: '${NETEM_B:-}', TRACE: '${TRACE:-0}' }
+    networks:
+      internet: { ipv4_address: 172.30.0.102 }
+      lanB: { ipv4_address: 172.31.2.2 }
+
+  clientA:
+    image: nettest-client
+    build: { context: .., dockerfile: nettest/client/Dockerfile }
+    cap_add: [NET_ADMIN]
+    dns: [1.1.1.1, 8.8.8.8] # (Docker's own resolver does not forward on an internal network)
+    depends_on: [web, turn, routerA]
+    volumes: ['./out:/out']
+    networks: { lanA: { ipv4_address: 172.31.1.10 } }
+    command: >
+      sh -c "ip route replace default via 172.31.1.2 && ip route && ([ '${TRACE:-0}' = 1 ] && (tcpdump -lni eth0 udp and not port 53 and not port 3478 and not port 443 2>/dev/null | sed 's/^/pkt /' | head -60 &); true) && sleep 2 &&
+      node /app/nettest.mjs --role host --code ${CODE:-LABTST} --url http://172.30.0.10/ --exe /usr/bin/chromium --gl swiftshader --norender --trace --connect 240
+      --ice '${ICE:-stun:172.30.0.20:3478}' ${POLICY:+--policy ${POLICY}} --minutes ${MINUTES:-1} --json /out/host.json"
+
+  clientB:
+    image: nettest-client
+    build: { context: .., dockerfile: nettest/client/Dockerfile }
+    cap_add: [NET_ADMIN]
+    dns: [1.1.1.1, 8.8.8.8]
+    depends_on: [web, turn, routerB]
+    volumes: ['./out:/out']
+    networks: { lanB: { ipv4_address: 172.31.2.10 } }
+    command: >
+      sh -c "ip route replace default via 172.31.2.2 && sleep 6 &&
+      node /app/nettest.mjs --role guest --code ${CODE:-LABTST} --url http://172.30.0.10/ --exe /usr/bin/chromium --gl swiftshader --norender --trace --connect 240
+      --ice '${ICE:-stun:172.30.0.20:3478}' ${POLICY:+--policy ${POLICY}} --minutes ${MINUTES:-1} --json /out/guest.json"

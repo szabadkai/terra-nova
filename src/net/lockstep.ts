@@ -52,6 +52,8 @@ export class Lockstep {
   private hashes = new Map<number, { local?: number; remote: Map<number, number> }>();
   private waitingSince = -1;
   private waiting = false;
+  /** the seats heard from at least once: only those can be given up for lost (a friend still building the world is not) */
+  private heard = new Set<number>();
 
   /** `humans`: the players' slots, the host first; `delay` in turns (0 alone). */
   constructor(public g: Game, public humans: number[], public delay: number) {}
@@ -92,7 +94,7 @@ export class Lockstep {
           this.acc = Math.min(this.acc, TURN_S);
           if (this.waitingSince < 0) this.waitingSince = now;
           else if (!this.waiting && now - this.waitingSince > 500) { this.waiting = true; this.onEvent({ type: 'waiting', slot: this.missing(this.turn) }); }
-          else if (now - this.waitingSince > 15000) { this.frozen = true; this.onEvent({ type: 'lost', slot: this.missing(this.turn) }); }
+          else if (now - this.waitingSince > 15000 && this.heard.has(this.missing(this.turn))) { this.frozen = true; this.onEvent({ type: 'lost', slot: this.missing(this.turn) }); }
           break;
         }
         if (this.waiting) { this.waiting = false; this.onEvent({ type: 'ready' }); }
@@ -122,6 +124,7 @@ export class Lockstep {
     if (!this.humans.includes(slot) || slot === this.local) return false;
     // not for a turn already begun (a repeat of one that came in time), nor further ahead than anyone can be
     if (!Number.isInteger(pkt.turn) || pkt.turn < this.turn || (pkt.turn === this.turn && this.tickInTurn >= 0) || pkt.turn > this.turn + 2 * this.delay) return false;
+    this.heard.add(slot);
     const by = this.slotCmds(pkt.turn);
     if (by.has(slot)) return false;
     by.set(slot, Array.isArray(pkt.cmds) ? pkt.cmds : []);

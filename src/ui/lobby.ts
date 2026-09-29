@@ -51,17 +51,24 @@ export class Lobby {
     input.focus();
   }
 
-  /** In a room: its code, the seats, and for the host the start button. */
-  showRoom(code: string, hosting: boolean) {
+  /** In a room: its code (and for the host a link to send), the seats, and for the host the start button. */
+  showRoom(code: string, hosting: boolean, invite?: string) {
     this.card.innerHTML = `
       <div class="field"><label>Room code</label><div class="code" title="Select and copy">${code}</div>
-        <p class="note">${hosting ? 'Tell your friend this code; they enter it under “Play with a friend”.' : 'You are in the room; the host starts the game.'}</p></div>
+        <p class="note">${hosting ? 'Tell your friend this code; they enter it under “Play with a friend”.' : 'You are in the room; the host starts the game.'}</p>
+        ${hosting && invite ? `<div class="seedrow"><input id="invite" readonly value="${invite}"><button id="copy" title="Copy the link">⎘</button></div>` : ''}</div>
       <div class="field"><label>Kingdoms</label><div class="seats"></div></div>
       <p class="lstatus"></p>
       ${hosting ? '<button class="wide primary big" id="start" disabled>Start the game</button>' : ''}
       <button class="wide" id="back">Leave</button>`;
     const start = this.card.querySelector<HTMLButtonElement>('#start');
     if (start) start.onclick = () => this.hooks.start();
+    const copy = this.card.querySelector<HTMLButtonElement>('#copy');
+    if (copy) copy.onclick = () => {
+      const input = this.card.querySelector<HTMLInputElement>('#invite')!;
+      input.select();
+      navigator.clipboard?.writeText(input.value).then(() => { copy.textContent = '✓'; setTimeout(() => (copy.textContent = '⎘'), 1500); }).catch(() => {});
+    };
     this.card.querySelector<HTMLButtonElement>('#back')!.onclick = () => this.hooks.back();
   }
 
