@@ -50,16 +50,14 @@ const RES: Record<Quality, number> = { low: 0.7, medium: 0.85, high: AUTO_FLOOR,
  */
 const COST: Record<Quality, [number, number]> = { low: [0.8, 1.5], medium: [1.0, 1.6], high: [1.2, 1.65], ultra: [1.3, 1.75] };
 /**
- * What ambient occlusion adds, in the same terms: a second pass over the scene for its normals and
- * depth (a part that does not grow with the pixels) and the occlusion and its denoising at every
- * pixel. Fitted to High and Ultra with and without it, interleaved at 1280x720 to 3440x1440 and 2x,
- * in the start view and in a 25-minute town: +3 ms at 1600x900 and +8 ms at 3440x1440 on an idle
- * machine (a frame of 5 and 10-12 ms), 1.4 to 1.9 times a frame at High and alike at Ultra, much the
- * same in a town as in a new world. The small screens count least, where the frame is held up by the
- * CPU and the occlusion overlaps with it; the timing only ever steps down, so a guess that is too
- * high is corrected and one that is too low is not.
+ * What ambient occlusion adds, in the same terms. It works at half size from the depth the scene
+ * leaves (postfx.ts), so almost all of it grows with the pixels: timed against no occlusion and
+ * against the old full-size pass that drew the scene a second time (interleaved, High, a 25-minute
+ * town at 1280x720 to 3440x1440 and 2x), it costs 0.13 to 0.26 of what that did, a frame 1.04 to
+ * 1.21 times as long; that old pass (+3 ms at 1600x900 and +8 ms at 3440x1440 on an idle machine)
+ * is what these are scaled from.
  */
-const AO_COST: [number, number] = [0.8, 1.3];
+const AO_COST: [number, number] = [0.05, 0.35];
 /** a grown town costs this much more than the world of a new game (from 1.1x on big screens to 1.8x on small ones) */
 export const LATE = 1.25;
 

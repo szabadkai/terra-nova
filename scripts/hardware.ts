@@ -57,8 +57,10 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
     { name: 'GTX 1060 on a 4K screen', s: sig({ gpu: 'NVIDIA GeForce GTX 1060 6GB/PCIe/SSE2', width: 3840, height: 2160 }), level: 'low' },
     { name: 'RTX 3060 at 1080p', s: sig({ gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)' }), level: 'ultra', ao: true },
     { name: 'Mac with Safari (GPU hidden)', s: sig({ gpu: 'Apple GPU', width: 1512, height: 982, dpr: 2, memory: 0 }), level: 'high', ao: true },
-    { name: 'M1 Pro laptop at 2x (holds High, not its occlusion)', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'high' },
-    { name: 'M5 Pro laptop at 2x (holds Ultra, not its occlusion)', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'ultra' },
+    { name: 'M1 Pro laptop at 2x', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'high', ao: true },
+    { name: 'M5 Pro laptop at 2x', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'ultra', ao: true },
+    { name: 'M3 laptop at 2x (holds High, not its occlusion)', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3, Unspecified Version)', width: 1440, height: 900, dpr: 2 }), level: 'high' },
+    { name: 'M3 Pro laptop at 2x (holds Ultra, not its occlusion)', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'ultra' },
     { name: 'no GPU (SwiftShader)', s: sig({ gpu: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)' }), level: 'low' },
     { name: 'a Chromebook with 2 GB', s: sig({ gpu: 'Mali-G72', width: 1366, height: 768, memory: 2, cores: 4 }), level: 'low' },
     { name: 'a strong GPU with 4 GB of memory', s: sig({ gpu: 'NVIDIA GeForce RTX 4080', memory: 4 }), level: 'medium' },
@@ -80,12 +82,12 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
 
 // --- what ambient occlusion costs, and the ladder the detection steps down
 {
-  // measured: a frame takes 1.4 to 1.9 times as long with it at High, at 1280x720 to 3440x1440 and at 2x
+  // measured: a frame takes 1.04 to 1.21 times as long with it at High, at 1280x720 to 3440x1440 and at 2x
   for (const [w, h, dpr] of [[1280, 720, 1], [1920, 1080, 1], [2560, 1440, 1], [3440, 1440, 1], [1440, 900, 2]]) {
     const s = { width: w, height: h, dpr };
     for (const q of ['high', 'ultra'] as Quality[]) {
       const r = frameMs(q, s, 1, true) / frameMs(q, s, 1, false);
-      check(r > 1.4 && r < 1.9, `${w}x${h} at ${dpr}x, ${q}: occlusion makes the frame ${r.toFixed(2)} times as long (measured 1.4 to 1.9)`);
+      check(r > 1.04 && r < 1.21, `${w}x${h} at ${dpr}x, ${q}: occlusion makes the frame ${r.toFixed(2)} times as long (measured 1.04 to 1.21)`);
     }
   }
   check(frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1, true) > frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1), 'the cost can be asked of any level');
@@ -111,7 +113,7 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   check(d.timed.map(([q, , ao]) => `${q}${ao ? '+' : ''}`).join(' ') === 'ultra+ ultra high+ high medium', 'in the order of the ladder: the occlusion of a level before the level');
   d = confirmLevel(known, () => 80, BUDGET);
   check(d.level === 'medium' && d.timed.length === 5, `a known GPU goes at most two levels below its guess, however slow the moment (${d.level}: ${tried(d)})`);
-  const high = guessLevel(sig({ gpu: 'Apple M1 Pro', width: 1512, height: 982, dpr: 2 }), BUDGET);
+  const high = guessLevel(sig({ gpu: 'Apple M3', width: 1440, height: 900, dpr: 2 }), BUDGET);
   check(high.level === 'high' && !high.ao, 'a machine that holds High but not its occlusion starts without it');
   d = confirmLevel(high, ms({ ultra: 30, high: 12, medium: 8, low: 5 }, 9), BUDGET);
   check(d.level === 'high' && !d.ao && d.timed.length === 1, `and is timed without it (${tried(d)})`);

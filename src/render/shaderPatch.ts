@@ -67,6 +67,12 @@ export interface PatchOpts {
   snow?: number;
   /** splash-back grime where the surface meets the ground (0 = none, 1 = full) */
   grime?: number;
+  /**
+   * How much of the ambient occlusion shows on this material (default 1), left in the scene's alpha
+   * for postfx.ts. Its normals are rebuilt from the depth, which makes a blade of grass seen edge-on
+   * face the camera, and then the ground around it darkens it.
+   */
+  ao?: number;
 }
 
 const COMMON_FRAG = /* glsl */ `
@@ -217,7 +223,7 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   // what batching needs to know (buildingBatches.ts leaves wind-bent and clipped materials alone)
   (mat as any).userData.wind = o.wind;
   (mat as any).userData.clip = !!o.clip;
-  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.key ?? ''}`;
+  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.ao ?? 1}|${o.key ?? ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
@@ -347,7 +353,7 @@ uniform float uGrime;`);
     if (o.lights) post += `\n  outgoingLight += diffuseColor.rgb * ((uNight > 0.001 ? nightLights(vWPos) * uNight : vec3(0.0)) + flashLight(vWPos));`;
     if (o.fog) post += `\n  outgoingLight = applyFog(outgoingLight, vWPos);`;
     fs = fs.replace('#include <opaque_fragment>', `${post}
-#include <opaque_fragment>`);
+#include <opaque_fragment>${o.ao !== undefined && o.ao !== 1 ? `\n  gl_FragColor.a = ${o.ao.toFixed(2)};` : ''}`);
     shader.fragmentShader = fs;
     patchCount++;
   };

@@ -4,13 +4,15 @@ import { WATER_LEVEL } from '../game/world';
 import { patchMaterial } from './shaderPatch';
 import { getWaterNormal } from './textures';
 
+/** how far the water's surface reaches past the map on each side */
+export const WATER_MARGIN = 260;
+
 export class WaterRenderer {
   mesh: THREE.Mesh;
   uniforms: Record<string, THREE.IUniform>;
 
   constructor(W: number, H: number, heightTex: THREE.Texture) {
-    const margin = 260;
-    const geo = new THREE.PlaneGeometry(W + margin * 2, H + margin * 2, 1, 1);
+    const geo = new THREE.PlaneGeometry(W + WATER_MARGIN * 2, H + WATER_MARGIN * 2, 1, 1);
     geo.rotateX(-Math.PI / 2);
     geo.translate(W / 2, WATER_LEVEL, H / 2);
     this.uniforms = {
@@ -30,8 +32,6 @@ export class WaterRenderer {
       color: 0xffffff, roughness: 0.06, metalness: 0.0, transparent: true, depthWrite: false,
       envMapIntensity: 1.2,
     });
-    // (its surface is what ambient occlusion should darken, though it does not write depth)
-    mat.userData.solidAO = true;
     patchMaterial(mat, {
       key: 'water',
       snow: 0,

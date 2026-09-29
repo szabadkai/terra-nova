@@ -1,15 +1,31 @@
 // Post-processing: the scene renders once into a multisampled HDR target, which is resolved once;
-// optional GTAO, then bloom blurs the bright parts at reduced resolution, and a single final pass
-// to the screen does the tilt-shift blur, adds the bloom, tone maps and grades. The wide part of
-// the tilt-shift blur is worked out at half size beforehand, from a half-size copy of the scene
-// that also stands in for the bloom's own bright pass.
+// optional ambient occlusion at half size from the depth the scene leaves, then bloom blurs the
+// bright parts at reduced resolution, and a single final pass to the screen scales the occlusion
+// up, does the tilt-shift blur, adds the bloom, tone maps and grades. The wide part of the
+// tilt-shift blur is worked out at half size beforehand, from a half-size copy of the scene (with
+// its occlusion) that also stands in for the bloom's own bright pass.
 // (Each pass of a composer chain rewrote a full-screen multisampled target; at 3440x1440 that
 // alone cost more than the whole bloom.)
 import * as THREE from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
-import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { GTAOShader, generateMagicSquareNoise } from 'three/examples/jsm/shaders/GTAOShader.js';
+import { generatePdSamplePointInitializer } from 'three/examples/jsm/shaders/PoissonDenoiseShader.js';
 import { G } from './shaderPatch';
+import { WATER_LEVEL } from '../game/world';
+import { WATER_MARGIN } from './water';
+
+/** GLSL: where a view ray (`ray`, world offset per unit of view depth from `cam`) meets the water, in view depth (or `far`) */
+const WATER_HIT = /* glsl */ `
+  uniform float uWater;
+  uniform vec4 uWaterBox;
+  float waterDepth(vec3 cam, vec3 ray, float far) {
+    if (ray.y >= 0.0 || cam.y <= uWater) return far;
+    float t = (uWater - cam.y) / ray.y;
+    vec2 h = cam.xz + ray.xz * t;
+    return all(greaterThan(h, uWaterBox.xy)) && all(lessThan(h, uWaterBox.zw)) ? t : far;
+  }
+`;
 
 const FinalShader = {
   uniforms: {
@@ -38,15 +54,37 @@ const FinalShader = {
     uRain: { value: 0 },
     uRainSlant: { value: 0 },
     uNight: { value: 0 },
+    // ambient occlusion (HalfAO), scaled up to the pixel
+    tDepth: { value: null as THREE.Texture | null },
+    tAO: { value: null as THREE.Texture | null },
+    uAO: { value: 0 },
+    uAORes: { value: new THREE.Vector2(1, 1) },
+    cameraNear: { value: 0.5 },
+    cameraFar: { value: 600 },
+    uCamPos: { value: new THREE.Vector3() },
+    uProjInv: { value: new THREE.Matrix4() },
+    uCamWorld: { value: new THREE.Matrix4() },
+    uWater: { value: WATER_LEVEL },
+    uWaterBox: { value: new THREE.Vector4() },
   },
   vertexShader: /* glsl */ `
     precision highp float;
     uniform mat4 modelViewMatrix;
     uniform mat4 projectionMatrix;
+    uniform mat4 uProjInv;
+    uniform mat4 uCamWorld;
     attribute vec3 position;
     attribute vec2 uv;
     varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    varying vec3 vRay;
+    void main() {
+      vUv = uv;
+      // the view ray through the pixel, as a world offset per unit of view depth
+      vec4 v = uProjInv * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+      vec3 d = v.xyz / v.w;
+      vRay = mat3(uCamWorld) * (d / -d.z);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
   fragmentShader: /* glsl */ `
     precision highp float;
     uniform sampler2D tScene; uniform sampler2D tBloom; uniform sampler2D tBlur; uniform float uHalfOn; uniform float uBloom; uniform float uSharpen;
@@ -54,11 +92,32 @@ const FinalShader = {
     uniform float uTime; uniform float uSat; uniform float uContrast; uniform float uVignette;
     uniform vec3 uWarm; uniform vec3 uCool; uniform float uGrain; uniform float uCA; uniform float uFlash;
     uniform float uRain; uniform float uRainSlant; uniform float uNight;
+    uniform highp sampler2D tDepth; uniform highp sampler2D tAO; uniform float uAO; uniform vec2 uAORes;
+    uniform float cameraNear; uniform float cameraFar; uniform vec3 uCamPos;
+    ${WATER_HIT}
     #include <tonemapping_pars_fragment>
     #include <colorspace_pars_fragment>
     varying vec2 vUv;
+    varying vec3 vRay;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    // the half-size occlusion at this pixel: of the four nearest texels, those whose depth is close
+    // to the pixel's own count the most, so it doesn't bleed across the edges of things
+    float occlusion() {
+      float lz = cameraNear * cameraFar / (cameraFar - (cameraFar - cameraNear) * texture2D(tDepth, vUv).x);
+      lz = min(lz, waterDepth(uCamPos, vRay, cameraFar));
+      vec2 hp = vUv * uAORes - 0.5;
+      vec2 f = fract(hp);
+      vec2 px = 1.0 / uAORes;
+      vec2 b = (floor(hp) + 0.5) * px;
+      vec4 a0 = texture2D(tAO, b), a1 = texture2D(tAO, b + vec2(px.x, 0.0));
+      vec4 a2 = texture2D(tAO, b + vec2(0.0, px.y)), a3 = texture2D(tAO, b + px);
+      vec4 w = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+      w /= 0.002 * lz + abs(vec4(a0.g, a1.g, a2.g, a3.g) - lz);
+      return dot(w, vec4(a0.r, a1.r, a2.r, a3.r)) / dot(w, vec4(1.0));
+    }
     void main(){
+      // (the scene's alpha says how much of it shows: see PatchOpts.ao)
+      float ao = uAO > 0.0 ? mix(1.0, occlusion(), uAO * texture2D(tScene, vUv).a) : 1.0;
       vec2 c = vUv - 0.5;
       float r2 = dot(c, c);
       // tilt-shift: the miniature look blurs the top and bottom of the view
@@ -68,7 +127,7 @@ const FinalShader = {
       if (r < 0.35) {
         // sharp: just a subtle chromatic aberration towards the edges
         vec2 off = c * r2 * uCA * 5.0;
-        col = vec3(texture2D(tScene, vUv + off).r, texture2D(tScene, vUv).g, texture2D(tScene, vUv - off).b);
+        col = vec3(texture2D(tScene, vUv + off).r, texture2D(tScene, vUv).g, texture2D(tScene, vUv - off).b) * ao;
         if (uSharpen > 0.0) {
           // unsharp mask on the upscaled image (clamped, so bright edges do not ring)
           vec2 px = 1.0 / uRes;
@@ -91,8 +150,9 @@ const FinalShader = {
             float w = 1.0 + dot(s, vec3(0.3)) * 0.4; // slight bokeh emphasis on bright spots
             acc += s * w; wsum += w;
           }
-          col = acc / wsum;
+          col = acc / wsum * ao;
         }
+        // (the half-size copy has its occlusion already)
         if (wh > 0.0) col = mix(col, texture2D(tBlur, vUv).rgb, wh);
       }
       if (uBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
@@ -151,15 +211,19 @@ const QUAD_VS = /* glsl */ `
   varying vec2 vUv;
   void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
-/** Half-size copy of the scene: one filtered tap between four texels averages them. */
+/** Half-size copy of the scene: one filtered tap between four texels averages them. The occlusion is the same size. */
 const HalfShader = {
-  uniforms: { tScene: { value: null as THREE.Texture | null } },
+  uniforms: { tScene: { value: null as THREE.Texture | null }, tAO: { value: null as THREE.Texture | null }, uAO: { value: 0 } },
   vertexShader: QUAD_VS,
   fragmentShader: /* glsl */ `
     precision highp float;
-    uniform sampler2D tScene;
+    uniform sampler2D tScene; uniform sampler2D tAO; uniform float uAO;
     varying vec2 vUv;
-    void main() { gl_FragColor = vec4(texture2D(tScene, vUv).rgb, 1.0); }`,
+    void main() {
+      vec4 c = texture2D(tScene, vUv);
+      if (uAO > 0.0) c.rgb *= mix(1.0, texture2D(tAO, vUv).r, uAO * c.a);
+      gl_FragColor = vec4(c.rgb, 1.0);
+    }`,
 };
 
 /** The tilt-shift blur at half size: a golden-angle disc of taps, wider towards the top and bottom. */
@@ -342,35 +406,266 @@ class Bloom extends UnrealBloomPass {
 }
 
 /**
- * What GTAOPass multiplies the scene by, with the darkening faded out over ground that is still
- * unexplored. The world's own shaders paint everything there the colour of the fog, trees and rocks
- * included, but their geometry is still in the normal pass, and the occlusion it makes would show
- * through as dark rings on the black. The explored share is read from the same texture as theirs,
- * at the world position of each pixel (rebuilt from the depth).
+ * The depth the occlusion works from, at half size: the nearest of each 2x2 block of the scene's
+ * depth, so thin things in front (poles, people) keep samples of their own. (Nearest and farthest
+ * in a checkerboard would keep both sides of an edge, but zig-zag on every slope, and the normals
+ * rebuilt from the depth would pick that up.)
+ * The water writes no depth, but its surface is what the eye sees (and what should be darkened at
+ * a cliff's foot), so where the ray meets it first the depth is moved up to it.
  */
-const AO_BLEND_FRAGMENT = /* glsl */ `
-  uniform float intensity;
-  uniform sampler2D tDiffuse;
-  uniform sampler2D tDepth;
-  uniform sampler2D tFog;
-  uniform mat4 cameraProjectionMatrixInverse;
-  uniform mat4 cameraWorldMatrix;
-  uniform vec2 uMapSize;
-  uniform float uFogOn;
-  varying vec2 vUv;
+const AODepthShader = {
+  uniforms: {
+    tDepth: { value: null as THREE.Texture | null },
+    cameraNear: { value: 0.5 },
+    cameraFar: { value: 600 },
+    uCamPos: { value: new THREE.Vector3() },
+    uProjInv: { value: new THREE.Matrix4() },
+    uCamWorld: { value: new THREE.Matrix4() },
+    uWater: { value: WATER_LEVEL },
+    uWaterBox: { value: new THREE.Vector4() },
+  },
+  vertexShader: /* glsl */ `
+    uniform mat4 uProjInv;
+    uniform mat4 uCamWorld;
+    varying vec2 vUv;
+    varying vec3 vRay;
+    void main() {
+      vUv = uv;
+      vec4 v = uProjInv * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+      vec3 d = v.xyz / v.w;
+      vRay = mat3(uCamWorld) * (d / -d.z);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: /* glsl */ `
+    #include <packing>
+    uniform highp sampler2D tDepth;
+    uniform float cameraNear;
+    uniform float cameraFar;
+    uniform vec3 uCamPos;
+    ${WATER_HIT}
+    varying vec2 vUv;
+    varying vec3 vRay;
+    void main() {
+      ivec2 p = ivec2(gl_FragCoord.xy);
+      ivec2 q = min(p * 2, textureSize(tDepth, 0) - 2);
+      float a = texelFetch(tDepth, q, 0).x, b = texelFetch(tDepth, q + ivec2(1, 0), 0).x;
+      float c = texelFetch(tDepth, q + ivec2(0, 1), 0).x, d = texelFetch(tDepth, q + ivec2(1, 1), 0).x;
+      float z = min(min(a, b), min(c, d));
+      float w = waterDepth(uCamPos, vRay, cameraFar);
+      if (w < cameraFar) z = min(z, viewZToPerspectiveDepth(-w, cameraNear, cameraFar));
+      gl_FragColor = vec4(z, 0.0, 0.0, 1.0);
+    }`,
+};
 
-  void main() {
-    vec4 texel = texture2D(tDiffuse, vUv);
-    float k = intensity;
-    if (uFogOn > 0.5) {
-      float d = texture2D(tDepth, vUv).x;
-      vec4 v = cameraProjectionMatrixInverse * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
-      vec3 wp = (cameraWorldMatrix * (v / v.w)).xyz;
-      k *= smoothstep(0.2, 0.85, texture2D(tFog, (wp.xz + 0.5) / uMapSize).r);
+/**
+ * Smooths the half-size occlusion with 16 taps on a Poisson disc, each weighted by how well its
+ * surface lines up with the pixel's own (normal and distance from its plane), as three's
+ * PoissonDenoiseShader does; the normals come packed with the occlusion. Writes the occlusion and
+ * the view depth, which the full-size upsampling compares its own depth with.
+ */
+const AODenoiseShader = {
+  uniforms: {
+    tAO: { value: null as THREE.Texture | null },
+    tDepth: { value: null as THREE.Texture | null },
+    tNoise: { value: null as THREE.Texture | null },
+    resolution: { value: new THREE.Vector2() },
+    cameraNear: { value: 0.5 },
+    cameraFar: { value: 600 },
+    cameraProjectionMatrixInverse: { value: new THREE.Matrix4() },
+    normalPhi: { value: 3 },
+    depthPhi: { value: 2 },
+    radius: { value: 4 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    #include <common>
+    #include <packing>
+    uniform sampler2D tAO;
+    uniform highp sampler2D tDepth;
+    uniform sampler2D tNoise;
+    uniform vec2 resolution;
+    uniform float cameraNear;
+    uniform float cameraFar;
+    uniform mat4 cameraProjectionMatrixInverse;
+    uniform float normalPhi;
+    uniform float depthPhi;
+    uniform float radius;
+    varying vec2 vUv;
+    const vec3 disk[SAMPLES] = SAMPLE_VECTORS;
+    vec3 viewPos(vec2 uv, float depth) {
+      vec4 v = cameraProjectionMatrixInverse * vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+      return v.xyz / v.w;
     }
-    gl_FragColor = vec4(mix(vec3(1.0), texel.rgb, k), texel.a);
+    void main() {
+      ivec2 p = ivec2(gl_FragCoord.xy);
+      float depth = texelFetch(tDepth, p, 0).x;
+      float lz = -perspectiveDepthToViewZ(depth, cameraNear, cameraFar);
+      vec4 c = texelFetch(tAO, p, 0);
+      if (depth >= 1.0) { gl_FragColor = vec4(1.0, lz, 0.0, 1.0); return; }
+      vec3 n = normalize(c.gba * 2.0 - 1.0);
+      vec3 vp = viewPos(vUv, depth);
+      vec4 nz = textureLod(tNoise, vUv * resolution / vec2(textureSize(tNoise, 0)), 0.0);
+      vec2 rv = vec2(sin(nz.x * 2.0 * PI), cos(nz.x * 2.0 * PI));
+      mat2 rot = mat2(rv.x, -rv.y, rv.x, rv.y);
+      float sum = c.r, wsum = 1.0;
+      for (int i = 0; i < SAMPLES; i++) {
+        vec2 uv = vUv + rot * (disk[i].xy * (1.0 + disk[i].z * (radius - 1.0)) / resolution);
+        float sd = textureLod(tDepth, uv, 0.0).x;
+        vec4 s = textureLod(tAO, uv, 0.0);
+        float w = pow(max(dot(n, normalize(s.gba * 2.0 - 1.0)), 0.0), normalPhi)
+                * max(1.0 - abs(dot(vp - viewPos(uv, sd), n)) / depthPhi, 0.0)
+                * step(sd, 0.99999);
+        sum += s.r * w; wsum += w;
+      }
+      gl_FragColor = vec4(sum / wsum, lz, 0.0, 1.0);
+    }`,
+};
+
+/**
+ * Ground-truth ambient occlusion (three's GTAOShader) worked out at half size from the depth the
+ * scene itself leaves, so the scene is drawn once: the half-size depth (with the water in it), then
+ * the occlusion (its normals rebuilt from that depth, packed next to it for the denoise, and faded
+ * out over ground still unexplored: the world's own shaders paint everything there the colour of
+ * the fog, trees and rocks included, whose depth would otherwise show as dark rings on the black),
+ * then the denoise. The final pass scales it up, weighting the four nearest texels by how close
+ * their depth is to the pixel's own so the darkening doesn't bleed across edges.
+ */
+class HalfAO {
+  private depthRT: THREE.WebGLRenderTarget;
+  private aoRT: THREE.WebGLRenderTarget;
+  readonly outRT: THREE.WebGLRenderTarget;
+  private depthMat: THREE.ShaderMaterial;
+  private gtaoMat: THREE.ShaderMaterial;
+  private denoiseMat: THREE.ShaderMaterial;
+  private noise = generateMagicSquareNoise();
+  private pdNoise: THREE.DataTexture;
+  private quad = new FullScreenQuad();
+
+  constructor() {
+    const target = (type: THREE.TextureDataType, format: THREE.PixelFormat) => {
+      const rt = new THREE.WebGLRenderTarget(1, 1, { type, format, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      rt.texture.generateMipmaps = false;
+      return rt;
+    };
+    this.depthRT = target(THREE.FloatType, THREE.RedFormat);
+    this.aoRT = target(THREE.HalfFloatType, THREE.RGBAFormat);
+    this.outRT = target(THREE.HalfFloatType, THREE.RGBAFormat);
+    const quadMat = (sh: { uniforms: Record<string, THREE.IUniform>; vertexShader: string; fragmentShader: string }, defines = {}) =>
+      new THREE.ShaderMaterial({ defines, uniforms: THREE.UniformsUtils.clone(sh.uniforms), vertexShader: sh.vertexShader, fragmentShader: sh.fragmentShader, depthTest: false, depthWrite: false, blending: THREE.NoBlending });
+    this.depthMat = quadMat(AODepthShader);
+    this.depthMat.name = 'AODepth';
+    const gtao = {
+      ...GTAOShader,
+      uniforms: { ...GTAOShader.uniforms, tFog: { value: null }, uMapSize: { value: null }, uFogOn: { value: 0 } },
+      // the sky is written unoccluded (so the target needs no clear), and the occlusion leaves with
+      // the fog fade applied and the normal packed next to it
+      fragmentShader: GTAOShader.fragmentShader
+        .replace(/discard;/g, 'gl_FragColor = vec4(1.0); return;')
+        .replace('void main() {', /* glsl */ `
+          uniform sampler2D tFog;
+          uniform vec2 uMapSize;
+          uniform float uFogOn;
+          float explored(vec3 viewPos) {
+            if (uFogOn < 0.5) return 1.0;
+            vec3 wp = (cameraWorldMatrix * vec4(viewPos, 1.0)).xyz;
+            return smoothstep(0.2, 0.85, texture2D(tFog, (wp.xz + 0.5) / uMapSize).r);
+          }
+          void main() {`),
+    };
+    this.gtaoMat = quadMat(gtao, {
+      ...GTAOShader.defines,
+      SAMPLES: 12,
+      NORMAL_VECTOR_TYPE: 0,
+      DEPTH_SWIZZLING: 'x',
+      FRAGMENT_OUTPUT: 'vec4(mix(1.0, ao, explored(viewPos)), viewNormal * 0.5 + 0.5)',
+    });
+    this.gtaoMat.name = 'GTAOHalf';
+    const gu = this.gtaoMat.uniforms;
+    gu.tDepth.value = this.depthRT.texture;
+    gu.tNoise.value = this.noise;
+    gu.radius.value = 0.6;
+    gu.distanceExponent.value = 1.5;
+    gu.thickness.value = 1.2;
+    gu.scale.value = 1.0;
+    gu.tFog = G.tFog;
+    gu.uMapSize = G.uMapSize;
+    gu.uFogOn = G.uFogOn;
+    this.pdNoise = randomNoise(64);
+    this.denoiseMat = quadMat(AODenoiseShader, { SAMPLES: 16, SAMPLE_VECTORS: generatePdSamplePointInitializer(16, 2, 1) });
+    this.denoiseMat.name = 'AODenoise';
+    const du = this.denoiseMat.uniforms;
+    du.tAO.value = this.aoRT.texture;
+    du.tDepth.value = this.depthRT.texture;
+    du.tNoise.value = this.pdNoise;
   }
-`;
+
+  setSize(w: number, h: number) {
+    this.depthRT.setSize(w, h);
+    this.aoRT.setSize(w, h);
+    this.outRT.setSize(w, h);
+    (this.gtaoMat.uniforms.resolution.value as THREE.Vector2).set(w, h);
+    (this.denoiseMat.uniforms.resolution.value as THREE.Vector2).set(w, h);
+  }
+
+  render(r: THREE.WebGLRenderer, depth: THREE.Texture, cam: THREE.PerspectiveCamera) {
+    const d = this.depthMat.uniforms;
+    d.tDepth.value = depth;
+    d.cameraNear.value = cam.near;
+    d.cameraFar.value = cam.far;
+    (d.uCamPos.value as THREE.Vector3).setFromMatrixPosition(cam.matrixWorld);
+    d.uProjInv.value.copy(cam.projectionMatrixInverse);
+    d.uCamWorld.value.copy(cam.matrixWorld);
+    waterBox(d.uWaterBox.value);
+    this.pass(r, this.depthMat, this.depthRT);
+    const g = this.gtaoMat.uniforms;
+    g.cameraNear.value = cam.near;
+    g.cameraFar.value = cam.far;
+    g.cameraProjectionMatrix.value.copy(cam.projectionMatrix);
+    g.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse);
+    g.cameraWorldMatrix.value.copy(cam.matrixWorld);
+    this.pass(r, this.gtaoMat, this.aoRT);
+    const n = this.denoiseMat.uniforms;
+    n.cameraNear.value = cam.near;
+    n.cameraFar.value = cam.far;
+    n.cameraProjectionMatrixInverse.value.copy(cam.projectionMatrixInverse);
+    this.pass(r, this.denoiseMat, this.outRT);
+  }
+
+  private pass(r: THREE.WebGLRenderer, m: THREE.Material, rt: THREE.WebGLRenderTarget) {
+    this.quad.material = m;
+    r.setRenderTarget(rt);
+    this.quad.render(r);
+  }
+
+  dispose() {
+    this.depthRT.dispose();
+    this.aoRT.dispose();
+    this.outRT.dispose();
+    this.depthMat.dispose();
+    this.gtaoMat.dispose();
+    this.denoiseMat.dispose();
+    this.noise.dispose();
+    this.pdNoise.dispose();
+    this.quad.dispose();
+  }
+}
+
+/** The water's surface in x and z: the map and a margin on each side. */
+function waterBox(v: THREE.Vector4) {
+  const m = G.uMapSize.value as THREE.Vector2;
+  return v.set(-WATER_MARGIN, -WATER_MARGIN, m.x + WATER_MARGIN, m.y + WATER_MARGIN);
+}
+
+function randomNoise(size: number) {
+  const data = new Uint8Array(size * size * 4);
+  for (let i = 0; i < data.length; i++) data[i] = Math.floor(Math.random() * 256);
+  const t = new THREE.DataTexture(data, size, size);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.needsUpdate = true;
+  return t;
+}
 
 export interface FxSettings {
   bloom: boolean;
@@ -379,17 +674,20 @@ export interface FxSettings {
   grade: boolean;
 }
 
+/** how much of the occlusion shows */
+const AO_STRENGTH = 0.8;
+
 export class PostFX {
   /** the scene, multisampled; resolved into its texture once it is drawn */
   readonly sceneRT: THREE.WebGLRenderTarget;
-  private aoRT: THREE.WebGLRenderTarget | null = null;
   /** half-size copy of the scene (for the bloom and the blur) and the tilt-shift blur worked out from it */
   private halfRT: THREE.WebGLRenderTarget;
   private blurRT: THREE.WebGLRenderTarget;
   private halfMat: THREE.RawShaderMaterial;
   private blurMat: THREE.RawShaderMaterial;
   bloom: Bloom;
-  gtao: GTAOPass | null = null;
+  /** ambient occlusion, once it has been on (kept, so switching it back on compiles nothing) */
+  private ao: HalfAO | null = null;
   private quad: FullScreenQuad;
   private final: THREE.RawShaderMaterial;
   settings: FxSettings = { bloom: true, dof: true, ao: false, grade: true };
@@ -401,7 +699,8 @@ export class PostFX {
   private warm = true;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene, private camera: THREE.PerspectiveCamera, w: number, h: number, samples = 4) {
-    this.sceneRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
+    // (its depth is resolved only while the occlusion reads it: sceneDepth)
+    this.sceneRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples, resolveDepthBuffer: false });
     this.sceneRT.texture.generateMipmaps = false;
     const halfTarget = () => {
       const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
@@ -438,23 +737,28 @@ export class PostFX {
   }
 
   enableAO(on: boolean) {
+    // (the half-size depth is a 32-bit float target: without them there is no occlusion)
+    on &&= this.renderer.extensions.has('EXT_color_buffer_float');
     this.settings.ao = on;
-    if (on && !this.gtao) {
-      const pr = this.renderer.getPixelRatio() * this.scale;
-      this.gtao = new GTAOPass(this.scene, this.camera, this.w * pr, this.h * pr);
-      this.gtao.blendIntensity = 0.8;
-      this.gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0, samples: 12 });
-      const blend = this.gtao.blendMaterial;
-      blend.fragmentShader = AO_BLEND_FRAGMENT;
-      Object.assign(blend.uniforms, {
-        tDepth: { value: this.gtao.depthTexture },
-        tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn,
-        cameraProjectionMatrixInverse: { value: new THREE.Matrix4() },
-        cameraWorldMatrix: { value: new THREE.Matrix4() },
-      });
-      blend.needsUpdate = true;
-      this.aoRT = new THREE.WebGLRenderTarget(this.w * pr, this.h * pr, { type: THREE.HalfFloatType });
+    if (on && !this.ao) {
+      this.ao = new HalfAO();
+      this.setSize(this.w, this.h);
     }
+    this.sceneDepth(on);
+  }
+
+  /**
+   * Whether the scene leaves its depth in a texture (resolved from the multisampled one along with the
+   * colours). Without the occlusion nothing reads it, and the depth is not resolved at all.
+   */
+  private sceneDepth(on: boolean) {
+    const rt = this.sceneRT;
+    if (!!rt.depthTexture === on) return;
+    const old = rt.depthTexture;
+    rt.depthTexture = on ? new THREE.DepthTexture(1, 1) : null;
+    rt.resolveDepthBuffer = on;
+    rt.dispose();
+    old?.dispose();
   }
 
   setSize(w: number, h: number) {
@@ -463,7 +767,6 @@ export class PostFX {
     const pr = this.renderer.getPixelRatio() * this.scale;
     const W = Math.max(1, Math.round(w * pr)), H = Math.max(1, Math.round(h * pr));
     this.sceneRT.setSize(W, H);
-    this.aoRT?.setSize(W, H);
     (this.final.uniforms.uRes.value as THREE.Vector2).set(W, H);
     // the same size as the bloom's bright pass, so it can read this copy instead of the scene
     const hw = Math.max(1, Math.round(W / 2)), hh = Math.max(1, Math.round(H / 2));
@@ -473,25 +776,30 @@ export class PostFX {
     // a little sharpening wins back some of the crispness lost by scaling up
     this.final.uniforms.uSharpen.value = this.scale < 0.99 ? 0.35 * Math.min(1, (1 - this.scale) / 0.3) : 0;
     this.bloom.setSize(W, H);
-    this.gtao?.setSize(W, H);
+    this.ao?.setSize(hw, hh);
+    (this.final.uniforms.uAORes.value as THREE.Vector2).set(hw, hh);
   }
 
   render(time: number, zoom01: number, night: number, rain = 0, rainSlant = 0) {
     const r = this.renderer;
     r.setRenderTarget(this.sceneRT);
     r.render(this.scene, this.camera);
-    let src = this.sceneRT;
-    if (this.settings.ao && this.gtao && this.aoRT) {
-      const bu = this.gtao.blendMaterial.uniforms;
-      bu.cameraProjectionMatrixInverse.value.copy(this.camera.projectionMatrixInverse);
-      bu.cameraWorldMatrix.value.copy(this.camera.matrixWorld);
-      this.hideNonSolid();
-      this.gtao.render(r, this.aoRT, this.sceneRT, 0, false);
-      for (const o of this.hidden) o.visible = true;
-      this.hidden.length = 0;
-      src = this.aoRT;
-    }
+    const src = this.sceneRT;
     const u = this.final.uniforms;
+    const ao = this.settings.ao && this.sceneRT.depthTexture ? this.ao : null;
+    if (ao) {
+      ao.render(r, this.sceneRT.depthTexture!, this.camera);
+      u.tDepth.value = this.sceneRT.depthTexture;
+      u.tAO.value = ao.outRT.texture;
+      u.cameraNear.value = this.camera.near;
+      u.cameraFar.value = this.camera.far;
+      (u.uCamPos.value as THREE.Vector3).setFromMatrixPosition(this.camera.matrixWorld);
+      u.uProjInv.value.copy(this.camera.projectionMatrixInverse);
+      u.uCamWorld.value.copy(this.camera.matrixWorld);
+      waterBox(u.uWaterBox.value);
+      this.halfMat.uniforms.tAO.value = ao.outRT.texture;
+    }
+    u.uAO.value = this.halfMat.uniforms.uAO.value = ao ? AO_STRENGTH : 0;
     // the miniature look belongs to the overview; close up the blur would only smear detail
     const tz = THREE.MathUtils.smoothstep(zoom01, 0.0, 0.55);
     const amount = this.settings.dof ? THREE.MathUtils.lerp(0.18, 1.0, tz) : 0;
@@ -502,7 +810,8 @@ export class PostFX {
     // (no pixel blurs past HALF_FROM while warming up, so the half-size blur is still not seen then)
     const blurred = rMax > HALF_FROM || this.warm;
     let half: THREE.Texture | null = null;
-    if (blurred) {
+    // (with the occlusion the bloom always takes its bright parts from the copy, which has it)
+    if (blurred || ao) {
       this.halfMat.uniforms.tScene.value = src.texture;
       this.pass(this.halfMat, this.halfRT);
       half = this.halfRT.texture;
@@ -561,41 +870,18 @@ export class PostFX {
     this.quad.render(this.renderer);
   }
 
-  private hidden: THREE.Object3D[] = [];
-
-  /**
-   * Keep what does not write depth in the scene out of GTAO's normal and depth pass, which draws
-   * every mesh solid: rain, the sky domes, spell glows, order rings and health bars would each
-   * leave a dark halo on the ground around them. The water opts back in (`userData.solidAO`): its
-   * surface is what the eye sees, so it is the surface that gets the occlusion at a cliff's foot.
-   */
-  private hideNonSolid() {
-    const hide = (o: THREE.Object3D) => {
-      if (!o.visible) return;
-      const m = (o as THREE.Mesh).isMesh ? (o as THREE.Mesh).material : null;
-      if (m && !Array.isArray(m) && !m.depthWrite && !m.userData.solidAO) {
-        o.visible = false;
-        this.hidden.push(o);
-        return;
-      }
-      for (const c of o.children) hide(c);
-    };
-    hide(this.scene);
-  }
-
   flash(v: number) {
     this.final.uniforms.uFlash.value = v;
   }
 
   dispose() {
     this.sceneRT.dispose();
-    this.aoRT?.dispose();
     this.halfRT.dispose();
     this.blurRT.dispose();
     this.halfMat.dispose();
     this.blurMat.dispose();
     this.bloom.dispose();
-    this.gtao?.dispose();
+    this.ao?.dispose();
     this.final.dispose();
     this.quad.dispose();
   }

@@ -545,7 +545,7 @@ export class GrassRenderer {
 
   constructor(private game: Game) {
     this.mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, {
-      key: 'tuft', snow: 1,
+      key: 'tuft', snow: 1, ao: 0,
       // same seasonal grass tint as the terrain underneath
       fragRough: `{
         float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
