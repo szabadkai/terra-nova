@@ -17,7 +17,7 @@ import { gameNear } from './wildlife';
 import { launchShip } from './sea';
 import { sinkShip } from './naval';
 import { spawnCatapult } from './siege';
-import { sq } from '../core/fmath';
+import { hypot, sq } from '../core/fmath';
 
 // ------------------------------------------------------------------ what the quaestor had raised while the legate travelled
 /** Trees grown enough to fell, and stone in the rocks, within reach of the headquarters. */
@@ -759,7 +759,7 @@ export const MISSIONS: Mission[] = [
       const tower = mine(g).find((b) => b.type === 'tower_l');
       if (!tower || !tower.occupied) return 'the far watchtower should stand manned';
       if (!liveMine(g, 'coalmine') || !liveMine(g, 'ironmine')) return 'the far mines sit on no ore';
-      if (Math.hypot(tower.cx - hqOf(g).cx, tower.cz - hqOf(g).cz) < 24) return 'the far camp is not far';
+      if (hypot(tower.cx - hqOf(g).cx, tower.cz - hqOf(g).cz) < 24) return 'the far camp is not far';
       if (!placeNear(g, g.local, 'market', tower.cx, tower.cz + 4, 12)) return 'no room for a market at the far camp';
       return roomFor(g, ['market', 'donkeyfarm'], 14);
     },
