@@ -18,6 +18,7 @@ At 3440×1440 the GPU is the limit: a 30-minute town takes about 10.5–11 ms of
 
 - **Blur from a half-size copy**: the final pass in `postfx.ts` takes 16 full-size taps (`TAPS`) for every blurred pixel. Take them from a half-size copy of the scene instead, keeping the band in focus sharp at full size. Compare screenshots before and after with `imgdiff.mjs`.
 - The same measurements say where the bigger savings are: the shadow map and MSAA each cost more than the blur, so they are the next things to look at.
+- **Ambient occlusion is the biggest single cost** and is on by default for High and Ultra now (the detection drops it first, `AO_COST` in `hardware.ts`): +3 ms at 1600×900 and +8 ms at 3440×1440 on the M5 Pro, 1.4–1.9 times a frame. three's `GTAOPass` draws the whole scene a second time for its normals and depth, then runs the occlusion and a denoise at full size. Reusing the scene's depth, or running the pass at half size (the occlusion is low-frequency, so a depth-aware upsample should hide it), would take a good part of that back; then lower `AO_COST` and the detection follows.
 
 ## 2. Paths worn by traffic
 
@@ -34,25 +35,21 @@ Settlers 3 had no roads, so let the ground remember where people walk. Build a r
 
 Height fog pools in valleys and over water at dawn and burns off by mid-morning, driven by the existing day cycle in `sky.ts`. Add sun shafts as a cheap screen-space pass (a radial blur of what blocks the sun, from depth), folded into the single final pass in `postfx.ts`. There's nothing like either yet. It costs GPU time, so it comes after the performance items.
 
-## 5. Ambient occlusion on by default for High
-
-`GTAOPass` is already wired in `postfx.ts` but off at every level: `PRESETS` in `src/render/hardware.ts` (what the first-run detection sets per level) has `ao: false` throughout. Switch it on for High and Ultra there, and teach the detection what it costs, or the machines that only just make High stop holding it: the cost model (`COST`, `frameMs`) has no term for it. It is expensive: at High in headless Chrome on the M5 Pro it took a frame from 8.2 to 13.4 ms at 1600×900 and from 27 to 47 ms at 3440×1440 (interleaved, with other sessions loading the GPU, so the ratio counts: about +60–75%). The GPU is the limit at 3440×1440: the buildings are batched and the terrain shader is cheaper, but a 30-minute town still takes about 10.5–11 ms of GPU time there against 4–4.5 ms of CPU.
-
-## 6. Bigger maps
+## 5. Bigger maps
 
 Buildings are batched (`buildingBatches.ts`), so a bigger town adds instances rather than draw calls, and the simulation has plenty of headroom: a 50 ms tick costs 0.05–0.08 ms on average (0.25 ms at the 95th percentile) at 10–45 minutes of AI-vs-AI, so it never needs a Web Worker. Today towns peak around 290 settlers and 90 buildings on the 160 map. Recheck the AI deadlocks listed in the balance notes on larger maps.
 
-## 7. Photo mode
+## 6. Photo mode
 
 Hide the UI and use a free camera. Scrub the time of day and the season, and set the focus distance for the tilt-shift blur. It's cheap given what already exists.
 
-## 8. More for warships
+## 7. More for warships
 
 - **Landing troops on an enemy coast** first: it is what lets island wars be won.
 - Boarding enemy ships.
 - Deck archers shooting at soldiers on the shore.
 
-## 9. A smarter AI army and economy
+## 8. A smarter AI army and economy
 
 - **Formations**: the AI uses the formations players have (`planFormation` in `src/game/orders.ts`) for its attacks and defence.
 - **More trade outposts**: `AIController.tradeStep` sets up only one far outpost (storehouse plus market). Let it add a second as its realm grows.

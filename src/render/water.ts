@@ -30,6 +30,8 @@ export class WaterRenderer {
       color: 0xffffff, roughness: 0.06, metalness: 0.0, transparent: true, depthWrite: false,
       envMapIntensity: 1.2,
     });
+    // (its surface is what ambient occlusion should darken, though it does not write depth)
+    mat.userData.solidAO = true;
     patchMaterial(mat, {
       key: 'water',
       snow: 0,

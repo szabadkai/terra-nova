@@ -36,7 +36,7 @@ export interface Prefs {
   /** what the graphics detection found: the level it recommends ('' = it never ran), the
    * resolution it went with, the GPU it saw, the ms a frame it timed, and whether the player has
    * been told what it chose */
-  hw: { level: '' | Quality; res: string; gpu: string; ms: number; told: boolean };
+  hw: { level: '' | Quality; /** with the level's ambient occlusion */ ao: boolean; res: string; gpu: string; ms: number; told: boolean };
 }
 
 const KEY = 'terra-nova.prefs.v1';
@@ -60,7 +60,7 @@ export const defaultPrefs = (): Prefs => ({
   showFps: true,
   stallBadges: 'top',
   stallAlerts: true,
-  hw: { level: '', res: '', gpu: '', ms: 0, told: true },
+  hw: { level: '', ao: false, res: '', gpu: '', ms: 0, told: true },
 });
 
 /** Copy saved values over the defaults, skipping anything of the wrong type (old or hand-edited saves). */
@@ -98,6 +98,7 @@ export function savePrefs() {
 export function defaultRender(): RenderSettings {
   const hw = prefs.hw;
   const r: RenderSettings = { ...DEFAULT_RENDER_SETTINGS, ...(hw.level ? PRESETS[hw.level] : {}) };
+  if (hw.level) r.ao = hw.ao;
   if (hw.level && hw.res) r.resolution = hw.res as RenderSettings['resolution'];
   return r;
 }
@@ -112,10 +113,10 @@ export function detectGraphics(gr: GameRenderer, game: Game, timed = true): Dete
   // a grown town is heavier than a new game's world: the timing allows for what is still to come
   const grown = Math.min(1, game.buildings.size / 120);
   const d = detect(gr, base, timed && document.visibilityState === 'visible', grown);
-  prefs.render = { ...base, ...PRESETS[d.level] };
+  prefs.render = { ...base, ...PRESETS[d.level], ao: d.ao };
   if (d.resolution) prefs.render.resolution = d.resolution;
-  const ms = d.timed.find(([q]) => q === d.level)?.[1] ?? 0;
-  prefs.hw = { level: d.level, res: prefs.render.resolution, gpu: d.guess.gpu.label, ms: Math.round(ms * 10) / 10, told: prefs.hw.told };
+  const ms = d.timed.find(([q, , ao]) => q === d.level && ao === d.ao)?.[1] ?? 0;
+  prefs.hw = { level: d.level, ao: d.ao, res: prefs.render.resolution, gpu: d.guess.gpu.label, ms: Math.round(ms * 10) / 10, told: prefs.hw.told };
   savePrefs();
   applyRenderPrefs(gr);
   return d;

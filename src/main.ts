@@ -6,7 +6,7 @@ import { generateIcons } from './ui/icons';
 import { showLoading, showMenu, MenuOptions } from './ui/menu';
 import { GameMenu } from './ui/gameMenu';
 import { applyAudioPrefs, applyRenderPrefs, detectGraphics, firstRun, prefs, savePrefs } from './ui/prefs';
-import { LEVEL_NAMES } from './render/hardware';
+import { levelText } from './render/hardware';
 import { enterImmersive, onImmersiveChange, toggleImmersive } from './ui/immersive';
 import { Audio } from './audio/audio';
 import { CursorSetter, type CursorKind } from './ui/cursors';
@@ -208,7 +208,7 @@ async function buildWorld(from?: SaveData) {
     const d = detectGraphics(gr, game);
     prefs.hw.told = false;
     savePrefs();
-    console.info(`Graphics: ${d.level} for ${d.guess.gpu.label}${d.timed.length ? ` (timed ${d.timed.map(([q, ms]) => `${q} ${ms.toFixed(1)} ms`).join(', ')})` : ''}`);
+    console.info(`Graphics: ${levelText(d.level, d.ao).toLowerCase()} for ${d.guess.gpu.label}${d.timed.length ? ` (timed ${d.timed.map(([q, ms, ao]) => `${q}${ao ? ' + AO' : ''} ${ms.toFixed(1)} ms`).join(', ')})` : ''}`);
   }
   loading.remove();
 }
@@ -218,7 +218,7 @@ function graphicsChosen() {
   if (!prefs.hw.level || prefs.hw.told) return null;
   prefs.hw.told = true;
   savePrefs();
-  return `Graphics set to ${LEVEL_NAMES[prefs.hw.level]} for this machine`;
+  return `Graphics set to ${levelText(prefs.hw.level, prefs.hw.ao)} for this machine`;
 }
 
 function showMainMenu() {

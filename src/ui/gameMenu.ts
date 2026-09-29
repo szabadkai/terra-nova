@@ -9,7 +9,7 @@ import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
 import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, defaultRender, detectGraphics, prefs, savePrefs } from './prefs';
-import { LEVELS, LEVEL_NAMES } from '../render/hardware';
+import { LEVELS, LEVEL_NAMES, levelText } from '../render/hardware';
 import type { WheelMode } from '../render/camera';
 import { AUTO, playTime, saveSubtitle, type SaveSummary } from './saveStore';
 import { enterImmersive, immersiveAvailable, isImmersive, leaveHint, leaveImmersive } from './immersive';
@@ -431,7 +431,7 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Effects'));
     c.appendChild(this.toggle('Bloom and glow', 'Glowing windows, forges and water glints', () => s.bloom, set('bloom')));
     c.appendChild(this.toggle('Tilt-shift depth of field', 'Miniature diorama look', () => s.dof, set('dof')));
-    c.appendChild(this.toggle('Ambient occlusion', 'Soft contact shadows. Costs a few milliseconds a frame.', () => s.ao, set('ao')));
+    c.appendChild(this.toggle('Ambient occlusion', 'Soft contact shadows under eaves, around trees and at the foot of cliffs. The heaviest effect: a frame takes about 60% longer. Off is the first thing to try if the game stutters.', () => s.ao, set('ao')));
     c.appendChild(this.toggle('Colour grading', 'Filmic tone and vignette', () => s.grade, set('grade')));
     c.appendChild(this.toggle('Grass tufts', 'Wind-swept grass blades (always off on Low)', () => s.grass, set('grass')));
     c.appendChild(this.toggle('Water reflections', 'The land mirrored in lakes and sea', () => s.reflections, set('reflections')));
@@ -464,7 +464,7 @@ export class GameMenu {
     // (the screen as the detection counts it: the window where that is larger)
     const scr = `${Math.max(screen.width, innerWidth)}×${Math.max(screen.height, innerHeight)}${devicePixelRatio > 1 ? ` at ${Math.round(devicePixelRatio * 100) / 100}×` : ''}`;
     const desc = hw.level
-      ? `${esc(hw.gpu)}, a ${scr} screen: <span class="hw-level">${LEVEL_NAMES[hw.level]}</span>${hw.ms ? `, timed at about ${Math.round(hw.ms)} ms a frame for a grown town` : ''}. Detecting again sets the detail level, the resolution and the effects.`
+      ? `${esc(hw.gpu)}, a ${scr} screen: <span class="hw-level">${levelText(hw.level, hw.ao)}</span>${hw.ms ? `, timed at about ${Math.round(hw.ms)} ms a frame for a grown town` : ''}. Detecting again sets the detail level, the resolution and the effects.`
       : 'Reads the graphics card and the screen, then times a few frames at each level. Sets the detail level, the resolution and the effects.';
     const b = h('button', 'gm-detect', hw.level ? 'Detect again' : 'Detect') as HTMLButtonElement;
     b.onclick = () => {

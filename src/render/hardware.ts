@@ -5,6 +5,10 @@
 // down while they would miss the frame budget. After that the settings are the player's; while
 // playing, the most that happens is one message when the frame rate stays low. Render and prefs
 // only: nothing here touches the game.
+//
+// The levels are steps on a ladder of settings ("rungs", RUNGS): High and Ultra each come with
+// ambient occlusion and without it, and the detection gives up the occlusion of a level before it
+// gives up the level, since it is the costliest single effect.
 import type { GameRenderer, Quality, RenderSettings } from './renderer';
 import { AUTO_STEPS, framePace } from './framePace';
 
@@ -15,10 +19,20 @@ export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
 export const PRESETS: Record<Quality, Pick<RenderSettings, 'quality' | 'resolution' | 'bloom' | 'dof' | 'ao' | 'grass' | 'reflections'>> = {
   low: { quality: 'low', resolution: '70', bloom: false, dof: false, ao: false, grass: false, reflections: false },
   medium: { quality: 'medium', resolution: '85', bloom: false, dof: false, ao: false, grass: true, reflections: true },
-  high: { quality: 'high', resolution: 'auto', bloom: true, dof: true, ao: false, grass: true, reflections: true },
-  ultra: { quality: 'ultra', resolution: 'auto', bloom: true, dof: true, ao: false, grass: true, reflections: true },
+  high: { quality: 'high', resolution: 'auto', bloom: true, dof: true, ao: true, grass: true, reflections: true },
+  ultra: { quality: 'ultra', resolution: 'auto', bloom: true, dof: true, ao: true, grass: true, reflections: true },
 };
 export const LEVEL_NAMES: Record<Quality, string> = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' };
+
+/** A level with or without the ambient occlusion its preset carries: one step of the ladder. */
+export interface Rung { level: Quality; ao: boolean }
+/** Everything the detection can land on, best first: a level with its occlusion, then without. */
+export const RUNGS: Rung[] = [...LEVELS].reverse().flatMap((level): Rung[] => PRESETS[level].ao ? [{ level, ao: true }, { level, ao: false }] : [{ level, ao: false }]);
+
+/** A level's name, and what the detection had to leave off ("High without ambient occlusion"). */
+export function levelText(level: Quality, ao: boolean) {
+  return LEVEL_NAMES[level] + (PRESETS[level].ao && !ao ? ' without ambient occlusion' : '');
+}
 
 /** the most device pixels per CSS pixel each level draws (as `GameRenderer.applyQuality` sets it) */
 const PR_CAP: Record<Quality, number> = { low: 1, medium: 1.25, high: 1.5, ultra: 2 };
@@ -35,6 +49,17 @@ const RES: Record<Quality, number> = { low: 0.7, medium: 0.85, high: AUTO_FLOOR,
  * 10.5 ms a 30-minute town takes at 3440x1440 on High.
  */
 const COST: Record<Quality, [number, number]> = { low: [0.8, 1.5], medium: [1.0, 1.6], high: [1.2, 1.65], ultra: [1.3, 1.75] };
+/**
+ * What ambient occlusion adds, in the same terms: a second pass over the scene for its normals and
+ * depth (a part that does not grow with the pixels) and the occlusion and its denoising at every
+ * pixel. Fitted to High and Ultra with and without it, interleaved at 1280x720 to 3440x1440 and 2x,
+ * in the start view and in a 25-minute town: +3 ms at 1600x900 and +8 ms at 3440x1440 on an idle
+ * machine (a frame of 5 and 10-12 ms), 1.4 to 1.9 times a frame at High and alike at Ultra, much the
+ * same in a town as in a new world. The small screens count least, where the frame is held up by the
+ * CPU and the occlusion overlaps with it; the timing only ever steps down, so a guess that is too
+ * high is corrected and one that is too low is not.
+ */
+const AO_COST: [number, number] = [0.8, 1.3];
 /** a grown town costs this much more than the world of a new game (from 1.1x on big screens to 1.8x on small ones) */
 export const LATE = 1.25;
 
@@ -146,10 +171,11 @@ export function pixelsAt(level: Quality, s: Pick<Signals, 'width' | 'height' | '
   return (s.width * pr * RES[level]) * (s.height * pr * RES[level]) / 1e6;
 }
 
-/** ms a frame of a new game's world takes at `level` on a GPU of `power` (1 = the reference). */
-export function frameMs(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>, power: number) {
+/** ms a frame of a new game's world takes at `level` (with or without its occlusion) on a GPU of `power` (1 = the reference). */
+export function frameMs(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>, power: number, ao = PRESETS[level].ao) {
   const [f, k] = COST[level];
-  return (f + k * pixelsAt(level, s)) / Math.max(power, 1e-3);
+  const [af, ak] = ao ? AO_COST : [0, 0];
+  return (f + af + (k + ak) * pixelsAt(level, s)) / Math.max(power, 1e-3);
 }
 
 /** The frame budget: the display's period, but 60 frames a second at most (nothing needs 175 fps). */
@@ -157,6 +183,8 @@ export const budgetMs = (period = framePace.period) => Math.max(period, 1000 / 6
 
 export interface Guess {
   level: Quality;
+  /** with the level's ambient occlusion (only levels that have one) */
+  ao: boolean;
   gpu: GpuGuess;
   /** the highest level the device allows (a phone, a tablet, little memory, few cores) and why */
   cap: Quality;
@@ -173,20 +201,22 @@ export function guessLevel(s: Signals, budget = budgetMs()): Guess {
   if ((s.memory && s.memory <= 2) || (s.cores && s.cores <= 2)) lower('low', 'little memory or few cores');
   else if (s.memory && s.memory <= 4) lower('medium', 'little memory');
   if (gpu.software) lower('low', 'no graphics card (software drawing)');
-  let level: Quality = 'low';
+  const top = LEVELS.indexOf(cap);
   // an unknown GPU starts as high as the device allows (but not Ultra): the timing decides
-  if (!gpu.power) level = LEVELS.indexOf(cap) < LEVELS.indexOf('high') ? cap : 'high';
-  else for (const q of LEVELS) if (LEVELS.indexOf(q) <= LEVELS.indexOf(cap) && frameMs(q, s, gpu.power) * LATE <= budget) level = q;
-  return { level, gpu, cap, capWhy };
+  const start = !gpu.power ? RUNGS.find((r) => LEVELS.indexOf(r.level) <= Math.min(top, LEVELS.indexOf('high'))) : RUNGS.find((r) => LEVELS.indexOf(r.level) <= top && frameMs(r.level, s, gpu.power, r.ao) * LATE <= budget);
+  const { level, ao } = start ?? RUNGS[RUNGS.length - 1];
+  return { level, ao, gpu, cap, capWhy };
 }
 
 export interface Detected {
   level: Quality;
+  /** the level's ambient occlusion is on (false where the machine can't hold it, or the level has none) */
+  ao: boolean;
   /** Low that still misses the budget drops to half resolution */
   resolution?: RenderSettings['resolution'];
   guess: Guess;
-  /** [level, ms a frame, as timed and scaled to a grown town on the whole screen] in the order tried */
-  timed: [Quality, number][];
+  /** [level, ms a frame, with occlusion, as timed and scaled to a grown town on the whole screen] in the order tried */
+  timed: [Quality, number, boolean][];
 }
 
 /** a known GPU is timed down at most this many levels below the guess: a strong machine that is
@@ -194,21 +224,23 @@ export interface Detected {
 const MAX_STEPS = 2;
 
 /**
- * Confirm a guess by timing: `timeAt(level)` gives the ms a frame would take in a grown town on
- * the whole screen; step down while it misses the budget. Never steps up (the new game's world is
- * the lightest the machine will draw).
+ * Confirm a guess by timing: `timeAt(level, ao)` gives the ms a frame would take in a grown town on
+ * the whole screen; step down the ladder (the occlusion of a level first, then the level) while it
+ * misses the budget. Never steps up (the new game's world is the lightest the machine will draw).
  */
-export function confirmLevel(guess: Guess, timeAt: (q: Quality) => number, budget = budgetMs()): Detected {
-  const timed: [Quality, number][] = [];
-  let i = LEVELS.indexOf(guess.level);
-  const floor = guess.gpu.power ? Math.max(0, i - MAX_STEPS) : 0;
+export function confirmLevel(guess: Guess, timeAt: (q: Quality, ao: boolean) => number, budget = budgetMs()): Detected {
+  const timed: [Quality, number, boolean][] = [];
+  let i = RUNGS.findIndex((r) => r.level === guess.level && r.ao === guess.ao);
+  // a known GPU is timed down to this level, every step of it included
+  const floor = guess.gpu.power ? Math.max(0, LEVELS.indexOf(guess.level) - MAX_STEPS) : 0;
   for (;;) {
-    const q = LEVELS[i];
-    const ms = timeAt(q);
-    timed.push([q, ms]);
-    if (ms <= budget) return { level: q, guess, timed };
-    if (i <= floor) return { level: q, resolution: q === 'low' && ms > budget * 1.3 ? '50' : undefined, guess, timed };
-    i--;
+    const { level, ao } = RUNGS[i];
+    const ms = timeAt(level, ao);
+    timed.push([level, ms, ao]);
+    if (ms <= budget) return { level, ao, guess, timed };
+    const next = RUNGS[i + 1];
+    if (!next || LEVELS.indexOf(next.level) < floor) return { level, ao, resolution: level === 'low' && ms > budget * 1.3 ? '50' : undefined, guess, timed };
+    i++;
   }
 }
 
@@ -237,16 +269,16 @@ export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext):
 /**
  * ms a frame of the world behind takes at `level`: a few frames back to back and one wait for the
  * GPU, the best of three runs, so that a stray hitch elsewhere doesn't count. Leaves the renderer
- * on `level` (over `base` for everything the level doesn't set).
+ * on `level` (over `base` for everything the level doesn't set) with or without its occlusion.
  */
-export function timeLevel(gr: GameRenderer, level: Quality, base: RenderSettings, budget = budgetMs()): number {
-  Object.assign(gr.settings, base, PRESETS[level]);
+export function timeLevel(gr: GameRenderer, level: Quality, ao: boolean, base: RenderSettings, budget = budgetMs()): number {
+  Object.assign(gr.settings, base, PRESETS[level], { ao });
   framePace.level = 0;
   gr.applyQuality();
   const gl = gr.renderer.getContext();
   const px = new Uint8Array(4);
   const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-  // the first frames after a change rebuild targets and the shadow map
+  // the first frames after a change rebuild targets and the shadow map (and compile the occlusion's shaders)
   gr.frame(0, 0);
   gr.frame(0, 0);
   sync();
@@ -272,14 +304,14 @@ export function detect(gr: GameRenderer, base: RenderSettings, timed = true, gro
   const sig = readSignals(gr.renderer.getContext());
   const budget = budgetMs();
   const guess = guessLevel(sig, budget);
-  if (!timed) return { level: guess.level, guess, timed: [] };
+  if (!timed) return { level: guess.level, ao: guess.ao, guess, timed: [] };
   // the canvas may be smaller than the screen it will fill
   const el = gr.renderer.domElement;
   const canvas = { width: el.clientWidth || innerWidth, height: el.clientHeight || innerHeight, dpr: sig.dpr };
   const late = LATE + (1 - LATE) * Math.min(1, Math.max(0, grown));
-  return confirmLevel(guess, (q) => {
-    const ms = timeLevel(gr, q, base, budget);
-    return ms * late * (frameMs(q, sig, 1) / frameMs(q, canvas, 1));
+  return confirmLevel(guess, (q, ao) => {
+    const ms = timeLevel(gr, q, ao, base, budget);
+    return ms * late * (frameMs(q, sig, 1, ao) / frameMs(q, canvas, 1, ao));
   }, budget);
 }
 
@@ -310,7 +342,8 @@ export class LowFpsWatch {
 
 /** What the low frame rate message suggests, from what is on now; null when nothing is left to turn down. */
 export function lowFpsAdvice(s: Pick<RenderSettings, 'bloom' | 'ao' | 'dof' | 'quality' | 'resolution'>): string | null {
-  const on = [s.bloom && 'bloom', s.ao && 'ambient occlusion', s.dof && 'the tilt-shift blur'].filter(Boolean) as string[];
+  // (the costliest first)
+  const on = [s.ao && 'ambient occlusion', s.bloom && 'bloom', s.dof && 'the tilt-shift blur'].filter(Boolean) as string[];
   if (on.length) return `Turning off ${on.length > 1 ? `${on.slice(0, -1).join(', ')} or ${on[on.length - 1]}` : on[0]} in the menu helps most.`;
   if (s.quality !== 'low') return 'A lower detail level in the menu helps most.';
   if (s.resolution !== '50') return 'A lower resolution in the menu helps most.';

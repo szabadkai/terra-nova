@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { G } from './shaderPatch';
 
 const FinalShader = {
   uniforms: {
@@ -188,6 +189,37 @@ class Bloom extends UnrealBloomPass {
   }
 }
 
+/**
+ * What GTAOPass multiplies the scene by, with the darkening faded out over ground that is still
+ * unexplored. The world's own shaders paint everything there the colour of the fog, trees and rocks
+ * included, but their geometry is still in the normal pass, and the occlusion it makes would show
+ * through as dark rings on the black. The explored share is read from the same texture as theirs,
+ * at the world position of each pixel (rebuilt from the depth).
+ */
+const AO_BLEND_FRAGMENT = /* glsl */ `
+  uniform float intensity;
+  uniform sampler2D tDiffuse;
+  uniform sampler2D tDepth;
+  uniform sampler2D tFog;
+  uniform mat4 cameraProjectionMatrixInverse;
+  uniform mat4 cameraWorldMatrix;
+  uniform vec2 uMapSize;
+  uniform float uFogOn;
+  varying vec2 vUv;
+
+  void main() {
+    vec4 texel = texture2D(tDiffuse, vUv);
+    float k = intensity;
+    if (uFogOn > 0.5) {
+      float d = texture2D(tDepth, vUv).x;
+      vec4 v = cameraProjectionMatrixInverse * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+      vec3 wp = (cameraWorldMatrix * (v / v.w)).xyz;
+      k *= smoothstep(0.2, 0.85, texture2D(tFog, (wp.xz + 0.5) / uMapSize).r);
+    }
+    gl_FragColor = vec4(mix(vec3(1.0), texel.rgb, k), texel.a);
+  }
+`;
+
 export interface FxSettings {
   bloom: boolean;
   dof: boolean;
@@ -244,6 +276,15 @@ export class PostFX {
       this.gtao = new GTAOPass(this.scene, this.camera, this.w * pr, this.h * pr);
       this.gtao.blendIntensity = 0.8;
       this.gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.2, scale: 1.0, samples: 12 });
+      const blend = this.gtao.blendMaterial;
+      blend.fragmentShader = AO_BLEND_FRAGMENT;
+      Object.assign(blend.uniforms, {
+        tDepth: { value: this.gtao.depthTexture },
+        tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn,
+        cameraProjectionMatrixInverse: { value: new THREE.Matrix4() },
+        cameraWorldMatrix: { value: new THREE.Matrix4() },
+      });
+      blend.needsUpdate = true;
       this.aoRT = new THREE.WebGLRenderTarget(this.w * pr, this.h * pr, { type: THREE.HalfFloatType });
     }
   }
@@ -268,7 +309,13 @@ export class PostFX {
     r.render(this.scene, this.camera);
     let src = this.sceneRT;
     if (this.settings.ao && this.gtao && this.aoRT) {
+      const bu = this.gtao.blendMaterial.uniforms;
+      bu.cameraProjectionMatrixInverse.value.copy(this.camera.projectionMatrixInverse);
+      bu.cameraWorldMatrix.value.copy(this.camera.matrixWorld);
+      this.hideNonSolid();
       this.gtao.render(r, this.aoRT, this.sceneRT, 0, false);
+      for (const o of this.hidden) o.visible = true;
+      this.hidden.length = 0;
       src = this.aoRT;
     }
     const u = this.final.uniforms;
@@ -306,6 +353,28 @@ export class PostFX {
     u.uFlash.value *= 0.9;
     r.setRenderTarget(null);
     this.quad.render(r);
+  }
+
+  private hidden: THREE.Object3D[] = [];
+
+  /**
+   * Keep what does not write depth in the scene out of GTAO's normal and depth pass, which draws
+   * every mesh solid: rain, the sky domes, spell glows, order rings and health bars would each
+   * leave a dark halo on the ground around them. The water opts back in (`userData.solidAO`): its
+   * surface is what the eye sees, so it is the surface that gets the occlusion at a cliff's foot.
+   */
+  private hideNonSolid() {
+    const hide = (o: THREE.Object3D) => {
+      if (!o.visible) return;
+      const m = (o as THREE.Mesh).isMesh ? (o as THREE.Mesh).material : null;
+      if (m && !Array.isArray(m) && !m.depthWrite && !m.userData.solidAO) {
+        o.visible = false;
+        this.hidden.push(o);
+        return;
+      }
+      for (const c of o.children) hide(c);
+    };
+    hide(this.scene);
   }
 
   flash(v: number) {
