@@ -15,7 +15,6 @@ import { decodeSave, describe, encodeSave, restore, snapshot } from '../src/game
 import { AIController } from '../src/game/ai';
 import { orderAttack } from '../src/game/orders';
 import { orderShipAttack } from '../src/game/naval';
-import { rootCauses } from '../src/game/causes';
 import type { GameEvent } from '../src/game/types';
 
 let fails = 0;
@@ -66,7 +65,8 @@ if (mode === 'time') {
     for (const goal of m.goals) if (!at.has(goal.id) && goal.done(g)) at.set(goal.id, g.time);
   }
   for (const goal of m.goals) console.log(`${at.has(goal.id) ? `${(at.get(goal.id)! / 60).toFixed(1).padStart(5)} min` : '   never'}  ${goal.text}${goal.optional ? ' (optional)' : ''}`);
-  console.log(g.ms?.won ? `mission won at ${(g.time / 60).toFixed(1)} min` : `not won within ${limit / 60} min; stalls: ${rootCauses(g, g.local).join('; ') || 'none'}`);
+  const stalls = [...g.buildings.values()].filter((b) => b.owner === g.local && b.stall).map((b) => `${b.def.name}: ${b.status}`);
+  console.log(g.ms?.won ? `mission won at ${(g.time / 60).toFixed(1)} min` : `not won within ${limit / 60} min; stalls: ${stalls.join('; ') || 'none'}`);
   process.exit(0);
 }
 

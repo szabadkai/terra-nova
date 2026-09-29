@@ -2,7 +2,7 @@
 // keeps for it, and the helpers a mission's setup uses to raise a camp, plant a rebel fort or send a
 // raid. Pure data and rules, no DOM; the missions themselves are in missions.ts. Everything here runs
 // inside the game (the constructor and the step), so it is deterministic and travels in saves.
-import { BUILDINGS, ORE_COAL, ORE_IRON, emptyStock, type BuildingType, type Good, type Job } from './defs';
+import { BUILDINGS, MINE_ORE, ORE_COAL, ORE_IRON, T_DIRT, T_FOREST, T_GRASS, T_MEADOW, emptyStock, type BuildingType, type Good, type Job } from './defs';
 import type { Game } from './game';
 import type { Building, GameEvent, Settler, Ship, ShipKind } from './types';
 import { atan2, cos, hypot, sin, sq } from '../core/fmath';
@@ -126,7 +126,7 @@ export interface MissionState {
 }
 
 export const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'];
-export const numeralOf = (i: number) => ROMAN[i] ?? String(i + 1);
+export function numeralOf(i: number) { return ROMAN[i] ?? String(i + 1); }
 
 // ------------------------------------------------------------------ lookups
 export function missionById(id: string): Mission | undefined {
@@ -179,7 +179,7 @@ export function rivalRule(m: Mission | null, p: number): RivalRule | undefined {
 }
 
 // ------------------------------------------------------------------ the game's side
-export const hqOf = (g: Game, owner = g.local): Building => g.buildings.get(g.players[owner].hq)!;
+export function hqOf(g: Game, owner = g.local): Building { return g.buildings.get(g.players[owner].hq)!; }
 
 /** Called by the Game constructor once the standard start stands: the mission's state, its rules and its setup. */
 export function beginMission(g: Game) {
@@ -243,7 +243,7 @@ export function truced(g: Game) {
   return !!t && g.time < t;
 }
 
-export const allRivalsDefeated = (g: Game) => g.players.every((p) => p.id === g.local || !p.alive);
+export function allRivalsDefeated(g: Game) { return g.players.every((p) => p.id === g.local || !p.alive); }
 
 // ------------------------------------------------------------------ setup helpers
 /** The placeable anchor for `type` nearest (x, z), within rMax. `unclaimed` = on nobody's land (a rival's fort). */
@@ -527,13 +527,73 @@ export function borderToward(g: Game, to: { x: number; z: number } | null, dist 
   return { x: hq.cx + (dx / l) * dist, z: hq.cz + (dz / l) * dist, r: 3 };
 }
 
+/** The nearest water to the headquarters (a waterworks wants it within its reach). */
+export function nearestWater(g: Game): { x: number; z: number; r?: number } | null {
+  const w = g.world, hq = hqOf(g);
+  let best = -1, bd = Infinity;
+  w.forRadius(hq.cx, hq.cz, 24, (i, _x, _y, d2) => { if (w.isWater(i) && d2 < bd) { bd = d2; best = i; } });
+  return best < 0 ? null : { x: w.nx(best), z: w.ny(best), r: 3 };
+}
+
+/** Soldiers moved from one stronghold's garrison into another's (the headquarters' reserve manning a tower). */
+export function moveGarrison(g: Game, from: Building, to: Building, n: number) {
+  for (let k = 0; k < n; k++) {
+    const id = from.garrison.pop();
+    if (id === undefined) break;
+    const s = g.settlers.get(id)!;
+    s.inside = to.id;
+    s.home = to.id;
+    to.garrison.push(id);
+  }
+  to.occupied = to.garrison.length > 0;
+  to.desiredSoldiers = Math.max(1, to.garrison.length);
+  g.territoryDirty = true;
+}
+
+/** More carriers at the headquarters' door. */
+export function addCarriers(g: Game, n: number, owner = g.local) {
+  const hq = hqOf(g, owner);
+  for (let k = 0; k < n; k++) g.syncPos(g.addSettler(owner, 'carrier', hq.door));
+}
+
+/** The richest placeable site for a mine on the player's own mountain, with the ore it would reach; null if none. */
+export function bestMineSite(g: Game, type: 'coalmine' | 'ironmine' | 'goldmine' | 'stonemine', owner = g.local, r = 34): { x: number; y: number; ore: number } | null {
+  const w = g.world, hq = hqOf(g, owner), def = BUILDINGS[type];
+  const kind = MINE_ORE[def.mine!];
+  const reach = (def.radius ?? 3) + 0.5;
+  let best: { x: number; y: number; ore: number } | null = null;
+  w.forRadius(hq.cx, hq.cz, r, (i, x, y) => {
+    if (w.owner[i] !== owner || !w.isMountain(i)) return;
+    const a = g.anchorFor(type, x, y);
+    if (g.placeError(type, owner, a.x, a.y) !== null) return;
+    const cx = a.x + (def.size - 1) / 2, cz = a.y + (def.size - 1) / 2;
+    let ore = 0;
+    w.forRadius(cx, cz, reach, (j) => { if (w.ore[j] === kind) ore += w.oreAmt[j]; });
+    if (!best || ore > best.ore) best = { x: a.x, y: a.y, ore };
+  });
+  return best;
+}
+
+/** How many nodes around a farm's centre a farmer could sow: the player's own grass, meadow, forest floor or dirt with nothing on it. */
+export function plantableNear(g: Game, x: number, z: number, r: number, owner = g.local) {
+  const w = g.world;
+  let n = 0;
+  w.forRadius(x, z, r, (i) => {
+    if (w.owner[i] !== owner || w.isWater(i) || w.building[i] || w.tree[i] || w.stone[i] || w.blocked[i] || w.reserve[i] || w.field[i]) return;
+    const t = w.terrain[i];
+    if (t === T_GRASS || t === T_MEADOW || t === T_DIRT || t === T_FOREST) n++;
+  });
+  return n;
+}
+
 // ------------------------------------------------------------------ predicates the missions share
-export const has = (g: Game, t: BuildingType, n = 1) => g.countBuildings(g.local, t, false) >= n;
-export const mine = (g: Game) => [...g.buildings.values()].filter((b) => b.owner === g.local && b.state !== 'burning');
-export const me = (g: Game) => g.players[g.local];
-export const stock = (g: Game) => g.totalStock(g.local);
-export const pop = (g: Game) => g.population(g.local);
-export const tally = (g: Game, k: string) => g.ms?.tally[k] ?? 0;
+// (function declarations, not consts: missions.ts names these in its data while this module is still loading)
+export function has(g: Game, t: BuildingType, n = 1) { return g.countBuildings(g.local, t, false) >= n; }
+export function mine(g: Game) { return [...g.buildings.values()].filter((b) => b.owner === g.local && b.state !== 'burning'); }
+export function me(g: Game) { return g.players[g.local]; }
+export function stock(g: Game) { return g.totalStock(g.local); }
+export function pop(g: Game) { return g.population(g.local); }
+export function tally(g: Game, k: string) { return g.ms?.tally[k] ?? 0; }
 /** Rock the player owns that holds ore. */
 export function ownedOre(g: Game) {
   const w = g.world;
@@ -548,4 +608,4 @@ export function knownOreNodes(g: Game, ore: number) {
   for (let i = 0; i < w.N; i++) if (w.ore[i] === ore && w.known(i, g.local)) n++;
   return n;
 }
-export const knowsCoalAndIron = (g: Game) => knownOreNodes(g, ORE_COAL) > 0 && knownOreNodes(g, ORE_IRON) > 0;
+export function knowsCoalAndIron(g: Game) { return knownOreNodes(g, ORE_COAL) > 0 && knownOreNodes(g, ORE_IRON) > 0; }
