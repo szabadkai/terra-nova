@@ -1,6 +1,8 @@
 import './style.css';
 import { Game, TICK } from './game/game';
-import { Lockstep, SPEEDS } from './net/lockstep';
+import { Lockstep, SPEEDS, TURN_S, type TurnPacket } from './net/lockstep';
+import { BUILD, GameRoom, cleanCode, newCode, type Seat, type StartMsg } from './net/room';
+import { Lobby } from './ui/lobby';
 import { GameRenderer } from './render/renderer';
 import { HUD } from './ui/hud';
 import { generateIcons } from './ui/icons';
@@ -48,6 +50,13 @@ let gameMenu: GameMenu | null = null;
 let state: 'menu' | 'play' = 'menu';
 /** steps the game: alone, or in lockstep with the other players of a networked game */
 let driver: Lockstep;
+/** the room of a game with a friend, from its lobby on */
+let room: GameRoom | null = null;
+/** the game with a friend being played: who sits where, this machine's seat, the input delay in turns */
+let net: { seats: Seat[]; local: number; delay: number } | null = null;
+/** the other player's turn packets that came before this machine's game was built */
+let earlyTurns: { slot: number; pkt: TurnPacket }[] = [];
+let lobby: Lobby | null = null;
 /** the player the building and goods icons were drawn for (their banner colour), -1 none yet */
 let iconsFor = -1;
 let islands = params.get('islands') !== '0';
@@ -115,7 +124,8 @@ function thumbnail(): string | undefined {
 
 /** Keep the autosave slot up to date. `now` commits at once, for a page that is going away. */
 function autosave(now = false) {
-  if (state !== 'play' || !game || game.time === autosavedAt) return;
+  // (a game with a friend is not saved: it cannot be picked up alone)
+  if (net || state !== 'play' || !game || game.time === autosavedAt) return;
   try {
     const { data, meta } = capture();
     autosavedAt = game.time;
@@ -192,9 +202,15 @@ async function buildWorld(from?: SaveData) {
     Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel });
     islands = game.opts.islands !== false;
   } else {
-    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands });
+    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0 });
   }
-  driver = new Lockstep(game, [game.local], 0);
+  driver = new Lockstep(game, net ? net.seats.map((s) => s.slot).sort((a, b) => a - b) : [game.local], net?.delay ?? 0);
+  if (net && room) {
+    const r = room;
+    driver.send = (pkt) => r.sendTurn(pkt);
+    driver.start();
+    for (const e of earlyTurns.splice(0)) driver.onPacket(e.slot, e.pkt);
+  }
   gr = new GameRenderer(canvas, game);
   applyRenderPrefs(gr);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
@@ -237,7 +253,7 @@ function showMainMenu() {
     menuEl = null;
     await buildWorld();
     showMainMenu();
-  }, () => openOptions(), () => openOptions('load'));
+  }, () => openOptions(), () => openOptions('load'), () => openLobby());
   menuEl = menu.el;
   const chosen = graphicsChosen();
   if (chosen) menu.note(`${chosen}.`, 'Change', () => openOptions());
@@ -277,7 +293,7 @@ function openGameMenu(page?: 'graphics') {
   gr.cam.inputEnabled = false;
   audio.setPaused(true);
   gameMenu = new GameMenu(uiRoot, {
-    game, gr, audio, inGame: true, objectives: hud?.objectives, saves: saveHooks, page,
+    game, gr, audio, inGame: true, net: !!net, objectives: hud?.objectives, saves: saveHooks, page,
     onClose: () => { gameMenu = null; gr.cam.inputEnabled = true; audio.setPaused(false); },
     onRestart: () => { void restartMap(); },
     onQuit: () => { void restart(); },
@@ -294,9 +310,130 @@ async function restartMap() {
 async function restart() {
   autosave();
   setResume(false);
+  leaveRoom();
   opts.seed = Math.floor(Math.random() * 99999) + 1;
   await buildWorld();
   showMainMenu();
+}
+
+// ---------------------------------------------------------------- playing with a friend
+function leaveRoom() {
+  room?.leave();
+  room = null;
+  net = null;
+  earlyTurns = [];
+  lobby?.remove();
+  lobby = null;
+}
+
+function openLobby() {
+  menuEl?.remove();
+  menuEl = null;
+  lobby = new Lobby(uiRoot, opts, {
+    host: () => hostGame(),
+    join: (code) => joinGame(code),
+    start: () => { void startHosted(); },
+    back: () => { leaveRoom(); showMainMenu(); },
+  });
+}
+
+/** The game's options as the host has them set on the title screen (at least two kingdoms, for the two people). */
+const hostedOpts = () => ({ size: opts.size, seed: opts.seed, players: Math.max(2, opts.players), aiLevel: opts.ai, islands });
+
+/** Join the room `code` names: the turn packets go to the driver once this machine's game is built, and wait until then. */
+function openRoom(code: string): GameRoom {
+  const r = new GameRoom(code);
+  room = r;
+  r.onError = (text) => lobby?.status(`The relays could not be reached: ${text}`, true);
+  r.onTurn = (peer, pkt) => {
+    const slot = net?.seats.find((s) => s.peer === peer)?.slot;
+    if (slot === undefined) return;
+    if (driver && driver.humans.length > 1) driver.onPacket(slot, pkt);
+    else earlyTurns.push({ slot, pkt });
+  };
+  return r;
+}
+
+/** A player has gone from a game under way: it stands still. */
+function peerLeft(slot: number) {
+  driver.frozen = true;
+  hud?.netLeft(slot);
+}
+
+/** the seats of the game this machine hosts: the host first, the first friend to arrive second */
+let seats: Seat[] = [];
+function hostGame() {
+  const r = openRoom(newCode());
+  seats = [{ peer: r.me, slot: 0 }];
+  lobby?.showRoom(r.code, true);
+  const publish = () => {
+    lobby?.setSeats(seats.map((s) => ({ slot: s.slot, who: s.peer === r.me ? 'you, the host' : 'your friend' })), hostedOpts().players, opts.ai);
+    lobby?.canStart(seats.length >= 2);
+    lobby?.status(seats.length >= 2 ? 'Your friend is here. Start when you are ready.' : 'Waiting for your friend to join with the code…');
+    r.sendLobby({ opts: hostedOpts(), seats, host: r.me, build: BUILD });
+  };
+  publish();
+  r.onHello = (peer, build) => {
+    if (build !== BUILD) { lobby?.status('Your friend runs another version of the game: reload the page on both machines', true); return; }
+    if (!seats.some((s) => s.peer === peer) && seats.length < 2) seats.push({ peer, slot: 1 });
+    publish();
+  };
+  r.onPeers = (peers) => {
+    const gone = seats.filter((s) => s.peer !== r.me && !peers.includes(s.peer));
+    if (!gone.length) return;
+    if (net) peerLeft(gone[0].slot);
+    else { seats = seats.filter((s) => !gone.includes(s)); publish(); }
+  };
+}
+
+/** The host starts: the input delay is set from the round trip to the friend, then everyone builds the same game. */
+async function startHosted() {
+  const r = room;
+  if (!r || seats.length < 2) return;
+  lobby?.canStart(false);
+  lobby?.status('Measuring the way to your friend…');
+  let rtt = 120;
+  try { rtt = await r.ping(seats[1].peer); } catch { /* keep the guess */ }
+  const delay = Math.max(2, Math.min(5, Math.ceil((rtt * 1.5) / (TURN_S * 1000)) + 1));
+  const msg: StartMsg = { opts: { ...hostedOpts(), humans: 2 }, seats, delay, build: BUILD };
+  r.sendStart(msg);
+  console.info(`Hosting: round trip ${Math.round(rtt)} ms, input delay ${delay} turns`);
+  await startNetGame(msg);
+}
+
+function joinGame(codeIn: string) {
+  const code = cleanCode(codeIn);
+  if (code.length !== 6) { lobby?.status('A room code has six letters', true); return; }
+  const r = openRoom(code);
+  lobby?.showRoom(code, false);
+  lobby?.status('Looking for the host…');
+  r.onPeers = (peers) => {
+    if (net) { if (!peers.includes(net.seats[0].peer)) peerLeft(net.seats[0].slot); return; }
+    if (peers.length) r.sayHello();
+    else lobby?.status('Looking for the host…');
+  };
+  r.onLobby = (l) => {
+    if (l.build !== BUILD) { lobby?.status('The host runs another version of the game: reload the page on both machines', true); return; }
+    const mine = l.seats.find((s) => s.peer === r.me);
+    lobby?.setSeats(l.seats.map((s) => ({ slot: s.slot, who: s.peer === r.me ? 'you' : s.peer === l.host ? 'your friend, the host' : 'another player' })), Math.max(2, l.opts.players), l.opts.aiLevel);
+    lobby?.status(mine ? 'Waiting for the host to start the game…' : 'The room is full', !mine);
+  };
+  r.onStart = (s) => { if (s.build === BUILD) void startNetGame(s); };
+}
+
+/** Both machines build the same game from the host's options, each in its own seat. */
+async function startNetGame(s: StartMsg) {
+  const r = room;
+  if (!r) return;
+  const mine = s.seats.find((x) => x.peer === r.me);
+  if (!mine) { lobby?.status('There is no seat for you in this game', true); return; }
+  net = { seats: s.seats, local: mine.slot, delay: s.delay };
+  Object.assign(opts, { seed: s.opts.seed, size: s.opts.size, players: s.opts.players, ai: s.opts.aiLevel });
+  islands = s.opts.islands !== false;
+  lobby?.remove();
+  lobby = null;
+  await buildWorld();
+  startGame();
 }
 
 async function boot() {
@@ -353,6 +490,7 @@ function startGame(resumed?: Record<string, unknown>) {
   hud = new HUD(game, gr, audio, {
     getSpeed: () => driver.speed,
     issue: (c) => driver.issue(c),
+    isHost: () => !net || driver.humans[0] === game.local,
     restart: () => { void restart(); },
     openMenu: (page) => openGameMenu(page),
   }, uiRoot);
@@ -363,6 +501,10 @@ function startGame(resumed?: Record<string, unknown>) {
     hud.objectives.index = view.objective ?? 0;
     hud.objectives.render();
     hud.message(`Welcome back, my liege — ${playTime(game.time)} into your reign.`, undefined, undefined, 'good');
+  } else if (net) {
+    driver.onEvent = (e) => hud?.netEvent(e);
+    const others = net.seats.filter((s) => s.slot !== game.local).map((s) => game.players[s.slot].name);
+    hud.message(`${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} in the game with you${net.local === 0 ? '; you set its pace' : '; the host sets its pace'}.`, undefined, undefined, 'good');
   } else {
     hud.message('Welcome, my liege! Build woodcutters, a sawmill and a stonecutter to begin.', undefined, undefined, 'good');
   }
@@ -371,7 +513,7 @@ function startGame(resumed?: Record<string, unknown>) {
   try { audio.start(); } catch { /* needs a gesture */ }
   // fills the screen when the game was started by a click; a resumed page has no gesture to spend
   if (prefs.immersive) void enterImmersive();
-  setResume(true);
+  setResume(!net);
   autosaveT = AUTOSAVE_EVERY;
   // a new game replaces the autosave at once, so reloading can never bring back the previous one
   autosavedAt = resumed ? game.time : -1;
@@ -421,6 +563,7 @@ function setupGlobalInput() {
       else hud.recallGroup(slot, e.shiftKey);
       return;
     }
+    if ((k === ' ' || k === '[' || k === ']') && net && driver.humans[0] !== game.local) { e.preventDefault(); hud.message('The host sets the pace of the game'); return; }
     if (k === ' ') { e.preventDefault(); driver.issue({ t: 'speed', s: driver.speed === 0 ? driver.pausedSpeed : 0 }); }
     else if (k === '[' || k === ']') {
       const s = Math.max(1, Math.min(SPEEDS[SPEEDS.length - 1], (driver.speed || driver.pausedSpeed) + (k === ']' ? 1 : -1)));

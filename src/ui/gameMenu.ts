@@ -129,6 +129,8 @@ export interface GameMenuOptions {
   audio: Audio;
   /** a running game (pause menu) rather than the title screen (settings only) */
   inGame: boolean;
+  /** a game with a friend: it goes on behind the menu, and cannot be saved or restarted */
+  net?: boolean;
   objectives?: Objectives;
   /** page to open on (default: overview in a game, graphics on the title screen) */
   page?: Page;
@@ -207,7 +209,8 @@ export class GameMenu {
     this.nav.appendChild(h('div', 'gm-head', this.o.inGame
       ? `<div class="crest">⚜</div><h2>Paused</h2><small>⏱ ${clock(g.time)} played</small>`
       : `<div class="crest">⚜</div><h2>Options</h2>`));
-    for (const it of this.o.inGame ? GAME_NAV : TITLE_NAV) {
+    const nav = (this.o.inGame ? GAME_NAV : TITLE_NAV).filter((it) => !this.o.net || !['save', 'load', 'restart'].includes(it.id));
+    for (const it of nav) {
       if (it.id === '-') { this.nav.appendChild(h('div', 'gm-sep')); continue; }
       if ((it.id === 'save' || it.id === 'load') && !this.o.saves) continue;
       const extra = it.soon ? '<span class="tag">Soon</span>' : it.kbd ? `<kbd>${it.kbd}</kbd>` : '';
@@ -245,7 +248,7 @@ export class GameMenu {
     });
     const [title, desc] = PAGES[page];
     this.titleEl.textContent = title;
-    this.descEl.textContent = desc;
+    this.descEl.textContent = page === 'overview' && this.o.net ? 'The game goes on while this menu is open: your friend is still playing.' : desc;
     // the graphics page lifts the dimming so changes can be judged on the land itself
     this.el.classList.toggle('peek', page === 'graphics');
     const c = this.body;

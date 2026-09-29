@@ -488,3 +488,18 @@ label.opt-switch { cursor: pointer; }
 
 /* box selection of soldiers */
 .selbox { position: fixed; z-index: 30; pointer-events: none; border: 1px solid rgba(255, 224, 150, 0.95); background: linear-gradient(rgba(255, 214, 120, 0.1), rgba(255, 214, 120, 0.16)); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 14px rgba(255, 200, 90, 0.18); border-radius: 3px; }
+
+/* ------------------------------------------------ playing with a friend */
+.lobby .code { font-family: var(--font-title); font-size: 34px; letter-spacing: .3em; text-align: center; color: var(--gold); text-shadow: 0 2px 20px rgba(226, 184, 87, 0.5); padding: 4px 0 2px; user-select: all; }
+.lobby .note { color: var(--muted); font-size: 12.5px; line-height: 1.45; margin: 4px 0 10px; }
+.lobby .seats { display: flex; flex-direction: column; gap: 5px; }
+.lobby .seat { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 7px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.3); font-size: 13px; }
+.lobby .seat .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.lobby .seat .who { margin-left: auto; color: var(--muted); font-size: 12px; }
+.lobby .seat.open .who { color: var(--gold); animation: lpulse 1.6s infinite; }
+@keyframes lpulse { 50% { opacity: .45; } }
+.lobby .lstatus { min-height: 18px; color: var(--muted); font-size: 12.5px; text-align: center; margin: 8px 0 2px; }
+.lobby .lstatus.bad { color: var(--warn); }
+.lobby input#code { text-transform: uppercase; letter-spacing: .2em; font-family: var(--font-title); font-weight: 700; }
+.netbar { position: fixed; top: 54px; left: 0; right: 0; width: fit-content; margin: 0 auto; padding: 7px 16px; border-radius: 20px; background: rgba(18, 12, 8, 0.88); border: 1px solid var(--line); color: var(--gold); font-size: 12.5px; pointer-events: none; z-index: 20; }
+.speed button:disabled { opacity: .45; cursor: default; }

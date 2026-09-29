@@ -9,7 +9,7 @@ export interface MenuOptions {
   ai: number;
 }
 
-export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void) {
+export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void) {
   const el = document.createElement('div');
   el.className = 'menu';
   el.innerHTML = `
@@ -35,6 +35,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <div class="field"><label>World seed</label>
           <div class="seedrow"><input type="number" value="${opts.seed}" id="seed"><button id="dice" title="Random world">🎲</button></div></div>
         <button class="wide primary big" id="start">Found your settlement</button>
+        <button class="wide" id="friend" title="Two players over the internet: one hosts, the other joins with a code">Play with a friend</button>
         <div class="row"><button class="wide" id="help">How to play</button><button class="wide" id="load">Load game</button><button class="wide" id="options">Options</button></div>
       </div>
       <div class="menu-foot">All graphics and most sounds are generated procedurally in your browser.</div>
@@ -82,6 +83,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   el.querySelector<HTMLButtonElement>('#helpclose')!.onclick = () => help.classList.add('hidden');
   el.querySelector<HTMLButtonElement>('#options')!.onclick = () => onOptions?.();
   el.querySelector<HTMLButtonElement>('#load')!.onclick = () => onLoad?.();
+  el.querySelector<HTMLButtonElement>('#friend')!.onclick = () => { opts.ai = cur.ai; onFriend?.(); };
   /** Put the last game at the top of the card as the main action. */
   const offerContinue = (meta: SaveMeta, go: () => void) => {
     if (el.querySelector('.continue')) return;

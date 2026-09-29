@@ -8,6 +8,8 @@ Rules that apply to every item:
 - **Finished buildings are drawn in batches** (`src/render/buildingBatches.ts`, one draw per material): while batched, a building's own static meshes are hidden. Anything that changes a finished building's meshes or materials must take it out of the batches first, as burning does; moving parts (named movers), flags and sites stay separate meshes.
 - **Instanced meshes** finish their writes with `commitInstances` / `uploadFirst`. Meshes that call `setColorAt` need `withInstanceColor()` when they're created (`src/render/instancing.ts`).
 - **The sun's shadow map covers only what the view shows** (`src/render/shadowFit.ts`, checked by `scripts/shadowfit.ts`): the ground in view within 1.1 view sizes of the target, and things up to `TALL` (8) above it. Anything taller that should take a shadow at the edge of the view needs `TALL` raised.
+- **Every player action is a command** (`src/game/commands.ts`): the interface never calls into the game or writes it; it issues a command and hears how it went through a `cmd` event (the HUD's `issue()`). A game with a friend replays the same commands on both machines (`src/net/lockstep.ts`), so anything the interface did to the game directly would drift them apart. Game logic reads each player's own fog from `world.seen` (a bit per player); `world.explored` is only this machine's view. `npx tsx scripts/lockstep.ts` fails on a direct call or write from `src/ui`, `src/render` or `src/main.ts`, and plays a jittery three-machine game to catch a drift.
+- **The game's arithmetic is the same in every browser**: no `Math.sin/cos/atan2/hypot/pow` and no `**` in `src/game` (the engines round them differently in the last bit); use `sin`, `cos`, `atan2`, `hypot` and `sq` from `src/core/fmath.ts`. Render code may use `Math.*` freely. `scripts/lockstep.ts` checks.
 - **Each gameplay feature gets a headless check** in `scripts/`.
 - **A new heavy effect gets its switch in each detection level** (`PRESETS` in `src/render/hardware.ts`, checked by `scripts/hardware.ts`): new players get the level their machine was timed to hold, so an effect that is on everywhere by default lands on machines that were never timed with it.
 
@@ -52,3 +54,14 @@ Hide the UI and use a free camera. Scrub the time of day and the season, and set
 - **More trade outposts**: `AIController.tradeStep` sets up only one far outpost (storehouse plus market). Let it add a second as its realm grows.
 
 Either change will move the baselines on purpose. Record the new medians.
+
+## 8. Playing with a friend: what's left
+
+Two people can play over the internet with no server (title screen → Play with a friend: WebRTC between the browsers, found through Trystero over public Nostr relays by a six-letter room code; deterministic lockstep at sixty ticks a second, turns of 100 ms, the input delay set by the host from the measured round trip, a state hash compared every turn). Left for later:
+
+- **Three or four people.** The protocol is symmetric (`scripts/lockstep.ts` already plays three seats); the lobby seats only the first friend, and a leaver's realm needs handing to an AI at a turn everyone agrees on (the lowest remaining seat decides and sends it as a command), where today the game simply stands still.
+- **Mending a drift.** A desync freezes the game with a dialog. The host could send a snapshot (`save.ts`) that every machine, host included, restores at the same turn: two restores of one save run identically (`scripts/saveload.ts`), a live game and its restore do not.
+- **Saving a game with a friend**, to pick up together later (the autosave and Save page are off in one).
+- **A TURN relay** for the pairs of NATs that STUN cannot cross (about one in ten): `turnConfig` in `src/net/room.ts` is the slot. Two tabs on one machine only meet on the dev server, where mDNS host candidates are rewritten to loopback (`_test_only_mdnsHostFallbackToLoopback`, localhost only); an embedded browser does not resolve them and one NAT rarely hairpins.
+- **An input delay that follows the connection** during play (it is fixed at the start), and a word from the host when the game is paused.
+- Chat, and names of the players' own choosing (the realms' names stand in).

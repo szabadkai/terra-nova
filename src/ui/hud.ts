@@ -6,6 +6,7 @@ import {
 import { YIELD_FORTS, canPrioritise, strongholdsOf, type Game } from '../game/game';
 import type { Building, GameEvent, Settler } from '../game/types';
 import type { Cmd, SetKey } from '../game/commands';
+import type { DriverEvent } from '../net/lockstep';
 import type { GameRenderer } from '../render/renderer';
 import type { Audio } from '../audio/audio';
 import { attackableSoldiers } from '../game/military';
@@ -87,6 +88,8 @@ export interface HudHooks {
   getSpeed(): number;
   /** give the game a command (commands.ts); it answers with a `cmd` event carrying the sequence number returned */
   issue(c: Cmd): number;
+  /** whether this player sets the game's pace (alone, or the host of a game with a friend) */
+  isHost(): boolean;
   restart(): void;
   /** the Esc menu, on the Graphics page when asked */
   openMenu(page?: 'graphics'): void;
@@ -101,6 +104,8 @@ export class HUD {
   private msgs!: HTMLElement;
   private tip!: HTMLElement;
   private hint!: HTMLElement;
+  /** a game with a friend: who is being waited for */
+  private netbar!: HTMLElement;
   private tab: Tab = 'build';
   private cat: Category = 'basic';
   minimap!: Minimap;
@@ -157,6 +162,8 @@ export class HUD {
     this.root.appendChild(this.tip);
     this.hint = h('div', 'hint hidden');
     this.root.appendChild(this.hint);
+    this.netbar = h('div', 'netbar hidden');
+    this.root.appendChild(this.netbar);
     this.groupBar = h('div', 'panel groupbar hidden');
     this.root.appendChild(this.groupBar);
     this.renderTab();
@@ -221,8 +228,8 @@ export class HUD {
       <div class="clock" title="${season.name}, day ${season.day(this.gr.sky.dayLength)}">${SEASON_ICON[season.index]} ${season.name}</div>
       <div class="clock" title="Time of day">${isNight ? '☾' : '☀'} ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}</div>
       <div class="clock" title="Game time">⏱ ${mm}:${String(ss).padStart(2, '0')}</div>
-      <div class="speed">
-        ${[0, 1, 2, 4].map((s) => `<button data-speed="${s}" class="${speed === s ? 'on' : ''}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}
+      <div class="speed" title="${this.hooks.isHost() ? '' : 'The host sets the pace of the game'}">
+        ${[0, 1, 2, 4].map((s) => `<button data-speed="${s}" class="${speed === s ? 'on' : ''}"${this.hooks.isHost() ? '' : ' disabled'}>${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}
       </div>
       ${immersiveAvailable ? `<button class="mini imm${isImmersive() ? ' on' : ''}" id="imm" aria-pressed="${isImmersive()}" aria-label="Immersive mode" title="${isImmersive() ? `Leave immersive mode (F, or ${leaveHint})` : 'Immersive mode: fill the screen, so scrolling at the top edge never leaves the window (F)'}">${isImmersive() ? IMM_OFF : IMM_ON}</button>` : ''}
       <div class="fps${prefs.showFps ? '' : ' hidden'}" id="fps">${this.fpsText}</div>`;
@@ -1835,6 +1842,33 @@ export class HUD {
     // one's own fall is the end (the game may go on for the others); a win comes with the game's end
     if (e.type === 'defeated' && e.owner === this.game.local) this.gameOver(false);
     if (e.type === 'gameover') this.gameOver(e.owner === this.game.local);
+  }
+
+  /** Word from the lockstep driver of a game with a friend. */
+  netEvent(e: DriverEvent) {
+    const name = (slot: number) => this.game.players[slot]?.name ?? 'the other player';
+    if (e.type === 'waiting') { this.netbar.textContent = `Waiting for ${name(e.slot)}…`; this.netbar.classList.remove('hidden'); }
+    else if (e.type === 'ready') this.netbar.classList.add('hidden');
+    else if (e.type === 'desync') this.endDialog('Out of step', `The two games drifted apart at turn ${e.turn}. They cannot be brought together again in this version; from here on you watch this machine's game alone.`);
+    else if (e.type === 'lost') this.endDialog(`${name(e.slot)} is not answering`, 'Nothing has been heard from them for a while. The game stands still.');
+  }
+
+  /** The other player has left the game. */
+  netLeft(slot: number) {
+    this.netbar.classList.add('hidden');
+    this.endDialog(`${this.game.players[slot]?.name ?? 'The other player'} has left the game`, 'The game stands still. You can look around, or go back to the title screen.');
+  }
+
+  /** A game with a friend has come to a stop: say why, offer the way out. */
+  private endDialog(title: string, text: string) {
+    if (this.root.querySelector('.overlay.net')) return;
+    const ov = h('div', 'overlay net');
+    ov.innerHTML = `<div class="panel dialog"><h1>${title}</h1><p>${text}</p>
+      <div class="row"><button class="wide" data-act="cont">Keep watching</button><button class="wide primary" data-act="menu">Main menu</button></div></div>`;
+    this.root.appendChild(ov);
+    ov.querySelector<HTMLElement>('[data-act=cont]')!.onclick = () => ov.remove();
+    ov.querySelector<HTMLElement>('[data-act=menu]')!.onclick = () => this.hooks.restart();
+    this.audio.play('click');
   }
 
   private ended = false;
