@@ -1,6 +1,8 @@
 // Post-processing: the scene renders once into a multisampled HDR target, which is resolved once;
 // optional GTAO, then bloom blurs the bright parts at reduced resolution, and a single final pass
-// to the screen does the tilt-shift blur, adds the bloom, tone maps and grades.
+// to the screen does the tilt-shift blur, adds the bloom, tone maps and grades. The wide part of
+// the tilt-shift blur is worked out at half size beforehand, from a half-size copy of the scene
+// that also stands in for the bloom's own bright pass.
 // (Each pass of a composer chain rewrote a full-screen multisampled target; at 3440x1440 that
 // alone cost more than the whole bloom.)
 import * as THREE from 'three';
@@ -13,6 +15,8 @@ const FinalShader = {
   uniforms: {
     tScene: { value: null as THREE.Texture | null },
     tBloom: { value: null as THREE.Texture | null },
+    tBlur: { value: null as THREE.Texture | null },
+    uHalfOn: { value: 0 },
     uBloom: { value: 0 },
     uSharpen: { value: 0 },
     toneMappingExposure: { value: 1 },
@@ -45,7 +49,7 @@ const FinalShader = {
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */ `
     precision highp float;
-    uniform sampler2D tScene; uniform sampler2D tBloom; uniform float uBloom; uniform float uSharpen;
+    uniform sampler2D tScene; uniform sampler2D tBloom; uniform sampler2D tBlur; uniform float uHalfOn; uniform float uBloom; uniform float uSharpen;
     uniform vec2 uRes; uniform float uAmount; uniform float uFocus; uniform float uBand;
     uniform float uTime; uniform float uSat; uniform float uContrast; uniform float uVignette;
     uniform vec3 uWarm; uniform vec3 uCool; uniform float uGrain; uniform float uCA; uniform float uFlash;
@@ -53,7 +57,6 @@ const FinalShader = {
     #include <tonemapping_pars_fragment>
     #include <colorspace_pars_fragment>
     varying vec2 vUv;
-    const int TAPS = 16;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
       vec2 c = vUv - 0.5;
@@ -61,7 +64,7 @@ const FinalShader = {
       // tilt-shift: the miniature look blurs the top and bottom of the view
       float blur = smoothstep(uBand, uBand + 0.35, abs(vUv.y - uFocus)) * uAmount;
       float r = blur * 7.0;
-      vec3 col;
+      vec3 col = vec3(0.0);
       if (r < 0.35) {
         // sharp: just a subtle chromatic aberration towards the edges
         vec2 off = c * r2 * uCA * 5.0;
@@ -75,17 +78,22 @@ const FinalShader = {
           col = clamp(sh, min(col, nb * 0.25) * 0.8, max(col, nb * 0.25) * 1.25);
         }
       } else {
-        vec2 px = 1.0 / uRes;
-        vec3 acc = texture2D(tScene, vUv).rgb; float wsum = 1.0;
-        for (int i = 0; i < TAPS; i++) {
-          float fi = float(i);
-          float a = fi * 2.39996;
-          float rr = sqrt((fi + 0.5) / float(TAPS)) * r;
-          vec3 s = texture2D(tScene, vUv + vec2(cos(a), sin(a)) * rr * px).rgb;
-          float w = 1.0 + dot(s, vec3(0.3)) * 0.4; // slight bokeh emphasis on bright spots
-          acc += s * w; wsum += w;
+        // up to a couple of pixels a few taps at full size; wider, the blur worked out at half size
+        float wh = smoothstep(HALF_FROM, HALF_FULL, r) * uHalfOn;
+        if (wh < 1.0) {
+          vec2 px = 1.0 / uRes;
+          vec3 acc = texture2D(tScene, vUv).rgb; float wsum = 1.0;
+          for (int i = 0; i < NEAR_TAPS; i++) {
+            float fi = float(i);
+            float a = fi * 2.39996;
+            float rr = sqrt((fi + 0.5) / float(NEAR_TAPS)) * r;
+            vec3 s = texture2D(tScene, vUv + vec2(cos(a), sin(a)) * rr * px).rgb;
+            float w = 1.0 + dot(s, vec3(0.3)) * 0.4; // slight bokeh emphasis on bright spots
+            acc += s * w; wsum += w;
+          }
+          col = acc / wsum;
         }
-        col = acc / wsum;
+        if (wh > 0.0) col = mix(col, texture2D(tBlur, vUv).rgb, wh);
       }
       if (uBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
       col = ACESFilmicToneMapping(col);
@@ -134,16 +142,143 @@ const FinalShader = {
     }`,
 };
 
+const QUAD_VS = /* glsl */ `
+  precision highp float;
+  uniform mat4 modelViewMatrix;
+  uniform mat4 projectionMatrix;
+  attribute vec3 position;
+  attribute vec2 uv;
+  varying vec2 vUv;
+  void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+
+/** Half-size copy of the scene: one filtered tap between four texels averages them. */
+const HalfShader = {
+  uniforms: { tScene: { value: null as THREE.Texture | null } },
+  vertexShader: QUAD_VS,
+  fragmentShader: /* glsl */ `
+    precision highp float;
+    uniform sampler2D tScene;
+    varying vec2 vUv;
+    void main() { gl_FragColor = vec4(texture2D(tScene, vUv).rgb, 1.0); }`,
+};
+
+/** The tilt-shift blur at half size: a golden-angle disc of taps, wider towards the top and bottom. */
+const BlurShader = {
+  uniforms: {
+    tHalf: { value: null as THREE.Texture | null },
+    uRes: { value: new THREE.Vector2(1, 1) },
+    uAmount: { value: 1.0 },
+    uFocus: { value: 0.55 },
+    uBand: { value: 0.18 },
+  },
+  vertexShader: QUAD_VS,
+  fragmentShader: /* glsl */ `
+    precision highp float;
+    uniform sampler2D tHalf; uniform vec2 uRes; uniform float uAmount; uniform float uFocus; uniform float uBand;
+    varying vec2 vUv;
+    const int TAPS = 16;
+    void main(){
+      float blur = smoothstep(uBand, uBand + 0.35, abs(vUv.y - uFocus)) * uAmount;
+      // the radius in full-size pixels, less the blur the half size brings of its own, then in half-size pixels
+      float r7 = blur * 7.0;
+      float r = sqrt(max(r7 * r7 - HALF_OWN, 0.0)) * 0.5;
+      vec3 acc = texture2D(tHalf, vUv).rgb;
+      if (r > 0.1) {
+        vec2 px = 1.0 / uRes;
+        float wsum = 1.0;
+        for (int i = 0; i < TAPS; i++) {
+          float fi = float(i);
+          float a = fi * 2.39996;
+          float rr = sqrt((fi + 0.5) / float(TAPS)) * r;
+          vec3 s = texture2D(tHalf, vUv + vec2(cos(a), sin(a)) * rr * px).rgb;
+          float w = 1.0 + dot(s, vec3(0.3)) * 0.4; // slight bokeh emphasis on bright spots
+          acc += s * w; wsum += w;
+        }
+        acc /= wsum;
+      }
+      gl_FragColor = vec4(acc, 1.0);
+    }`,
+};
+
+const rawPass = (name: string, sh: { uniforms: Record<string, THREE.IUniform>; vertexShader: string; fragmentShader: string }, defines = {}) =>
+  new THREE.RawShaderMaterial({
+    name,
+    defines,
+    uniforms: THREE.UniformsUtils.clone(sh.uniforms),
+    vertexShader: sh.vertexShader,
+    fragmentShader: sh.fragmentShader,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+/**
+ * Blur radius (in pixels of the scene) where the half-size blur starts to take over from the few
+ * full-size taps, and where it has. The half-size copy and its bilinear scaling up blur by about
+ * as much as a disc of 1.9 pixels on their own (a variance of 0.92 px^2 per axis: 0.25 for the
+ * two-texel average, 2^2/6 for the tent), so below that the full-size taps are the only way.
+ */
+const HALF_FROM = 1.9;
+const HALF_FULL = 2.5;
+const HALF_OWN = 0.92 * 4; // (a disc of radius R has a variance of R^2/4 per axis)
+
 const BLUR_X = new THREE.Vector2(1, 0);
 const BLUR_Y = new THREE.Vector2(0, 1);
 
+/**
+ * The first mip's horizontal blur, which also keeps only the bright parts, reading a half-size copy
+ * of the scene: the bright pass then needs no pass of its own. Its taps sit on whole texels, as the
+ * threshold is taken of each texel before the blur (blurring the bright pass exactly as before).
+ * `first` is UnrealBloomPass's own blur for that mip: its centre weight 0.39894 / sigma gives the
+ * kernel (sigma = kernel / 3), and the weights are worked out as it does.
+ */
+const brightBlurMaterial = (first: THREE.ShaderMaterial) => {
+  const sigma = 0.39894 / (first.uniforms['centerWeight'].value as number);
+  const kernel = Math.round(sigma * 3);
+  const weights = Array.from({ length: kernel }, (_, i) => (0.39894 * Math.exp((-0.5 * i * i) / (sigma * sigma))) / sigma);
+  return new THREE.ShaderMaterial({
+    name: 'BloomBrightBlur',
+    defines: { KERNEL: kernel },
+    uniforms: {
+      colorTexture: { value: null },
+      invSize: { value: new THREE.Vector2(1, 1) },
+      direction: { value: new THREE.Vector2(1, 0) },
+      threshold: { value: 1 },
+      smoothWidth: { value: 0.01 },
+      weights: { value: weights },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      #include <common>
+      varying vec2 vUv;
+      uniform sampler2D colorTexture; uniform vec2 invSize; uniform vec2 direction;
+      uniform float threshold; uniform float smoothWidth; uniform float weights[KERNEL];
+      vec3 bright(vec2 uv) {
+        vec3 c = texture2D(colorTexture, uv).rgb;
+        return c * smoothstep(threshold, threshold + smoothWidth, luminance(c));
+      }
+      void main() {
+        vec3 sum = bright(vUv) * weights[0];
+        for (int i = 1; i < KERNEL; i++) {
+          vec2 o = direction * invSize * float(i);
+          sum += (bright(vUv + o) + bright(vUv - o)) * weights[i];
+        }
+        gl_FragColor = vec4(sum, 1.0);
+      }`,
+  });
+};
+
 /** Unreal-style bloom that leaves its result in `output` instead of blending it back over the scene. */
 class Bloom extends UnrealBloomPass {
+  private brightBlur = brightBlurMaterial(this.separableBlurMaterials[0] as THREE.ShaderMaterial);
+
   get output(): THREE.Texture {
     return this.renderTargetsHorizontal[0].texture;
   }
 
-  renderFrom(renderer: THREE.WebGLRenderer, src: THREE.Texture) {
+  /** `half`: a half-size copy of the scene, the size of the first mip (the bright pass is then folded into its blur) */
+  renderFrom(renderer: THREE.WebGLRenderer, src: THREE.Texture, half: THREE.Texture | null = null) {
     const quad = (this as any)._fsQuad as FullScreenQuad;
     const oldClear = renderer.getClearColor(new THREE.Color());
     const oldAlpha = renderer.getClearAlpha();
@@ -152,28 +287,40 @@ class Bloom extends UnrealBloomPass {
     renderer.setClearColor(this.clearColor, 0);
     // bright parts
     const hp = this.highPassUniforms as Record<string, THREE.IUniform>;
-    hp['tDiffuse'].value = src;
-    hp['luminosityThreshold'].value = this.threshold;
-    quad.material = this.materialHighPassFilter;
-    renderer.setRenderTarget(this.renderTargetBright);
-    renderer.clear();
-    quad.render(renderer);
+    if (!half) {
+      hp['tDiffuse'].value = src;
+      hp['luminosityThreshold'].value = this.threshold;
+      quad.material = this.materialHighPassFilter;
+      renderer.setRenderTarget(this.renderTargetBright);
+      renderer.clear();
+      quad.render(renderer);
+    }
     // blur down the mips
-    let input = this.renderTargetBright;
+    let input = this.renderTargetBright.texture;
     for (let i = 0; i < this.nMips; i++) {
       const m = this.separableBlurMaterials[i] as THREE.ShaderMaterial;
-      quad.material = m;
-      m.uniforms['colorTexture'].value = input.texture;
+      if (i === 0 && half) {
+        const b = this.brightBlur.uniforms;
+        b.colorTexture.value = half;
+        b.invSize.value = m.uniforms['invSize'].value;
+        b.threshold.value = this.threshold;
+        b.smoothWidth.value = hp['smoothWidth'].value;
+        quad.material = this.brightBlur;
+      } else {
+        quad.material = m;
+        m.uniforms['colorTexture'].value = input;
+      }
       m.uniforms['direction'].value = BLUR_X;
       renderer.setRenderTarget(this.renderTargetsHorizontal[i]);
       renderer.clear();
       quad.render(renderer);
+      quad.material = m;
       m.uniforms['colorTexture'].value = this.renderTargetsHorizontal[i].texture;
       m.uniforms['direction'].value = BLUR_Y;
       renderer.setRenderTarget(this.renderTargetsVertical[i]);
       renderer.clear();
       quad.render(renderer);
-      input = this.renderTargetsVertical[i];
+      input = this.renderTargetsVertical[i].texture;
     }
     // and add them up
     const cm = this.compositeMaterial as THREE.ShaderMaterial;
@@ -186,6 +333,11 @@ class Bloom extends UnrealBloomPass {
     quad.render(renderer);
     renderer.setClearColor(oldClear, oldAlpha);
     renderer.autoClear = oldAuto;
+  }
+
+  dispose() {
+    super.dispose();
+    this.brightBlur.dispose();
   }
 }
 
@@ -231,6 +383,11 @@ export class PostFX {
   /** the scene, multisampled; resolved into its texture once it is drawn */
   readonly sceneRT: THREE.WebGLRenderTarget;
   private aoRT: THREE.WebGLRenderTarget | null = null;
+  /** half-size copy of the scene (for the bloom and the blur) and the tilt-shift blur worked out from it */
+  private halfRT: THREE.WebGLRenderTarget;
+  private blurRT: THREE.WebGLRenderTarget;
+  private halfMat: THREE.RawShaderMaterial;
+  private blurMat: THREE.RawShaderMaterial;
   bloom: Bloom;
   gtao: GTAOPass | null = null;
   private quad: FullScreenQuad;
@@ -240,17 +397,28 @@ export class PostFX {
   scale = 1;
   private w = 1;
   private h = 1;
+  /** the first frame (behind the loading screen) runs the bloom and half-size passes both ways, compiling them */
+  private warm = true;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene, private camera: THREE.PerspectiveCamera, w: number, h: number, samples = 4) {
     this.sceneRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
     this.sceneRT.texture.generateMipmaps = false;
+    const halfTarget = () => {
+      const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+      rt.texture.generateMipmaps = false;
+      return rt;
+    };
+    this.halfRT = halfTarget();
+    this.blurRT = halfTarget();
+    this.halfMat = rawPass('HalfCopy', HalfShader);
+    this.blurMat = rawPass('TiltShiftBlur', BlurShader, { HALF_OWN: HALF_OWN.toFixed(3) });
     this.bloom = new Bloom(new THREE.Vector2(w, h), 0.35, 0.55, 0.92);
     this.final = new THREE.RawShaderMaterial({
       name: 'FinalShader',
       uniforms: THREE.UniformsUtils.clone(FinalShader.uniforms),
       vertexShader: FinalShader.vertexShader,
       fragmentShader: FinalShader.fragmentShader,
-      defines: { ACES_FILMIC_TONE_MAPPING: '', SRGB_TRANSFER: '' },
+      defines: { ACES_FILMIC_TONE_MAPPING: '', SRGB_TRANSFER: '', HALF_FROM: HALF_FROM.toFixed(2), HALF_FULL: HALF_FULL.toFixed(2), NEAR_TAPS: '8' },
       depthTest: false,
       depthWrite: false,
     });
@@ -297,6 +465,11 @@ export class PostFX {
     this.sceneRT.setSize(W, H);
     this.aoRT?.setSize(W, H);
     (this.final.uniforms.uRes.value as THREE.Vector2).set(W, H);
+    // the same size as the bloom's bright pass, so it can read this copy instead of the scene
+    const hw = Math.max(1, Math.round(W / 2)), hh = Math.max(1, Math.round(H / 2));
+    this.halfRT.setSize(hw, hh);
+    this.blurRT.setSize(hw, hh);
+    (this.blurMat.uniforms.uRes.value as THREE.Vector2).set(hw, hh);
     // a little sharpening wins back some of the crispness lost by scaling up
     this.final.uniforms.uSharpen.value = this.scale < 0.99 ? 0.35 * Math.min(1, (1 - this.scale) / 0.3) : 0;
     this.bloom.setSize(W, H);
@@ -319,20 +492,46 @@ export class PostFX {
       src = this.aoRT;
     }
     const u = this.final.uniforms;
+    // the miniature look belongs to the overview; close up the blur would only smear detail
+    const tz = THREE.MathUtils.smoothstep(zoom01, 0.0, 0.55);
+    const amount = this.settings.dof ? THREE.MathUtils.lerp(0.18, 1.0, tz) : 0;
+    const band = THREE.MathUtils.lerp(0.34, 0.15, tz);
+    const focus = u.uFocus.value as number;
+    // (the most blur anywhere on the screen, at the edge farthest from the band in focus)
+    const rMax = amount * THREE.MathUtils.smoothstep(Math.max(focus, 1 - focus), band, band + 0.35) * 7;
+    // (no pixel blurs past HALF_FROM while warming up, so the half-size blur is still not seen then)
+    const blurred = rMax > HALF_FROM || this.warm;
+    let half: THREE.Texture | null = null;
+    if (blurred) {
+      this.halfMat.uniforms.tScene.value = src.texture;
+      this.pass(this.halfMat, this.halfRT);
+      half = this.halfRT.texture;
+    }
     // lamps and windows bloom at night, the moonlit land does not
     if (this.settings.bloom) {
       this.bloom.strength = 0.28 + night * 0.32;
       this.bloom.threshold = 0.9 - night * 0.16;
-      this.bloom.renderFrom(r, src.texture);
+      // (and its own bright pass, which it takes while there is no half-size copy)
+      if (this.warm) this.bloom.renderFrom(r, src.texture);
+      this.bloom.renderFrom(r, src.texture, half);
       u.tBloom.value = this.bloom.output;
+    }
+    if (blurred) {
+      const b = this.blurMat.uniforms;
+      b.tHalf.value = half;
+      b.uAmount.value = amount;
+      b.uFocus.value = focus;
+      b.uBand.value = band;
+      this.pass(this.blurMat, this.blurRT);
+      u.tBlur.value = this.blurRT.texture;
     }
     u.uBloom.value = this.settings.bloom ? 1 : 0;
     u.tScene.value = src.texture;
     u.toneMappingExposure.value = r.toneMappingExposure;
-    // the miniature look belongs to the overview; close up the blur would only smear detail
-    const tz = THREE.MathUtils.smoothstep(zoom01, 0.0, 0.55);
-    u.uAmount.value = this.settings.dof ? THREE.MathUtils.lerp(0.18, 1.0, tz) : 0;
-    u.uBand.value = THREE.MathUtils.lerp(0.34, 0.15, tz);
+    u.uAmount.value = amount;
+    u.uHalfOn.value = blurred ? 1 : 0;
+    this.warm = false;
+    u.uBand.value = band;
     u.uTime.value = time;
     u.uRain.value = rain;
     u.uRainSlant.value = rainSlant;
@@ -352,7 +551,14 @@ export class PostFX {
     }
     u.uFlash.value *= 0.9;
     r.setRenderTarget(null);
+    this.quad.material = this.final;
     this.quad.render(r);
+  }
+
+  private pass(m: THREE.Material, rt: THREE.WebGLRenderTarget) {
+    this.quad.material = m;
+    this.renderer.setRenderTarget(rt);
+    this.quad.render(this.renderer);
   }
 
   private hidden: THREE.Object3D[] = [];
@@ -384,6 +590,10 @@ export class PostFX {
   dispose() {
     this.sceneRT.dispose();
     this.aoRT?.dispose();
+    this.halfRT.dispose();
+    this.blurRT.dispose();
+    this.halfMat.dispose();
+    this.blurMat.dispose();
     this.bloom.dispose();
     this.gtao?.dispose();
     this.final.dispose();
