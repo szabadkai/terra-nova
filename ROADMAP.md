@@ -19,36 +19,32 @@ At 3440×1440 the GPU is the limit: a 30-minute town takes about 10.5–11 ms of
 - The shadow map and MSAA each cost more than the bloom and the blur together, so they come next.
 - Passes are cheap only on an idle GPU: with other pages drawing on it the bloom's 12 small passes took 1.4–1.7 ms instead of 0.45, about 0.1 ms each however small. Folding passes together (as the bloom's bright pass now is, into its first blur) pays more on a busy machine than quiet measurements show.
 
-## 2. Paths worn by traffic
-
-Settlers 3 had no roads, so let the ground remember where people walk. Build a render-only traffic map at node resolution from settler positions, fading over a few game days. Where traffic is heavy, grass turns into dirt tracks through the terrain splat, and grass chunks lying on a path are flattened. Paths form on their own between the HQ, the woodcutters and the quarry, so your supply lines become visible. The same map can make grass part around walkers and leave footprints in snow. The terrain blending now works out only the few layers that can show at each pixel (`keep` in terrain.ts): a path layer has to take part in that choice.
-
-## 3. A livelier UI
+## 2. A livelier UI
 
 - Small icons pop out of a building as each good is made ("+1 plank"), using the existing `produced` event.
 - Panels animate in and out, and numbers count up and down.
 
 (The ring build menu was dropped.)
 
-## 4. Morning mist and sun shafts
+## 3. Morning mist and sun shafts
 
 Height fog pools in valleys and over water at dawn and burns off by mid-morning, driven by the existing day cycle in `sky.ts`. Add sun shafts as a cheap screen-space pass (a radial blur of what blocks the sun, from depth), folded into the single final pass in `postfx.ts`. There's nothing like either yet. It costs GPU time, so it comes after the performance items.
 
-## 5. Bigger maps
+## 4. Bigger maps
 
-Buildings are batched (`buildingBatches.ts`), so a bigger town adds instances rather than draw calls, and the simulation has plenty of headroom: a 50 ms tick costs 0.05–0.08 ms on average (0.25 ms at the 95th percentile) at 10–45 minutes of AI-vs-AI, so it never needs a Web Worker. Today towns peak around 290 settlers and 90 buildings on the 160 map. Recheck the AI deadlocks listed in the balance notes on larger maps.
+Buildings are batched (`buildingBatches.ts`), so a bigger town adds instances rather than draw calls, and the simulation has plenty of headroom: a 50 ms tick costs 0.05–0.08 ms on average (0.25 ms at the 95th percentile) at 10–45 minutes of AI-vs-AI, so it never needs a Web Worker. Today towns peak around 290 settlers and 90 buildings on the 160 map. Recheck the AI deadlocks listed in the balance notes on larger maps. The worn paths (`src/render/trails.ts`, four texels a node) are tuned on towns of the 160 map (`A0`: about the busiest tenth of the walked-over ground goes bare), so a much busier town wears more of itself bare: look at them again there.
 
-## 6. Photo mode
+## 5. Photo mode
 
 Hide the UI and use a free camera. Scrub the time of day and the season, and set the focus distance for the tilt-shift blur. It's cheap given what already exists.
 
-## 7. More for warships
+## 6. More for warships
 
 - **Landing troops on an enemy coast** first: it is what lets island wars be won.
 - Boarding enemy ships.
 - Deck archers shooting at soldiers on the shore.
 
-## 8. A smarter AI army and economy
+## 7. A smarter AI army and economy
 
 - **Formations**: the AI uses the formations players have (`planFormation` in `src/game/orders.ts`) for its attacks and defence.
 - **More trade outposts**: `AIController.tradeStep` sets up only one far outpost (storehouse plus market). Let it add a second as its realm grows.

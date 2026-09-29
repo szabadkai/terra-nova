@@ -546,6 +546,20 @@ export class GrassRenderer {
   constructor(private game: Game) {
     this.mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, {
       key: 'tuft', snow: 1, ao: 0,
+      // trodden down where people walk (trails.ts): shorter and splayed beside a path, flat on it and
+      // for a while where someone has just gone by. The lookup wanders like the terrain's.
+      uniforms: { tTrail: G.tTrail, uMapSize: G.uMapSize, tNoise: G.tNoise },
+      vertexHead: 'uniform sampler2D tTrail;\nuniform sampler2D tNoise;\nuniform vec2 uMapSize;',
+      vertexBegin: `
+  #ifdef USE_INSTANCING
+  {
+    vec2 gp = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+    vec2 wob = vec2(texture2D(tNoise, gp * 0.047 + vec2(0.31, 0.17)).b, texture2D(tNoise, gp * 0.17 + vec2(0.63, 0.41)).a) - 0.5;
+    vec2 trl = texture2D(tTrail, (gp + wob * 0.3 + 0.5) / uMapSize).rg;
+    float down = max(smoothstep(0.15, 0.55, trl.r), smoothstep(0.05, 0.7, trl.g) * 0.8);
+    transformed *= vec3(1.0 + down * 0.3, 1.0 - down, 1.0 + down * 0.3) * (1.0 - down * 0.5);
+  }
+  #endif`,
       // same seasonal grass tint as the terrain underneath
       fragRough: `{
         float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
@@ -564,7 +578,8 @@ export class GrassRenderer {
     while (this.queue.length) this.build(this.queue.pop()!);
   }
 
-  /** What the tufts of a patch depend on, hashed: ground type, what stands there, wear and height. */
+  /** What the tufts of a patch depend on, hashed: ground type, what stands there and height (paths
+   * press them down on the GPU). */
   private signature(c: number): number {
     const w = this.game.world;
     const x0 = (c % this.cols) * GRASS_CHUNK, y0 = Math.floor(c / this.cols) * GRASS_CHUNK;
@@ -573,7 +588,7 @@ export class GrassRenderer {
       for (let x = x0; x < Math.min(w.W, x0 + GRASS_CHUNK); x++) {
         const i = y * w.W + x;
         const taken = w.building[i] || w.reserve[i] || w.field[i] || w.stone[i] ? 1 : 0;
-        const code = w.terrain[i] | (taken << 4) | (Math.min(15, Math.floor(w.wear[i] * 16)) << 5) | ((Math.round(w.h[i] * 32) & 0xffff) << 9);
+        const code = w.terrain[i] | (taken << 4) | ((Math.round(w.h[i] * 32) & 0xffff) << 5);
         h = Math.imul(h ^ code, 16777619);
       }
     return h;
@@ -608,7 +623,7 @@ export class GrassRenderer {
         const t = w.terrain[i];
         const col = colors[t];
         if (!col) continue;
-        if (w.building[i] || w.reserve[i] || w.field[i] || w.stone[i] || w.wear[i] > 0.25) continue;
+        if (w.building[i] || w.reserve[i] || w.field[i] || w.stone[i]) continue;
         if (w.h[i] < WATER_LEVEL + 0.25) continue;
         if (w.slopeAt(i) > 0.6) continue;
         const per = t === T_MEADOW ? 4 : t === T_FOREST ? 2 : 3;
@@ -618,7 +633,7 @@ export class GrassRenderer {
           const py = w.heightAt(px, pz) - 0.01;
           const s = 0.55 + hash2(i, k, 3) * 0.6;
           tmpQ.setFromAxisAngle(UP, hash2(i, k, 4) * 6.28);
-          tmpM.compose(tmpS.set(px, py, pz), tmpQ, tmpV.set(s, s * (1 - w.wear[i] * 2), s));
+          tmpM.compose(tmpS.set(px, py, pz), tmpQ, tmpV.set(s, s, s));
           m.setMatrixAt(n, tmpM);
           const v = 0.8 + hash2(i, k, 5) * 0.4;
           tmpC.setRGB(col[0] * v, col[1] * v, col[2] * v * 0.9);

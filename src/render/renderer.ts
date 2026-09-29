@@ -39,6 +39,7 @@ import { LanternsRenderer } from './lanterns';
 import { commitInstances, withInstanceColor } from './instancing';
 import { ScreenLod, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
+import { Trails } from './trails';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 /** Share of the screen's resolution the world renders at before it is scaled up ('auto': full, stepped down while frames run late). */
@@ -78,6 +79,8 @@ export class GameRenderer {
   cam: RTSCamera;
   sky: Sky;
   terrain: TerrainRenderer;
+  /** paths worn by traffic, read by the terrain and the grass */
+  trails: Trails;
   water: WaterRenderer;
   trees: TreesRenderer;
   stones: StonesRenderer;
@@ -178,6 +181,8 @@ export class GameRenderer {
     this.scene.fog = new THREE.Fog(0x9fb8d0, 80, 260);
 
     this.sky = new Sky(r, this.scene);
+    this.trails = new Trails(game);
+    G.tTrail.value = this.trails.tex;
     this.terrain = new TerrainRenderer(game);
     this.scene.add(this.terrain.mesh);
     this.water = new WaterRenderer(game.world.W, game.world.H, this.terrain.heightTex);
@@ -343,6 +348,7 @@ export class GameRenderer {
     });
     this.fx.dispose();
     this.buildings.batches.dispose();
+    this.trails.tex.dispose();
     for (const m of this.warmKeep) m.dispose();
     this.reflection.rt.dispose();
     this.renderer.dispose();
@@ -995,6 +1001,7 @@ export class GameRenderer {
     this.rain.setAmbient(ambient);
 
     this.terrain.update(dt);
+    this.trails.update(this.renderer, gameDt, this.cam.target.x, this.cam.target.z, this.cam.viewSize, this.cam.dist);
     this.borders.update();
     this.trees.update(this.time);
     this.stones.update();

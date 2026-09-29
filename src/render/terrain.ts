@@ -20,6 +20,7 @@ uniform sampler2D tSplatA;
 uniform sampler2D tSplatB;
 uniform sampler2D tTerr;
 uniform sampler2D tOre;
+uniform sampler2D tTrail;
 uniform float uWaterLevel;
 uniform vec3 uPlayerCols[4];
 uniform vec4 uSel;
@@ -56,6 +57,9 @@ float tRough;
 float tAO;
 vec3 tEmis;
 vec3 tDetG;
+// worn paths, for the snow laid on after the map (see snowHook): trodden (0..1) and fresh prints
+float tTrod;
+float tPrint;
 
 // close-up detail layers (see terrainDetail.ts): two lookups per layer at different
 // rotations/scales, merged height-aware so the tiling never shows.
@@ -88,6 +92,12 @@ vec3 seasonGrass(vec3 c, float n) {
   vec3 dry = mix(vec3(1.35, 1.0, 0.32) * 1.15, vec3(1.12, 1.0, 0.58) * 0.9, uSeasonB.w);
   c = mix(c, lum * dry, d * 0.8);
   return mix(c, c * vec3(1.04, 1.1, 0.88), uSeasonA.z * 0.7);
+}
+// grass beside a path: trodden flat, paler and going over to straw, soil showing through where worst
+vec3 wornGrass(vec3 c, float k) {
+  float lum = dot(c, vec3(0.3, 0.59, 0.11));
+  c = mix(c, lum * vec3(1.3, 1.08, 0.6), k * 0.6);
+  return mix(c, C(118,96,62), k * k * 0.45);
 }
 vec3 hash32(vec2 q) {
   vec3 p3 = fract(vec3(q.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -126,9 +136,14 @@ const TERRAIN_MAP = /* glsl */ `
   w[5] += rockBoost * 2.0;
   float beach = 1.0 - smoothstep(0.12, 0.42, wh + (n1.g - 0.5) * 0.35);
   w[4] += beach * 1.6 * (1.0 - rockBoost);
-  float wear = misc.g;
-  float pathM = smoothstep(0.22, 0.55, wear + (n3.r - 0.5) * 0.3);
+  // paths worn by traffic (trails.ts), looked up a little off true so the tracks wander; bare earth
+  // where the wear is high (a busier way reaches it further out, so it is wider), trodden grass beside
+  // it. The game's own wear is only left to show where lightning scorched the ground.
+  vec2 trail = texture2D(tTrail, (p + (vec2(n1.b, n2.a) - 0.5) * 0.3 + 0.5) / uMapSize).rg;
+  float pathM = max(smoothstep(0.5, 0.72, trail.r + (n3.r - 0.5) * 0.16 + (n4.b - 0.5) * 0.12), smoothstep(0.5, 0.75, misc.g));
+  float shoulder = smoothstep(0.2, 0.5, trail.r + (n4.g - 0.5) * 0.12) * (1.0 - pathM);
   w[3] += pathM * 1.5 * (w[0] + w[1] + w[2] + w[7]);
+  tTrod = max(pathM, shoulder * 0.4);
 
   float hts[8];
   hts[0] = n3.r * 0.55 + n4.g * 0.45;
@@ -203,7 +218,8 @@ const TERRAIN_MAP = /* glsl */ `
     c = mix(c, C(118,150,54), smoothstep(0.74, 0.95, n2.g) * 0.25);
     c *= dMod(dA0, detK);
     c = seasonGrass(c, n1.g);
-    dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * v[0]; dCav += dM0.z * v[0]; dRough += dM0.w * v[0];
+    c = wornGrass(c, shoulder);
+    dg += vec3(dM0.x, 0.0, dM0.y) * 0.7 * (1.0 - shoulder * 0.6) * v[0]; dCav += dM0.z * v[0]; dRough += dM0.w * v[0];
     col += c * v[0]; rough += 0.95 * v[0]; bump += (n4.r * 0.5 + n5.r * 0.5 - 0.5) * 0.35 * (1.0 - detK) * v[0];
   }
   // meadow with flowers
@@ -212,10 +228,11 @@ const TERRAIN_MAP = /* glsl */ `
     c *= 0.88 + 0.24 * mix(0.5, n4.g, farFade * (1.0 - detK));
     c *= dMod(dA0, detK);
     c = seasonGrass(c, n0.r);
+    c = wornGrass(c, shoulder);
     // flowers grow in scattered drifts through spring and summer and are gone by winter;
     // the drifts follow the lighter, drier patches of the sward
     float bloom = uSeasonB.z;
-    float fpatch = smoothstep(0.52, 0.7, n0.r * 0.55 + n1.r * 0.45) * min(bloom, 1.0);
+    float fpatch = smoothstep(0.52, 0.7, n0.r * 0.55 + n1.r * 0.45) * min(bloom, 1.0) * (1.0 - shoulder);
     vec4 fl = texture2D(tNoise, pr1 * 0.62 + vec2(0.2, 0.9));
     float f = (1.0 - smoothstep(0.1, 0.24, fl.b)) * step(0.95, fl.a) * farFade * fpatch * (1.0 - detK);
     vec3 fc = fl.a > 0.98 ? C(252,212,58) : fl.a > 0.965 ? C(176,118,222) : C(248,244,236);
@@ -260,6 +277,7 @@ const TERRAIN_MAP = /* glsl */ `
     }
     c *= 0.86 + 0.26 * mix(0.5, n4.b, farFade * (1.0 - detK));
     c *= dMod(dA1, detK);
+    c = wornGrass(c, shoulder * 0.8);
     dg += vec3(dM1.x, 0.0, dM1.y) * 0.8 * v[2]; dCav += dM1.z * v[2]; dRough += dM1.w * v[2];
     col += c * v[2]; rough += 0.97 * v[2]; bump += (n4.b - 0.5) * 0.4 * (1.0 - detK) * v[2];
   }
@@ -270,15 +288,17 @@ const TERRAIN_MAP = /* glsl */ `
     float peb = (1.0 - smoothstep(0.1, 0.24, n3.b)) * step(0.45, n3.a) * farFade * (1.0 - detK);
     c = mix(c, C(156,146,130), peb * 0.65);
     c = mix(c, c * 0.8, pathM * 0.35 * (1.0 - n4.r));
+    c = mix(c, c * vec3(1.1, 1.06, 1.0), smoothstep(0.8, 0.97, trail.r) * 0.7);
     c *= dMod(dA2, detK);
     dg += vec3(dM2.x, 0.0, dM2.y) * 0.9 * v[3]; dCav += dM2.z * v[3]; dRough += dM2.w * v[3];
-    col += c * v[3]; rough += 0.95 * v[3]; bump += ((n3.r - 0.5) * 0.4 + peb * 0.8) * 0.4 * v[3];
+    col += c * v[3]; rough += mix(0.95, 0.84, pathM) * v[3]; bump += ((n3.r - 0.5) * 0.4 + peb * 0.8) * 0.4 * v[3];
   }
   // sand
   if (v[4] > 0.0) {
     vec3 c = mix(C(212,188,134), C(228,208,158), n1.r);
     float rip = sin(dot(p, vec2(2.4, 1.1)) + n2.r * 7.0) * 0.5 + 0.5;
     c *= 0.92 + 0.08 * rip + 0.1 * (n4.r - 0.5) * farFade * (1.0 - detK);
+    c = mix(c, c * vec3(0.86, 0.84, 0.8), max(pathM, shoulder * 0.5));
     float wetS = 1.0 - smoothstep(0.02, 0.28, wh);
     c = mix(c, c * 0.58, wetS);
     c *= dMod(dA3, detK);
@@ -359,6 +379,19 @@ const TERRAIN_MAP = /* glsl */ `
     c *= dMod(dA5, detK * (1.0 - pud * 0.8));
     dg += vec3(dM5.x, 0.0, dM5.y) * 0.7 * (1.0 - pud) * v[7]; dCav += mix(dM5.z, 1.0, pud) * v[7]; dRough += mix(dM5.w, 0.5, pud) * v[7];
     col += c * v[7]; rough += mix(0.9, 0.08, pud) * v[7]; bump += ((1.0 - pud) * n3.r * 0.4 - 0.2) * v[7];
+  }
+
+  // a trodden way sits a little below the grass either side of it
+  bump -= pathM * 0.08;
+  // fresh prints, for snow (the snow hook): an oval dent in some of the fifth-of-a-node cells along
+  // the walkers' true lines
+  tPrint = 0.0;
+  if (trail.g > 0.02 && uSnow > 0.01) {
+    vec2 fq = p * 5.0;
+    vec3 hh = hash32(floor(fq) + 17.0);
+    vec2 fd = fract(fq) - 0.5 - (hh.xy - 0.5) * 0.35;
+    float dent = 1.0 - smoothstep(0.16, 0.28, length(fd * vec2(1.0, 1.5)));
+    tPrint = (dent * step(0.3, hh.z) * 0.75 + 0.25) * smoothstep(0.05, 0.5, trail.g);
   }
 
   // tilled farm soil
@@ -573,6 +606,7 @@ export class TerrainRenderer {
       uSunI: { value: 1 },
       tDetail: { value: detail.albedo },
       tDetailN: { value: detail.normal },
+      tTrail: G.tTrail,
     };
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
     patchMaterial(mat, {
@@ -582,10 +616,12 @@ export class TerrainRenderer {
       vertexHead: 'varying vec3 vWNormal;',
       vertexBegin: 'vWNormal = normalize(mat3(modelMatrix) * objectNormal);',
       fragHead: TERRAIN_FRAG_HEAD,
-      fragMap: 'tBump = 0.0; tRough = 1.0; tAO = 1.0; tEmis = vec3(0.0); tDetG = vec3(0.0);\n' + TERRAIN_MAP,
+      fragMap: 'tBump = 0.0; tRough = 1.0; tAO = 1.0; tEmis = vec3(0.0); tDetG = vec3(0.0); tTrod = 0.0; tPrint = 0.0;\n' + TERRAIN_MAP,
       fragRough: 'roughnessFactor = tRough;',
       fragNormal: TERRAIN_NORMAL,
       fragEmissive: 'totalEmissiveRadiance += tEmis;',
+      // snow on a way people walk is packed grey, gone to slush on the busiest, and fresh prints dent it
+      snowHook: 'coverS *= 1.0 - tTrod * 0.5; snowC *= 1.0 - tTrod * 0.16 - tPrint * 0.3;',
       fragAO: 'reflectedLight.indirectDiffuse *= tAO; reflectedLight.indirectSpecular *= tAO; reflectedLight.directDiffuse *= mix(1.0, tAO, 0.35);',
     });
     this.mesh = new THREE.Mesh(geo, mat);

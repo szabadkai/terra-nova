@@ -32,6 +32,8 @@ export const G = {
   // terrain height (world units) for ground-contact effects on buildings
   tHeight: { value: null as THREE.Texture | null },
   uGrime: { value: 1 },
+  // paths worn by traffic (trails.ts): worn (r) and fresh footfall (g), four texels a node
+  tTrail: { value: null as THREE.Texture | null },
 };
 
 /** A flag's cloth: a plane `len` long from the pole and `height` high (uv 0..1 across it);
@@ -65,6 +67,8 @@ export interface PatchOpts {
   key?: string;
   /** how much snow may settle on this material (0 = none, 1 = full) */
   snow?: number;
+  /** runs where the snow is laid on: may change `coverS` (0..1) and the snow's colour `snowC` */
+  snowHook?: string;
   /** splash-back grime where the surface meets the ground (0 = none, 1 = full) */
   grime?: number;
   /**
@@ -335,7 +339,9 @@ uniform float uGrime;`);
     float upS = smoothstep(0.3, 0.85, wnS.y);
     float nS = texture2D(tNoise, vWPos.xz * 0.37).r * 0.6 + texture2D(tNoise, vWPos.xz * 1.9).g * 0.4;
     float coverS = clamp(uSnow * 1.7 - (1.0 - upS) * 1.3 - nS * 0.45 + 0.15, 0.0, 1.0) * ${snowAmt.toFixed(2)};
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.66, 0.7, 0.76), coverS);
+    vec3 snowC = vec3(0.66, 0.7, 0.76);
+    ${o.snowHook ?? ''}
+    diffuseColor.rgb = mix(diffuseColor.rgb, snowC, coverS);
   }
 #include <lights_physical_fragment>`);
     }

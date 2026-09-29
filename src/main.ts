@@ -76,6 +76,7 @@ function capture(): { data: SaveData; meta: SaveMeta } {
     speed: pausedSpeed,
     objective: hud?.objectives.index ?? 0,
     groups: hud?.saveGroups(),
+    trails: gr.trails.save(),
   };
   const meta = describe(game);
   meta.thumb = thumbnail();
@@ -343,6 +344,8 @@ function startGame(resumed?: Record<string, unknown>) {
   }
   if (typeof view?.tod === 'number') gr.sky.timeOfDay = view.tod;
   if (typeof view?.season === 'number') gr.seasons.phase = view.season;
+  // the paths worn so far (a save from before them starts from the game's own wear)
+  if (view) gr.trails.load((resumed as { trails?: unknown }).trails);
   speed = pausedSpeed = view?.speed || 1;
   hud = new HUD(game, gr, audio, {
     getSpeed: () => speed,
