@@ -51,7 +51,7 @@ function run(pace: FramePace, secs: number, period: number, cost: (t: number, sc
   return out;
 }
 
-const fresh = (opts: Partial<Pick<FramePace, 'cap' | 'auto' | 'period'>> = {}) => Object.assign(new FramePace(), opts);
+const fresh = (opts: Partial<Pick<FramePace, 'cap' | 'auto' | 'period' | 'lightPeriod'>> = {}) => Object.assign(new FramePace(), { lightPeriod: opts.period ?? 1000 / 60 }, opts);
 const fmt = (r: Run) => `${r.renders} frames, changes ${r.changes.map(([t, l]) => `${t.toFixed(1)}s→${Math.round(AUTO_STEPS[l] * 100)}%`).join(' ') || 'none'}, share ${r.share.map((s) => Math.round(s * 100)).join('/')}%`;
 
 // --- refresh rate from the callbacks
@@ -142,6 +142,19 @@ const P175 = 1000 / 175;
   const r = run(p, 40, P175, (_t, s) => 8 * s * s);
   check(p.hz >= 87 && p.hz <= 88 && p.level === 0, `always-heavy frames without a cap end at full resolution on a ${p.hz} Hz footing: ${fmt(r)}`);
   check(r.changes.length <= 6, `  without thrashing (${r.changes.length} changes in 40 s)`);
+  // the display's own rate is not forgotten: the low frame rate message still aims at it
+  check(p.slowed && Math.round(1000 / p.lightPeriod) === 175 && p.aimFps() === 60, `  the light-frame rate stays 175 Hz (slowed ${p.slowed}, aiming at ${p.aimFps()} fps)`);
+}
+{
+  // a 60 Hz display, 45 ms frames for 15 s: settled on a slower period, still aiming at 60
+  const p = fresh({ auto: true, period: 1000 / 60, lightPeriod: 1000 / 60 });
+  run(p, 15, 1000 / 60, () => 45);
+  check(p.slowed && p.aimFps() === 60, `45 ms frames on 60 Hz: the period settles at ${p.hz} Hz but the aim stays ${p.aimFps()} fps`);
+  const q = fresh({ cap: 'half', period: 1000 / 144, lightPeriod: 1000 / 144 });
+  check(q.aimFps() === 60 && fresh({ cap: '30', period: 1000 / 144, lightPeriod: 1000 / 144 }).aimFps() === 28.8, `the aim follows the cap: half of 144 Hz aims at ${q.aimFps()}, 'about 30' (every 5th frame) at 28.8`);
+  const f = fresh({ period: 1000 / 60, lightPeriod: 1000 / 60 });
+  run(f, 3, 1000 / 120, () => 2);
+  check(Math.round(1000 / f.lightPeriod) === 120, `a faster display raises the light-frame rate too (${Math.round(1000 / f.lightPeriod)} Hz)`);
 }
 {
   // auto off: the level never moves, and switching it on starts from full

@@ -95,7 +95,19 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     el.querySelector('#start')!.classList.remove('primary');
     el.querySelector('#start')!.textContent = 'Found a new settlement';
   };
-  return { el, cur, offerContinue };
+  /** A line at the foot of the card, with a link-like button. */
+  const note = (text: string, link: string, go: () => void) => {
+    const p = document.createElement('p');
+    p.className = 'menu-note';
+    p.textContent = `${text} `;
+    const b = document.createElement('button');
+    b.className = 'linkish';
+    b.textContent = link;
+    b.onclick = () => { p.remove(); go(); };
+    p.appendChild(b);
+    el.querySelector('.menu-card')!.appendChild(p);
+  };
+  return { el, cur, offerContinue, note };
 }
 
 export function showLoading(parent: HTMLElement, text: string) {

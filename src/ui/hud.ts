@@ -37,7 +37,8 @@ import { gameNear } from '../game/wildlife';
 import { Minimap } from './minimap';
 import { Objectives } from './objectives';
 import { prefs, savePrefs } from './prefs';
-import { framePace } from '../render/framePace';
+import { AUTO_STEPS, framePace } from '../render/framePace';
+import { LowFpsWatch, lowFpsAdvice } from '../render/hardware';
 import { immersiveAvailable, isImmersive, leaveHint, toggleImmersive } from './immersive';
 
 // corner brackets pointing out (fill the screen) and in (leave it) for the top-bar button
@@ -77,6 +78,8 @@ const DRILLS: Record<Formation, { name: string; tip: string; svg: string }> = {
 };
 /** Alert toasts shown at once (the newest). */
 const MAX_ALERTS = 3;
+/** one for the page: the low frame rate message is said at most once a session */
+const lowFps = new LowFpsWatch();
 /** The number keys of the control groups, in keyboard order. */
 const GROUP_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
 
@@ -89,7 +92,8 @@ export interface HudHooks {
   getSpeed(): number;
   setSpeed(s: number): void;
   restart(): void;
-  openMenu(): void;
+  /** the Esc menu, on the Graphics page when asked */
+  openMenu(page?: 'graphics'): void;
 }
 
 export class HUD {
@@ -110,6 +114,8 @@ export class HUD {
   private attackCount = 5;
   private lastInfoKey = '';
   private fpsEl!: HTMLElement;
+  /** kept for the counter across the top bar's redraws */
+  private fpsText = '';
   private frames = 0;
   private fpsT = 0;
   /** control groups by number key (0–9) */
@@ -219,7 +225,7 @@ export class HUD {
         ${[0, 1, 2, 4].map((s) => `<button data-speed="${s}" class="${speed === s ? 'on' : ''}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}
       </div>
       ${immersiveAvailable ? `<button class="mini imm${isImmersive() ? ' on' : ''}" id="imm" aria-pressed="${isImmersive()}" aria-label="Immersive mode" title="${isImmersive() ? `Leave immersive mode (F, or ${leaveHint})` : 'Immersive mode: fill the screen, so scrolling at the top edge never leaves the window (F)'}">${isImmersive() ? IMM_OFF : IMM_ON}</button>` : ''}
-      <div class="fps${prefs.showFps ? '' : ' hidden'}" id="fps"></div>`;
+      <div class="fps${prefs.showFps ? '' : ' hidden'}" id="fps">${this.fpsText}</div>`;
     this.top.querySelectorAll<HTMLButtonElement>('button[data-speed]').forEach((b) => {
       b.onclick = () => { this.hooks.setSpeed(Number(b.dataset.speed)); this.audio.play('ui'); this.refreshTop(); };
     });
@@ -1735,6 +1741,21 @@ export class HUD {
     this.audio.play('warn');
   }
 
+  /**
+   * Frames that keep running late get one message, once a session, saying what helps; the
+   * settings themselves are left alone. It waits until the automatic resolution (when it is on)
+   * has come down as far as it goes.
+   */
+  private watchFps(fps: number) {
+    if (document.visibilityState !== 'visible') return;
+    const advice = lowFpsAdvice(this.gr.settings);
+    if (!advice) return;
+    // (the automatic resolution also stops trying once the pacer has settled on a slower rate)
+    const atFloor = !framePace.auto || framePace.level === AUTO_STEPS.length - 1 || framePace.slowed;
+    if (!lowFps.feed(fps, framePace.aimFps(), atFloor)) return;
+    this.toast({ title: 'The frame rate is low', detail: advice, kind: 'info', action: { label: '🖼 Graphics', run: () => this.hooks.openMenu('graphics') }, ttl: 20, key: 'lowfps' });
+  }
+
   showTip(e: MouseEvent, html: string) {
     this.tip.innerHTML = html;
     this.tip.classList.remove('hidden');
@@ -1810,9 +1831,12 @@ export class HUD {
     if (this.fpsT >= 1) {
       // with the automatic resolution below full, the share the world is drawn at follows
       const res = framePace.auto && framePace.scale < 1 ? ` · ${Math.round(framePace.scale * 100)}%` : '';
-      if (this.fpsEl) this.fpsEl.textContent = `${Math.round(this.frames / this.fpsT)} fps${res}`;
+      const fps = this.frames / this.fpsT;
+      this.fpsText = `${Math.round(fps)} fps${res}`;
+      if (this.fpsEl) this.fpsEl.textContent = this.fpsText;
       this.frames = 0;
       this.fpsT = 0;
+      this.watchFps(fps);
     }
     if (this.infoT <= 0) {
       this.infoT = 0.25;

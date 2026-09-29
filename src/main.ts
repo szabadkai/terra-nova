@@ -5,7 +5,8 @@ import { HUD } from './ui/hud';
 import { generateIcons } from './ui/icons';
 import { showLoading, showMenu, MenuOptions } from './ui/menu';
 import { GameMenu } from './ui/gameMenu';
-import { applyAudioPrefs, applyRenderPrefs, prefs } from './ui/prefs';
+import { applyAudioPrefs, applyRenderPrefs, detectGraphics, firstRun, prefs, savePrefs } from './ui/prefs';
+import { LEVEL_NAMES } from './render/hardware';
 import { enterImmersive, onImmersiveChange, toggleImmersive } from './ui/immersive';
 import { Audio } from './audio/audio';
 import { CursorSetter, type CursorKind } from './ui/cursors';
@@ -199,7 +200,25 @@ async function buildWorld(from?: SaveData) {
   (window as any).game = game;
   (window as any).gr = gr;
   await gr.warmUp();
+  // the first run in this browser: the graphics are picked for the machine, once
+  if (firstRun && !prefs.hw.level) {
+    const text = loading.lastElementChild;
+    if (text) text.textContent = 'Fitting the graphics to this machine…';
+    await new Promise((r) => setTimeout(r, 30));
+    const d = detectGraphics(gr, game);
+    prefs.hw.told = false;
+    savePrefs();
+    console.info(`Graphics: ${d.level} for ${d.guess.gpu.label}${d.timed.length ? ` (timed ${d.timed.map(([q, ms]) => `${q} ${ms.toFixed(1)} ms`).join(', ')})` : ''}`);
+  }
   loading.remove();
+}
+
+/** Tell the player once what the detection chose: on the title screen, or in the first game. */
+function graphicsChosen() {
+  if (!prefs.hw.level || prefs.hw.told) return null;
+  prefs.hw.told = true;
+  savePrefs();
+  return `Graphics set to ${LEVEL_NAMES[prefs.hw.level]} for this machine`;
 }
 
 function showMainMenu() {
@@ -216,6 +235,8 @@ function showMainMenu() {
     showMainMenu();
   }, () => openOptions(), () => openOptions('load'));
   menuEl = menu.el;
+  const chosen = graphicsChosen();
+  if (chosen) menu.note(`${chosen}.`, 'Change', () => openOptions());
   // the last game, if there is one, can be picked up where it was left
   getSummary(AUTO).then((sum) => {
     if (sum && menuEl === menu.el) menu.offerContinue(sum.meta, () => { void resumeAuto(menu.el); });
@@ -246,13 +267,13 @@ function openOptions(page?: 'load') {
 }
 
 /** The Esc menu: pauses the game until it is closed. */
-function openGameMenu() {
+function openGameMenu(page?: 'graphics') {
   if (gameMenu || state !== 'play') return;
   hud?.hideTip();
   gr.cam.inputEnabled = false;
   audio.setPaused(true);
   gameMenu = new GameMenu(uiRoot, {
-    game, gr, audio, inGame: true, objectives: hud?.objectives, saves: saveHooks,
+    game, gr, audio, inGame: true, objectives: hud?.objectives, saves: saveHooks, page,
     onClose: () => { gameMenu = null; gr.cam.inputEnabled = true; audio.setPaused(false); },
     onRestart: () => { void restartMap(); },
     onQuit: () => { void restart(); },
@@ -327,7 +348,7 @@ function startGame(resumed?: Record<string, unknown>) {
     getSpeed: () => speed,
     setSpeed: (s) => { speed = s; if (s > 0) pausedSpeed = s; },
     restart: () => { void restart(); },
-    openMenu: openGameMenu,
+    openMenu: (page) => openGameMenu(page),
   }, uiRoot);
   gr.onEvent = (e) => hud?.onEvent(e);
   (window as any).hud = hud;
@@ -339,6 +360,8 @@ function startGame(resumed?: Record<string, unknown>) {
   } else {
     hud.message('Welcome, my liege! Build woodcutters, a sawmill and a stonecutter to begin.', undefined, undefined, 'good');
   }
+  const chosen = graphicsChosen();
+  if (chosen) hud.toast({ title: chosen, detail: 'Change them in the menu: Esc → Graphics.', action: { label: '🖼 Graphics', run: () => openGameMenu('graphics') }, ttl: 12 });
   try { audio.start(); } catch { /* needs a gesture */ }
   // fills the screen when the game was started by a click; a resumed page has no gesture to spend
   if (prefs.immersive) void enterImmersive();

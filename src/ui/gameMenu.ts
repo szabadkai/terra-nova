@@ -8,7 +8,8 @@ import { framePace, type FrameCap } from '../render/framePace';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import { OBJECTIVES, type Objectives } from './objectives';
-import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, prefs, savePrefs } from './prefs';
+import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, defaultRender, detectGraphics, prefs, savePrefs } from './prefs';
+import { LEVELS, LEVEL_NAMES } from '../render/hardware';
 import type { WheelMode } from '../render/camera';
 import { AUTO, playTime, saveSubtitle, type SaveSummary } from './saveStore';
 import { enterImmersive, immersiveAvailable, isImmersive, leaveHint, leaveImmersive } from './immersive';
@@ -416,8 +417,10 @@ export class GameMenu {
       gr.applyQuality();
     };
     c.appendChild(h('h3', '', 'Quality'));
-    c.appendChild(this.seg('Detail level', 'Resolution and shadow sharpness. Lower it if the game stutters.',
-      [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']], () => s.quality, (v) => set('quality')(v as Quality)));
+    const rec = prefs.hw.level;
+    c.appendChild(this.seg('Detail level', `Resolution and shadow sharpness. Lower it if the game stutters.${rec ? ' ★ marks the level recommended for this machine.' : ''}`,
+      LEVELS.map((q) => [q, LEVEL_NAMES[q]]), () => s.quality, (v) => set('quality')(v as Quality), rec || undefined));
+    c.appendChild(this.detectRow());
     c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens. Auto draws at full and drops to 92% or 85% only while frames keep running late, and the counter shows when it does.',
       [['auto', 'Auto'], ['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
     const hz = framePace.hz;
@@ -448,11 +451,35 @@ export class GameMenu {
     c.appendChild(this.seg('Stall badges', 'Over buildings that have stopped: the three that hold up the most (each about something different), all of them, or none. ⚠ in the top bar counts them all. B switches it.',
       [['top', 'Top 3'], ['all', 'All'], ['off', 'Off']], () => prefs.stallBadges, (v) => { prefs.stallBadges = v as typeof prefs.stallBadges; }));
     c.appendChild(this.toggle('Stall alerts', 'A message when a mine runs dry, nobody is free for a job or a worker has no tool', () => prefs.stallAlerts, (v) => { prefs.stallAlerts = v; }));
-    this.resetButton(c, 'Reset graphics to defaults', () => {
+    this.resetButton(c, rec ? 'Reset graphics to the defaults for this machine' : 'Reset graphics to defaults', () => {
       const d = defaultPrefs();
-      Object.assign(prefs, { render: d.render, season: d.season, dayLength: d.dayLength, showFps: d.showFps, stallBadges: d.stallBadges, stallAlerts: d.stallAlerts });
+      Object.assign(prefs, { render: defaultRender(), season: d.season, dayLength: d.dayLength, showFps: d.showFps, stallBadges: d.stallBadges, stallAlerts: d.stallAlerts });
       applyRenderPrefs(gr);
     });
+  }
+
+  /** What the detection found, and a button to run it again (it times the land behind the menu). */
+  private detectRow() {
+    const hw = prefs.hw;
+    // (the screen as the detection counts it: the window where that is larger)
+    const scr = `${Math.max(screen.width, innerWidth)}×${Math.max(screen.height, innerHeight)}${devicePixelRatio > 1 ? ` at ${Math.round(devicePixelRatio * 100) / 100}×` : ''}`;
+    const desc = hw.level
+      ? `${esc(hw.gpu)}, a ${scr} screen: <span class="hw-level">${LEVEL_NAMES[hw.level]}</span>${hw.ms ? `, timed at about ${Math.round(hw.ms)} ms a frame for a grown town` : ''}. Detecting again sets the detail level, the resolution and the effects.`
+      : 'Reads the graphics card and the screen, then times a few frames at each level. Sets the detail level, the resolution and the effects.';
+    const b = h('button', 'gm-detect', hw.level ? 'Detect again' : 'Detect') as HTMLButtonElement;
+    b.onclick = () => {
+      this.o.audio.play('ui');
+      b.disabled = true;
+      b.textContent = 'Timing…';
+      // let the button say so before the frames are timed
+      setTimeout(() => {
+        detectGraphics(this.o.gr, this.o.game);
+        prefs.hw.told = true;
+        savePrefs();
+        if (this.el.isConnected && this.page === 'graphics') this.show('graphics');
+      }, 30);
+    };
+    return this.row('Pick for this machine', desc, b, 'div');
   }
 
   private renderSound(c: HTMLElement) {
@@ -567,13 +594,15 @@ export class GameMenu {
     return this.row(label, desc, sel);
   }
 
-  private seg(label: string, desc: string, options: [string, string][], get: () => string, set: (v: string) => void) {
+  /** A row of choices; `mark` gets a ★ (the level recommended for this machine). */
+  private seg(label: string, desc: string, options: [string, string][], get: () => string, set: (v: string) => void, mark?: string) {
     const box = h('div', 'seg');
     box.setAttribute('role', 'radiogroup');
     box.setAttribute('aria-label', label);
     box.style.gridTemplateColumns = `repeat(${options.length}, 1fr)`;
     for (const [v, t] of options) {
-      const b = h('button', v === get() ? 'on' : '', t);
+      const b = h('button', v === get() ? 'on' : '', v === mark ? `<span class="rec" aria-hidden="true">★</span>${t}` : t);
+      if (v === mark) { b.title = 'Recommended for this machine'; b.setAttribute('aria-label', `${t} (recommended)`); }
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', String(v === get()));
       b.onclick = () => {

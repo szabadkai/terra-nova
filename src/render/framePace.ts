@@ -45,6 +45,9 @@ export class FramePace {
   auto = false;
   /** the display's refresh period in ms; from `probe` at boot, then followed while running */
   period = 1000 / 60;
+  /** the period as seen with light frames (the probe at boot, or a faster display since): frames
+   * that are always heavy can make `period` settle on a slower rate, this never */
+  lightPeriod = 1000 / 60;
   /** frames rendered and display frames they missed, since the start (for the counter and tests) */
   rendered = 0;
   missed = 0;
@@ -76,14 +79,24 @@ export class FramePace {
   }
 
   /** how many display frames each rendered frame is given under the cap */
-  every() {
+  every(period = this.period) {
     switch (this.cap) {
       case 'half': return 2;
       case 'third': return 3;
-      case '60': return Math.max(1, Math.round(1000 / this.period / 60));
-      case '30': return Math.max(1, Math.round(1000 / this.period / 30));
+      case '60': return Math.max(1, Math.round(1000 / period / 60));
+      case '30': return Math.max(1, Math.round(1000 / period / 30));
       default: return 1;
     }
+  }
+
+  /** the frame rate frames that are on time give under the cap, at most 60 (for the low frame rate message) */
+  aimFps() {
+    return Math.min(60, Math.round(10000 / this.lightPeriod / this.every(this.lightPeriod)) / 10);
+  }
+
+  /** frames have been heavy for so long that the period settled on a slower rate than the display's */
+  get slowed() {
+    return this.period > this.lightPeriod * 1.5;
   }
 
   /** frames a second the cap gives on this display */
@@ -133,7 +146,7 @@ export class FramePace {
         if (done) return;
         done = true;
         const d = ts.slice(1).map((t, i) => t - ts[i]).filter((v) => v > 0 && v < GAP).sort((a, b) => a - b);
-        if (d.length >= 4) this.period = snap(clamp(d[d.length >> 1], MIN_PERIOD, MAX_PERIOD));
+        if (d.length >= 4) this.period = this.lightPeriod = snap(clamp(d[d.length >> 1], MIN_PERIOD, MAX_PERIOD));
         resolve(this.period);
       };
       const tick = (t: number) => {
@@ -162,6 +175,7 @@ export class FramePace {
     const p = snap(clamp(est, MIN_PERIOD, MAX_PERIOD));
     if (p < this.period * 0.9) {
       this.period = p;
+      if (p < this.lightPeriod * 0.9) this.lightPeriod = p;
       this.slowSince = -1;
     } else if (p > this.period * SLOW_RATIO) {
       if (this.slowSince < 0) this.slowSince = now;
