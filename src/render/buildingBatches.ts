@@ -144,7 +144,7 @@ class Batch extends THREE.BatchedMesh {
 
 /** A building's pieces in the batches. */
 export interface Batched {
-  items: { batch: Batch; id: number; mesh: THREE.Mesh }[];
+  items: { batch: Batch; id: number; mesh: THREE.Mesh; /** the level group the mesh came out of, to go back into */ parent: THREE.Object3D }[];
   /** the building's transform they were placed with */
   matrix: THREE.Matrix4;
 }
@@ -158,13 +158,17 @@ export class BuildingBatches {
     this.group.name = 'building batches';
   }
 
-  /** Move a building's static pieces into the batches (its own meshes stay, hidden). */
+  /**
+   * Move a building's static pieces into the batches. Its own meshes leave the scene graph meanwhile
+   * (`remove` puts them back): hidden, they would still be walked by every pass and by the matrix
+   * update, and a town has thousands of them.
+   */
   add(root: THREE.Object3D, lod: ScreenLod | null): Batched {
     root.updateMatrix();
     const out: Batched = { items: [], matrix: root.matrix.clone() };
     const levels = lod ? lod.levels.map((l) => l.object) : [root];
     for (const level of levels) {
-      for (const c of level.children) {
+      for (const c of [...level.children]) {
         const mesh = c as THREE.Mesh;
         if (!mesh.isMesh || !mesh.userData.matKey || !mesh.visible) continue;
         const mat = mesh.material as THREE.Material;
@@ -179,8 +183,8 @@ export class BuildingBatches {
           this.batches.set(key, batch);
           this.group.add(batch);
         }
-        out.items.push({ batch, id: batch.put(mesh.geometry, { level, root }, out.matrix), mesh });
-        mesh.visible = false;
+        out.items.push({ batch, id: batch.put(mesh.geometry, { level, root }, out.matrix), mesh, parent: level });
+        level.remove(mesh);
       }
     }
     return out;
@@ -190,7 +194,10 @@ export class BuildingBatches {
   remove(b: Batched) {
     for (const it of b.items) {
       it.batch.take(it.id);
-      it.mesh.visible = true;
+      it.parent.add(it.mesh);
+      // (its matrix is composed once and kept, buildings.ts freeze: the world one is worked out
+      // again in case the building moved while it was batched)
+      it.mesh.matrixWorldNeedsUpdate = true;
     }
     b.items.length = 0;
   }

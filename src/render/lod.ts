@@ -209,21 +209,31 @@ export class InstanceKeep {
  */
 export class ScreenLod extends THREE.LOD {
   private base: number[] = [];
+  /** the coarsest level any ScreenLod shows (for comparisons: 1 leaves a third level unused) */
+  static maxLevel = Infinity;
 
   override update(camera: THREE.Camera) {
     if (lodPass.reflect) { this.showCoarsest(); return; }
     const L = this.levels;
     const k = lodView.enabled ? lodView.K / K_REF : 1e9;
+    const top = Math.min(L.length - 1, ScreenLod.maxLevel);
     for (let i = 0; i < L.length; i++) {
       if (this.base[i] === undefined) this.base[i] = L[i].distance;
-      L[i].distance = this.base[i] * k;
+      L[i].distance = i > top ? Infinity : this.base[i] * k;
     }
     super.update(camera);
+    if (top < L.length - 1) for (let i = top + 1; i < L.length; i++) L[i].object.visible = false;
   }
 
   showCoarsest() {
+    this.showLevel(this.levels.length - 1);
+  }
+
+  /** Show level `i` alone (clamped to the levels there are, and to maxLevel). */
+  showLevel(i: number) {
     const L = this.levels;
-    for (let i = 0; i < L.length; i++) L[i].object.visible = i === L.length - 1;
+    const k = Math.max(0, Math.min(i, L.length - 1, ScreenLod.maxLevel));
+    for (let j = 0; j < L.length; j++) L[j].object.visible = j === k;
   }
 }
 
