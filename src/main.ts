@@ -33,6 +33,7 @@ import { campaignPage } from './ui/campaign';
 import { MapEditor, editorGame } from './ui/editor';
 import { mapsPage } from './ui/mapsPage';
 import { MapBuilder, decodeMap, type MapData } from './game/map';
+import { AIController } from './game/ai';
 
 let canvas = document.getElementById('c') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui')!;
@@ -74,6 +75,15 @@ let lobby: Lobby | null = null;
 let islands = params.get('islands') !== '0';
 /** `?norender=1`: the game, its interface and the network run, but nothing is drawn (for tests in a browser with no GPU) */
 const norender = params.has('norender');
+const perfBenchmark = params.has('perf') && params.has('benchmark');
+// Benchmarks must not inherit the browser profile's last graphics choices or trigger auto-detect.
+// This is in-memory only; it never overwrites the player's saved preferences.
+if (perfBenchmark) {
+  Object.assign(prefs.render, {
+    quality: 'high', resolution: 'auto', frameCap: '60', bloom: false, dof: false,
+    grass: true, ao: false, reflections: true, quiet: true,
+  });
+}
 
 // ---------------------------------------------------------------- saving
 /** Set while a game is being played, so reloading the page picks it up again. */
@@ -279,7 +289,10 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
     for (const e of earlyTurns.splice(0)) driver.onPacket(e.slot, e.pkt);
   }
   try {
-    gr = new GameRenderer(canvas, game);
+    // Quiet asks the browser not to wake a discrete/high-power adapter. Ultra keeps the explicit
+    // high-performance request; other modes let the browser choose.
+    const power: WebGLPowerPreference = params.has('perfBaseline') ? 'high-performance' : prefs.render.quiet ? 'low-power' : prefs.render.quality === 'ultra' ? 'high-performance' : 'default';
+    gr = new GameRenderer(canvas, game, power);
   } catch (e) {
     loading?.remove();
     throw e;
@@ -293,7 +306,7 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
   // the shaders for what is in view now (everything else: prepare)
   if (!norender) await gr.warmScene();
   // the first run in this browser: the graphics are picked for the machine, once
-  if (firstRun && !prefs.hw.level && !norender) {
+  if (firstRun && !prefs.hw.level && !norender && !perfBenchmark) {
     const text = loading?.lastElementChild;
     if (text) text.textContent = 'Fitting the graphics to this machine…';
     await new Promise((r) => setTimeout(r, 30));
@@ -921,6 +934,28 @@ function startGame(resumed?: Record<string, unknown>) {
   // a new game replaces the autosave at once, so reloading can never bring back the previous one
   autosavedAt = resumed ? game.time : -1;
   if (!resumed) autosave();
+  // Reproducible profiling workload: advance only deterministic simulation, without rendering the
+  // thousands of intermediate states. Example:
+  // ?play=1&perf=1&benchmark=1&seed=8176&size=192&players=4
+  if (!resumed && params.has('benchmark') && params.has('perf')) {
+    const minutes = Math.min(60, Math.max(1, num('benchmarkMinutes', 20)));
+    const ticks = Math.round((minutes * 60) / TICK);
+    const t = performance.now();
+    // Let the local seat build too, so the benchmark camera sees a genuinely developed town and
+    // its visible actors instead of an untouched human opening position.
+    game.ai.push(new AIController(game, game.local, opts.ai));
+    for (let i = 0; i < ticks; i++) {
+      game.update(TICK);
+      game.events.length = 0;
+    }
+    const localHq = game.buildings.get(game.players[game.local].hq);
+    if (localHq) {
+      gr.cam.jumpTo(localHq.cx, localHq.cz + 3, true);
+      gr.cam.zoomTo(34, true);
+    }
+    hud.update(TICK);
+    document.body.dataset.benchmark = JSON.stringify({ seed: opts.seed, size: opts.size, players: opts.players, minutes, warmupMs: Math.round(performance.now() - t) });
+  }
 }
 
 // ---------------------------------------------------------------- input
@@ -931,8 +966,17 @@ function setupGlobalInput() {
       else audio.unlock();
     } catch { /* audio unavailable */ }
   };
-  window.addEventListener('pointerdown', startAudio);
+  window.addEventListener('pointerdown', startAudio, { passive: true });
+  // Older iOS Safari versions do not dispatch Pointer Events, while touchend carries the user
+  // activation WebKit requires for media playback.
+  window.addEventListener('touchend', startAudio, { passive: true });
   window.addEventListener('keydown', startAudio);
+  const recoverAudio = () => { if (audio.started) audio.unlock(); };
+  window.addEventListener('focus', recoverAudio);
+  window.addEventListener('pageshow', recoverAudio);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') recoverAudio();
+  });
   onImmersiveChange((on) => hud?.immersiveChanged(on));
   window.addEventListener('keydown', (e) => {
     const k = e.key;

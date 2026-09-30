@@ -7,6 +7,7 @@
 // (Each pass of a composer chain rewrote a full-screen multisampled target; at 3440x1440 that
 // alone cost more than the whole bloom.)
 import * as THREE from 'three';
+import { perf } from './perf';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { GTAOShader, generateMagicSquareNoise } from 'three/examples/jsm/shaders/GTAOShader.js';
@@ -676,6 +677,7 @@ export interface FxSettings {
 
 /** how much of the occlusion shows */
 const AO_STRENGTH = 0.8;
+const _view = new THREE.Matrix4();
 
 export class PostFX {
   /** the scene, multisampled; resolved into its texture once it is drawn */
@@ -697,6 +699,15 @@ export class PostFX {
   private h = 1;
   /** the first frame (behind the loading screen) runs the bloom and half-size passes both ways, compiling them */
   private warm = true;
+  /**
+   * The occlusion is worked out every other frame while the view stands still (the camera's matrices
+   * equal to those it was last worked out with): the ground and the buildings keep theirs, and a
+   * settler walking on is a pixel or two ahead of his for one frame. Off: every frame (for comparisons).
+   */
+  aoHalfRate = true;
+  private aoView = new THREE.Matrix4();
+  private aoHeld = false;
+  private aoValid = false;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene, private camera: THREE.PerspectiveCamera, w: number, h: number, samples = 4) {
     // (its depth is resolved only while the occlusion reads it: sceneDepth)
@@ -777,18 +788,31 @@ export class PostFX {
     this.final.uniforms.uSharpen.value = this.scale < 0.99 ? 0.35 * Math.min(1, (1 - this.scale) / 0.3) : 0;
     this.bloom.setSize(W, H);
     this.ao?.setSize(hw, hh);
+    this.aoValid = false;
     (this.final.uniforms.uAORes.value as THREE.Vector2).set(hw, hh);
   }
 
   render(time: number, zoom01: number, night: number, rain = 0, rainSlant = 0) {
     const r = this.renderer;
     r.setRenderTarget(this.sceneRT);
+    const sceneGpu = perf.beginGpu(r.getContext(), 'scene+shadow');
     r.render(this.scene, this.camera);
+    perf.endGpu(sceneGpu);
     const src = this.sceneRT;
     const u = this.final.uniforms;
     const ao = this.settings.ao && this.sceneRT.depthTexture ? this.ao : null;
+    if (!ao) this.aoValid = false;
     if (ao) {
-      ao.render(r, this.sceneRT.depthTexture!, this.camera);
+      const view = _view.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      if (this.aoHalfRate && this.aoValid && !this.aoHeld && view.equals(this.aoView)) this.aoHeld = true;
+      else {
+        const aoGpu = perf.beginGpu(r.getContext(), 'ao');
+        ao.render(r, this.sceneRT.depthTexture!, this.camera);
+        perf.endGpu(aoGpu);
+        this.aoView.copy(view);
+        this.aoValid = true;
+        this.aoHeld = false;
+      }
       u.tDepth.value = this.sceneRT.depthTexture;
       u.tAO.value = ao.outRT.texture;
       u.cameraNear.value = this.camera.near;
@@ -861,7 +885,9 @@ export class PostFX {
     u.uFlash.value *= 0.9;
     r.setRenderTarget(null);
     this.quad.material = this.final;
+    const finalGpu = perf.beginGpu(r.getContext(), 'final');
     this.quad.render(r);
+    perf.endGpu(finalGpu);
   }
 
   private pass(m: THREE.Material, rt: THREE.WebGLRenderTarget) {

@@ -93,15 +93,20 @@ function patchOpts(key: string, clip: boolean) {
   return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), flag: FLAGS[key], key: `bld_${key}`, snow, grime };
 }
 
-export function getMaterial(key: string): THREE.Material {
-  let m = base.get(key);
+/**
+ * The library's material for `key`. A material drawn by more than one kind of object (plain meshes,
+ * instanced ones, the buildings' batches) makes three look its program up again at every switch
+ * between them, so each kind has a twin of its own (`kind`): the same shader, a separate material.
+ */
+export function getMaterial(key: string, kind: '' | 'batch' | 'inst' = ''): THREE.Material {
+  let m = base.get(kind + key);
   if (!m) {
     const f = factories[key] ?? factories.plaster;
     m = f();
     patchMaterial(m, patchOpts(key, false));
     // flags cast the shadow of the cloth as it is blowing (ModelBuilder picks this up)
     if (FLAGS[key]) m.userData.depth = patchedDepthMaterial({ wind: 'flag', flag: FLAGS[key], key: `bld_${key}` });
-    base.set(key, m);
+    base.set(kind + key, m);
   }
   return m;
 }
@@ -122,8 +127,50 @@ export function getBurnMaterial(key: string): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** What a library material looks like, for the batches' families (buildingFamilies.ts), which draw
+ *  every material in one shader and look this up per piece. */
+export interface Look {
+  color: THREE.Color;
+  roughness: number;
+  metalness: number;
+  /** emissive colour times its intensity (a window's intensity is the night glow, `window`) */
+  emissive: THREE.Color;
+  normalScale: number;
+  map: THREE.Texture | null;
+  normalMap: THREE.Texture | null;
+  double: boolean;
+  snow: number;
+  grime: number;
+  window: boolean;
+}
+
+export function lookOf(key: string): Look {
+  const m = getMaterial(key) as THREE.MeshStandardMaterial;
+  const o = patchOpts(key, false);
+  const window = key === 'window';
+  return {
+    color: m.color.clone(),
+    roughness: m.roughness,
+    metalness: m.metalness,
+    emissive: m.emissive.clone().multiplyScalar(window ? 1 : m.emissiveIntensity),
+    normalScale: m.normalScale.x,
+    map: m.map,
+    normalMap: m.normalMap,
+    double: m.side === THREE.DoubleSide,
+    snow: o.snow,
+    grime: o.grime,
+    window,
+  };
+}
+
+/** the night glow of the windows drawn in the batches' families */
+export const windowGlow = { value: 0 };
+
 /** Night window glow intensity for all window materials. */
 export function setWindowGlow(v: number) {
-  const m = base.get('window') as THREE.MeshStandardMaterial | undefined;
-  if (m) m.emissiveIntensity = v;
+  windowGlow.value = v;
+  for (const kind of ['', 'batch', 'inst']) {
+    const m = base.get(kind + 'window') as THREE.MeshStandardMaterial | undefined;
+    if (m) m.emissiveIntensity = v;
+  }
 }

@@ -4,7 +4,7 @@
 // no longer re-renders the whole town upside down).
 import * as THREE from 'three';
 import type { World } from '../game/world';
-import { lodPass } from './lod';
+import { lodPass, lodSetPass } from './lod';
 
 /** size of a water cell, in nodes */
 const CELL = 4;
@@ -109,11 +109,12 @@ export class WaterCells {
  * the view (a top corner). Infinity when the view is too flat to tell.
  */
 export function reflectionReach(camera: THREE.PerspectiveCamera): number {
-  const v = new THREE.Vector3(1, 1, 0.5).unproject(camera).sub(new THREE.Vector3().setFromMatrixPosition(camera.matrixWorld)).normalize();
+  const v = reachView.set(1, 1, 0.5).unproject(camera).sub(reachEye.setFromMatrixPosition(camera.matrixWorld)).normalize();
   const s = -v.y; // sine of the angle below the horizon
   if (s < 0.05) return Infinity;
   return Math.sqrt(1 - s * s) / s;
 }
+const reachView = new THREE.Vector3(), reachEye = new THREE.Vector3();
 
 export class PlanarReflection {
   rt: THREE.WebGLRenderTarget;
@@ -133,6 +134,8 @@ export class PlanarReflection {
   private clip = new THREE.Vector4();
   private q = new THREE.Vector4();
   private sub = new THREE.Matrix4();
+  private fullProjection = new THREE.Matrix4();
+  private hiddenVisibility: boolean[] = [];
 
   constructor(private height: number, w: number, h: number) {
     this.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 0 });
@@ -198,15 +201,16 @@ export class PlanarReflection {
     const sx = W / (x1 - x0), sy = H / (y1 - y0);
     const cx = (x0 + x1) / W - 1, cy = (y0 + y1) / H - 1;
     this.sub.set(sx, 0, 0, -cx * sx, 0, sy, 0, -cy * sy, 0, 0, 1, 0, 0, 0, 0, 1);
-    const full = vc.projectionMatrix.clone();
+    const full = this.fullProjection.copy(vc.projectionMatrix);
     vc.projectionMatrix.premultiply(this.sub);
     vc.projectionMatrixInverse.copy(vc.projectionMatrix).invert();
     this.rt.viewport.set(x0, y0, x1 - x0, y1 - y0);
     this.rt.scissor.set(x0, y0, x1 - x0, y1 - y0);
     this.rt.scissorTest = true;
 
-    const vis = hide.map((o) => o.visible);
-    hide.forEach((o) => (o.visible = false));
+    const vis = this.hiddenVisibility;
+    vis.length = hide.length;
+    for (let i = 0; i < hide.length; i++) { vis[i] = hide[i].visible; hide[i].visible = false; }
     const oldTarget = renderer.getRenderTarget();
     // the shadow map from this frame stays as it is
     const shadowAuto = renderer.shadowMap.autoUpdate;
@@ -215,11 +219,14 @@ export class PlanarReflection {
     renderer.setRenderTarget(this.rt);
     renderer.clear();
     lodPass.reflect = true;
-    renderer.render(scene, vc);
-    lodPass.reflect = false;
+    lodSetPass('reflect');
+    try { renderer.render(scene, vc); } finally {
+      lodSetPass('main');
+      lodPass.reflect = false;
+    }
     renderer.setRenderTarget(oldTarget);
     renderer.shadowMap.autoUpdate = shadowAuto;
-    hide.forEach((o, i) => (o.visible = vis[i]));
+    for (let i = 0; i < hide.length; i++) hide[i].visible = vis[i];
     vc.projectionMatrix.copy(full);
     vc.projectionMatrixInverse.copy(full).invert();
   }

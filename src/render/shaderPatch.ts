@@ -18,6 +18,8 @@ export const G = {
   tFog: { value: null as THREE.Texture | null },
   uMapSize: { value: new THREE.Vector2(128, 128) },
   uFogOn: { value: 1 },
+  // below this much exploration a pixel is the shroud's whatever else it is (SHROUD_CUT; -1 = never cut short, for comparisons)
+  uShroudCut: { value: 0 },
   uWet: { value: 0 },
   tNoise: { value: getNoiseTexture() as THREE.Texture },
   uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
@@ -35,6 +37,56 @@ export const G = {
   // paths worn by traffic (trails.ts): worn (r) and fresh footfall (g), four texels a node
   tTrail: { value: null as THREE.Texture | null },
 };
+
+// The lamps (G.uLights, 32 vec4s) go to a program only when they have changed since it last had
+// them. three sends an array uniform, flattened into a scratch array first, every time a material
+// using it is switched to: some 300 times a frame, 512 bytes each, whether it changed or not (and by
+// day, when no shader reads them, it never needs them at all).
+let lightsVersion = 0;
+const lightsSent = new Float32Array(MAX_LIGHTS * 4 + 1);
+/** off: the lamps go with every material switch again, as three sends them (for comparisons) */
+export const uniformCache = { lights: true };
+
+/** Call once the frame's lamps are written (the first `count` of G.uLights): marks them changed if they are. */
+export function noteLights(count: number) {
+  const L = G.uLights.value;
+  let same = lightsSent[0] === count;
+  for (let i = 0; i < count && same; i++) {
+    const v = L[i], o = 1 + i * 4;
+    same = lightsSent[o] === v.x && lightsSent[o + 1] === v.y && lightsSent[o + 2] === v.z && lightsSent[o + 3] === v.w;
+  }
+  if (same) return;
+  lightsSent[0] = count;
+  for (let i = 0; i < count; i++) L[i].toArray(lightsSent, 1 + i * 4);
+  lightsVersion++;
+}
+
+type UniformSetter = (gl: WebGL2RenderingContext, v: unknown, textures: unknown) => void;
+interface ProgramUniforms { map: Record<string, { setValue: UniformSetter }> }
+const hooked = new WeakSet<object>();
+let hookedLen = -1;
+let hookedLast: unknown = null;
+
+/** Give each of the renderer's programs (as they appear) the lamps' send-on-change (call once a frame, before drawing). */
+export function cacheSharedUniforms(renderer: THREE.WebGLRenderer) {
+  const progs = renderer.info.programs as unknown as { getUniforms(): ProgramUniforms }[] | null;
+  if (!progs || (progs.length === hookedLen && progs[progs.length - 1] === hookedLast)) return;
+  hookedLen = progs.length;
+  hookedLast = progs[progs.length - 1];
+  for (const p of progs) {
+    if (hooked.has(p)) continue;
+    hooked.add(p);
+    const u = p.getUniforms().map.uLights;
+    if (!u) continue;
+    const send = u.setValue;
+    let had = -1;
+    u.setValue = function (gl, v, textures) {
+      if (had === lightsVersion && uniformCache.lights) return;
+      had = lightsVersion;
+      send.call(this, gl, v, textures);
+    };
+  }
+}
 
 /** A flag's cloth: a plane `len` long from the pole and `height` high (uv 0..1 across it);
  *  `align` turns it round its pole to stream downwind. */
@@ -65,12 +117,19 @@ export interface PatchOpts {
   fragPost?: string; // before opaque_fragment
   uniforms?: Record<string, THREE.IUniform>;
   key?: string;
-  /** how much snow may settle on this material (0 = none, 1 = full) */
-  snow?: number;
+  /** how much snow may settle on this material (0 = none, 1 = full), or a GLSL expression for it
+   * (the buildings' batches, whose materials differ from piece to piece: none of the lookups where it is 0) */
+  snow?: number | string;
   /** runs where the snow is laid on: may change `coverS` (0..1) and the snow's colour `snowC` */
   snowHook?: string;
-  /** splash-back grime where the surface meets the ground (0 = none, 1 = full) */
-  grime?: number;
+  /** splash-back grime where the surface meets the ground (0 = none, 1 = full), or a GLSL expression for it (as `snow`) */
+  grime?: number | string;
+  /**
+   * A transparent material that may finish early deep in the shroud, as opaque ones do, once its map
+   * code has worked out its alpha (what shows through it is the shroud's own colour, or what lies
+   * under it where that is explored).
+   */
+  shroudLate?: boolean;
   /**
    * How much of the ambient occlusion shows on this material (default 1), left in the scene's alpha
    * for postfx.ts. Its normals are rebuilt from the depth, which makes a blade of grass seen edge-on
@@ -92,6 +151,7 @@ uniform sampler2D tFog;
 uniform sampler2D tNoise;
 uniform vec2 uMapSize;
 uniform float uFogOn;
+uniform float uShroudCut;
 uniform float uWet;
 uniform vec3 uSunDir;
 uniform float uSnow;
@@ -129,6 +189,12 @@ vec3 nightLights(vec3 wp) {
   return acc * uLightColor;
 }
 
+// the unexplored land's own colour, the same for anything standing on it
+vec3 shroudColor(vec3 wp) {
+  float n2 = texture2D(tNoise, wp.xz * 0.013 - uTime * 0.002).g;
+  return mix(vec3(0.012, 0.016, 0.024), vec3(0.05, 0.06, 0.08), n2);
+}
+
 vec3 applyFog(vec3 col, vec3 wp) {
   if (uFogOn < 0.5) return col;
   vec2 uv = (wp.xz + 0.5) / uMapSize;
@@ -136,12 +202,20 @@ vec3 applyFog(vec3 col, vec3 wp) {
   // explored ground shows as it is (the noise below moves it by under half a percent)
   if (e > 0.999) return col;
   float n = texture2D(tNoise, wp.xz * 0.05 + uTime * 0.004).r;
-  float n2 = texture2D(tNoise, wp.xz * 0.013 - uTime * 0.002).g;
   float m = smoothstep(0.2, 0.85, e + (n - 0.5) * 0.35);
-  vec3 fogCol = mix(vec3(0.012, 0.016, 0.024), vec3(0.05, 0.06, 0.08), n2);
-  return mix(fogCol, col, m);
+  // (a pixel next to one that left early, deep in the shroud (SHROUD_CUT), may have worked its colour
+  // from derivatives of nothing: under a thousandth of it could show, so none does)
+  return m > 1e-3 ? mix(shroudColor(wp), col, m) : shroudColor(wp);
 }
 `;
+
+/**
+ * Below this much exploration the shroud hides a pixel whatever the noise (applyFog's mix is 0 up
+ * to e + 0.175 = 0.2): opaque materials without cut-outs finish there at once, with the shroud's
+ * colour, instead of lighting and texturing what nobody can see.
+ */
+export const SHROUD_CUT = 0.025;
+G.uShroudCut.value = SHROUD_CUT;
 
 // A flag is a plane cut from its hoist (uv.x = 0, on the pole) to the fly (uv.x = 1), facing along
 // its normal. Waves run from the pole to the fly and bend it; each row of the cloth is laid out by
@@ -218,6 +292,14 @@ const flagKey = (f = DEFAULT_FLAG) => `${f.len},${f.height},${f.align ? 1 : 0}`;
 
 let patchCount = 0;
 
+/** A short key for the code a patch injects (FNV-1a over it, with its length): the same code, the same key. */
+function codeKey(...parts: (string | undefined)[]) {
+  const code = parts.map((p) => p ?? '').join('\u0001');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < code.length; i++) { h ^= code.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36) + code.length.toString(36);
+}
+
 export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts = {}): T {
   const o = { wind: 'none', fog: true, clouds: true, lights: true, windAmp: 1, ...opts } as Required<PatchOpts> & PatchOpts;
   const uClip = { value: 1e9 };
@@ -227,13 +309,18 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   // what batching needs to know (buildingBatches.ts leaves wind-bent and clipped materials alone)
   (mat as any).userData.wind = o.wind;
   (mat as any).userData.clip = !!o.clip;
-  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.ao ?? 1}|${o.key ?? ''}`;
+  // a material that cuts pixels out of its surface (the view draws these after the solid ones: cutOrder)
+  const cuts = /discard/.test([o.fragHead, o.fragMap, o.fragNormal, o.fragEmissive, o.fragPost, o.fragAO, o.fragRough].join(''));
+  (mat as any).userData.cuts = cuts || !!o.clip;
+  // (the program's key is what the patch writes into the shader, not the material's name: materials
+  // whose shaders come out the same share one program, as the batched buildings' forty-odd do)
+  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.ao ?? 1}|${o.shroudLate ? 1 : 0}|${codeKey(o.vertexHead, o.vertexBegin, o.fragHead, o.fragMap, o.fragRough, o.fragNormal, o.fragEmissive, o.fragAO, o.fragPost, o.snowHook)}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
       uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
       uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
-      tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
+      tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uShroudCut: G.uShroudCut, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
       uSnow: G.uSnow, uSeasonA: G.uSeasonA, uSeasonB: G.uSeasonB, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp, tHeight: G.tHeight, uGrime: G.uGrime,
       ...(o.uniforms ?? {}),
     });
@@ -304,7 +391,33 @@ ${o.fragHead ?? ''}
       fs = fs.replace('void main() {', `void main() {
   if (vWPos.y > uClip) discard;`);
     }
-    if (o.fragMap) fs = fs.replace('#include <map_fragment>', o.fragMap);
+    // deep in the shroud: the colour of the unexplored land, with the scene's own distance fog after
+    // it, as the full path would have ended (only where nothing is cut out of the surface, so the
+    // depth it leaves is the same)
+    let fragMap = o.fragMap;
+    if (o.fog && !cuts) {
+      // (the opaque chunk written out: the lamps and the shroud go in before the main path's own)
+      const finish = (alpha: string) => `{
+    gl_FragColor = vec4(shroudColor(vWPos), ${alpha});
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+    #include <premultiplied_alpha_fragment>
+    #include <dithering_fragment>
+    return;
+  }`;
+      fs = fs.replace(/void main\(\) \{(\n  if \(vWPos\.y > uClip\) discard;)?/, (m) => `${m}
+  // (taken for the whole 2x2 block of pixels or none of it: a pixel that goes on works derivatives
+  // from its neighbours, which would be garbage from one that had left; the exploration is smooth
+  // enough over the block that its own change across it bounds the others)
+  float shroudE = texture2D(tFog, (vWPos.xz + 0.5) / uMapSize).r;
+  bool shrouded = uFogOn > 0.5 && shroudE + 2.0 * fwidth(shroudE) <= uShroudCut;
+#if defined(OPAQUE) && !defined(USE_ALPHATEST)
+  if (shrouded) ${finish(o.ao !== undefined && o.ao !== 1 ? o.ao.toFixed(2) : '1.0')}
+#endif`);
+      if (o.shroudLate && fragMap) fragMap += `\n  if (shrouded) ${finish('diffuseColor.a')}`;
+    }
+    if (fragMap) fs = fs.replace('#include <map_fragment>', fragMap);
     if (o.fragRough) fs = fs.replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 ${o.fragRough}`);
     if (o.fragNormal) fs = fs.replace('#include <normal_fragment_maps>', o.fragNormal);
@@ -312,25 +425,28 @@ ${o.fragRough}`);
     if (emissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 ${emissive}`);
     const grimeAmt = o.grime ?? 0;
-    if (grimeAmt > 0) {
+    if (typeof grimeAmt === 'string' || grimeAmt > 0) {
+      const amt = typeof grimeAmt === 'string' ? `(${grimeAmt})` : grimeAmt.toFixed(2);
       fs = fs.replace('#include <common>', `#include <common>
 uniform sampler2D tHeight;
 uniform float uGrime;`);
-      fs = fs.replace('#include <lights_physical_fragment>', `{
+      fs = fs.replace('#include <lights_physical_fragment>', `${typeof grimeAmt === 'string' ? `if (${amt} > 0.0) ` : ''}{
     // rain splash and soil creep darken the bottom of walls; it follows the real terrain
     float gh = texture2D(tHeight, (vWPos.xz + 0.5) / uMapSize).r;
     float above = vWPos.y - gh;
     float gn = texture2D(tNoise, vWPos.xz * 0.9 + vWPos.y * 0.6).r;
-    float grime = (1.0 - smoothstep(0.02, 0.26 + gn * 0.16, above)) * uGrime * ${grimeAmt.toFixed(2)};
+    float grime = (1.0 - smoothstep(0.02, 0.26 + gn * 0.16, above)) * uGrime * ${amt};
     diffuseColor.rgb *= mix(vec3(1.0), vec3(0.58, 0.52, 0.44), grime);
     roughnessFactor = mix(roughnessFactor, 1.0, grime * 0.5);
   }
 #include <lights_physical_fragment>`);
     }
     const snowAmt = o.snow ?? 0;
-    if (snowAmt > 0) {
-      fs = fs.replace('#include <lights_physical_fragment>', `{
-    // snow settles on upward-facing surfaces while it snows and melts away afterwards
+    if (typeof snowAmt === 'string' || snowAmt > 0) {
+      const amt = typeof snowAmt === 'string' ? `(${snowAmt})` : snowAmt.toFixed(2);
+      fs = fs.replace('#include <lights_physical_fragment>', `if (uSnow > 0.0${typeof snowAmt === 'string' ? ` && ${amt} > 0.0` : ''}) {
+    // snow settles on upward-facing surfaces while it snows and melts away afterwards (none at all,
+    // and none of its lookups, once the last of it has gone)
     #ifndef FLAT_SHADED
       vec3 wnS = normalize((vec4(normalize(vNormal), 0.0) * viewMatrix).xyz);
     #else
@@ -338,7 +454,7 @@ uniform float uGrime;`);
     #endif
     float upS = smoothstep(0.3, 0.85, wnS.y);
     float nS = texture2D(tNoise, vWPos.xz * 0.37).r * 0.6 + texture2D(tNoise, vWPos.xz * 1.9).g * 0.4;
-    float coverS = clamp(uSnow * 1.7 - (1.0 - upS) * 1.3 - nS * 0.45 + 0.15, 0.0, 1.0) * ${snowAmt.toFixed(2)};
+    float coverS = clamp(uSnow * 1.7 - (1.0 - upS) * 1.3 - nS * 0.45 + 0.15, 0.0, 1.0) * ${amt};
     vec3 snowC = vec3(0.66, 0.7, 0.76);
     ${o.snowHook ?? ''}
     diffuseColor.rgb = mix(diffuseColor.rgb, snowC, coverS);
@@ -376,7 +492,7 @@ export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map
   const uClip = { value: 1e9 };
   (m as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
-  const key = `d${o.wind}${o.wind === 'flag' ? flagKey(opts.flag) : ''}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${opts.key ?? ''}`;
+  const key = `d${o.wind}${o.wind === 'flag' ? flagKey(opts.flag) : ''}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${codeKey(opts.vertexHead, opts.vertexBegin, opts.fragHead, opts.fragPost)}`;
   m.customProgramCacheKey = () => key;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp, ...(o.uniforms ?? {}) });
@@ -434,4 +550,28 @@ ${o.fragHead ?? ''}`);
     shader.fragmentShader = fs;
   };
   return m;
+}
+
+/**
+ * The view's order for solid draws: those that cut pixels out of themselves (alpha-tested leaves and
+ * needles, crowns losing their leaves, sites clipped at their height) after all the rest, then three's
+ * own order (by material, then front to back). A tile-based GPU (every Apple one) keeps back the
+ * shading of solid pixels until it knows which one is in front; a draw that can cut pixels out makes
+ * it shade what it holds back so far first, so the ground under a building drawn after the first
+ * leaf card was shaded for nothing. `program` gives the program a material was last drawn with (0 if none yet).
+ */
+export function cutOrder(a: THREE.RenderItem, b: THREE.RenderItem, program?: (m: THREE.Material) => number): number {
+  if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder;
+  if (a.renderOrder !== b.renderOrder) return a.renderOrder - b.renderOrder;
+  const ca = a.material.alphaTest > 0 || a.material.userData.cuts ? 1 : 0, cb = b.material.alphaTest > 0 || b.material.userData.cuts ? 1 : 0;
+  if (ca !== cb) return ca - cb;
+  // then by program: materials sharing one keep the textures they share bound, and the camera's uniforms
+  if (program) {
+    const pa = program(a.material), pb = program(b.material);
+    if (pa !== pb) return pa - pb;
+  }
+  const ia = (a.material as unknown as { id: number }).id, ib = (b.material as unknown as { id: number }).id;
+  if (ia !== ib) return ia - ib;
+  if (a.z !== b.z) return a.z - b.z;
+  return a.id - b.id;
 }

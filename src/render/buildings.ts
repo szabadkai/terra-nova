@@ -1,5 +1,6 @@
 // Building meshes: construction reveal, scaffolding, animated parts, goods piles.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GOODS, Good } from '../game/defs';
 import type { Game } from '../game/game';
 import type { Building } from '../game/types';
@@ -50,13 +51,43 @@ interface BView {
 /** Water further than this from a building never needs checking: the reflection reach is capped here. */
 const WATER_SCAN = 24;
 
+/**
+ * A building's model stands still but for its named moving parts: every other piece gets its matrix
+ * composed once and is left out of the per-frame recomposing (a 30-minute town holds some 4,000
+ * pieces, which three would otherwise recompose and multiply out every frame). The root's matrix is
+ * kept by the renderer, which calls `updateMatrix` whenever it moves the building; a moving part
+ * still recomposes itself, and what hangs from it follows.
+ */
+/** One mesh of several pieces of a site's rig, merged (each piece already placed). */
+function rigMesh(parts: THREE.BufferGeometry[], mat: THREE.Material, matKey: string, shadow: boolean) {
+  const m = new THREE.Mesh(mergeGeometries(parts)!, mat);
+  for (const p of parts) p.dispose();
+  m.userData.matKey = matKey;
+  m.castShadow = shadow;
+  return m;
+}
+
+function freeze(root: THREE.Object3D) {
+  root.traverse((o) => {
+    if (o !== root && o.name) return;
+    o.updateMatrix();
+    o.matrixAutoUpdate = false;
+  });
+}
+
 export class BuildingsRenderer {
   group = new THREE.Group();
   views = new Map<number, BView>();
-  /** finished buildings, one draw per material (buildingBatches.ts); the renderer adds its group to the scene */
+  /** finished buildings, three draws a pass (buildingBatches.ts); the renderer adds its group to the scene */
   readonly batches = new BuildingBatches();
   /** off: every building draws its own meshes (for comparisons); takes effect as buildings update */
   batching = true;
+
+  /** Batch every finished building again, in families or a batch per material (for comparisons). */
+  setFamilies(on: boolean) {
+    this.batches.families = on;
+    for (const v of this.views.values()) if (v.batched) { this.batches.remove(v.batched); v.batched = this.batches.add(v.group, v.lod); }
+  }
   private scaffoldMat: THREE.Material;
   private ropeMat: THREE.Material;
 
@@ -94,6 +125,7 @@ export class BuildingsRenderer {
       group.add(sea.group);
       anchors = { ...mb.anchors, fires: [...mb.anchors.fires, ...sea.fires] };
     }
+    freeze(group);
     const v: BView = {
       id: b.id, type: b.type, owner: b.owner, group, anchors, height: Math.max(0.8, box.max.y - y),
       state: '', clipMats: null, clipDepth: null, scaffold: null, stakes: null, baseY: y, movers, shownProgress: 0, burnMats: null, sea,
@@ -136,12 +168,27 @@ export class BuildingsRenderer {
 
   private dispose(v: BView) {
     if (v.batched) this.batches.remove(v.batched);
+    this.removeSitePart(v, 'scaffold');
+    this.removeSitePart(v, 'stakes');
     this.group.remove(v.group);
     v.sea?.group.traverse((o) => { if (o.parent?.userData.own) (o as THREE.Mesh).geometry?.dispose(); });
     if (v.clipMats) for (const m of v.clipMats.values()) m.dispose();
     v.clipDepth?.dispose();
     if (v.burnMats) for (const bm of v.burnMats.values()) bm.m.dispose();
     this.views.delete(v.id);
+  }
+
+  /** Site geometry belongs to this building; its materials belong to the shared library. */
+  private removeSitePart(v: BView, key: 'scaffold' | 'stakes') {
+    const part = v[key];
+    if (!part) return;
+    v.group.remove(part);
+    const geometries = new Set<THREE.BufferGeometry>();
+    part.traverse((o) => {
+      if (o instanceof THREE.Mesh) geometries.add(o.geometry);
+    });
+    for (const geometry of geometries) geometry.dispose();
+    v[key] = null;
   }
 
   private setClip(v: BView, on: boolean) {
@@ -196,12 +243,14 @@ export class BuildingsRenderer {
     if (v.clipDepth) (v.clipDepth.userData.uClip as { value: number }).value = y;
   }
 
+  /**
+   * The scaffolding round a site: poles and planks, each merged into one mesh (a site is two draws
+   * a pass, not twenty); its geometry is its own and goes with it (removeSitePart).
+   */
   private makeScaffold(b: Building, v: BView) {
     const g = new THREE.Group();
     const s = b.size * 0.5 + 0.05;
     const h = Math.min(v.height * 0.9, 2.6);
-    const pole = new THREE.CylinderGeometry(0.025, 0.025, h, 5);
-    pole.translate(0, h / 2, 0);
     const pts: [number, number][] = [];
     const n = b.size + 1;
     for (let i = 0; i < n; i++) {
@@ -209,48 +258,36 @@ export class BuildingsRenderer {
       pts.push([t, s], [t, -s]);
       if (i > 0 && i < n - 1) pts.push([s, t], [-s, t]);
     }
-    for (const [x, z] of pts) {
-      const m = new THREE.Mesh(pole, this.scaffoldMat);
-      m.position.set(x, 0, z);
-      m.castShadow = true;
-      g.add(m);
-    }
+    const poles = pts.map(([x, z]) => new THREE.CylinderGeometry(0.025, 0.025, h, 5).translate(x, h / 2, z));
+    const planks: THREE.BufferGeometry[] = [];
     const levels = Math.max(1, Math.floor(h / 0.7));
     for (let l = 1; l <= levels; l++) {
       const y = (l / (levels + 0.3)) * h;
       for (const [len, x, z, ry] of [[s * 2, 0, s, 0], [s * 2, 0, -s, 0], [s * 2, s, 0, Math.PI / 2], [s * 2, -s, 0, Math.PI / 2]] as number[][]) {
-        const plank = new THREE.Mesh(new THREE.BoxGeometry(len, 0.03, 0.12), getMaterial('planks'));
-        plank.position.set(x, y, z);
-        plank.rotation.y = ry;
-        plank.castShadow = true;
-        g.add(plank);
+        planks.push(new THREE.BoxGeometry(len, 0.03, 0.12).rotateY(ry).translate(x, y, z));
       }
     }
+    g.add(rigMesh(poles, this.scaffoldMat, 'timber', true), rigMesh(planks, getMaterial('planks'), 'planks', true));
     v.group.add(g);
+    freeze(g);
     return g;
   }
 
+  /** The stakes and rope round ground being levelled (one mesh each, like the scaffolding). */
   private makeStakes(b: Building, v: BView) {
     const g = new THREE.Group();
     const s = b.size * 0.5;
-    const stake = new THREE.CylinderGeometry(0.02, 0.03, 0.4, 5);
-    stake.translate(0, 0.2, 0);
     const corners: [number, number][] = [[-s, -s], [s, -s], [s, s], [-s, s]];
-    for (const [x, z] of corners) {
-      const m = new THREE.Mesh(stake, this.scaffoldMat);
-      m.position.set(x, 0, z);
-      m.castShadow = true;
-      g.add(m);
-    }
+    const stakes = corners.map(([x, z]) => new THREE.CylinderGeometry(0.02, 0.03, 0.4, 5).translate(x, 0.2, z));
+    const ropes: THREE.BufferGeometry[] = [];
     for (let i = 0; i < 4; i++) {
       const [ax, az] = corners[i], [bx, bz] = corners[(i + 1) % 4];
       const len = Math.hypot(bx - ax, bz - az);
-      const rope = new THREE.Mesh(new THREE.BoxGeometry(len, 0.01, 0.01), this.ropeMat);
-      rope.position.set((ax + bx) / 2, 0.33, (az + bz) / 2);
-      rope.rotation.y = -Math.atan2(bz - az, bx - ax);
-      g.add(rope);
+      ropes.push(new THREE.BoxGeometry(len, 0.01, 0.01).rotateY(-Math.atan2(bz - az, bx - ax)).translate((ax + bx) / 2, 0.33, (az + bz) / 2));
     }
+    g.add(rigMesh(stakes, this.scaffoldMat, 'timber', true), rigMesh(ropes, this.ropeMat, 'canvas', false));
     v.group.add(g);
+    freeze(g);
     return g;
   }
 
@@ -269,7 +306,7 @@ export class BuildingsRenderer {
       v.group.visible = true;
       // keep base height synced with levelled terrain
       const y = b.def.mine ? v.baseY : b.targetH;
-      v.group.position.y = y;
+      if (v.group.position.y !== y) { v.group.position.y = y; v.group.updateMatrix(); }
       const site = b.state === 'leveling' || b.state === 'building';
       if (site) {
         this.setClip(v, true);
@@ -282,7 +319,7 @@ export class BuildingsRenderer {
           if (!v.stakes) v.stakes = this.makeStakes(b, v);
           if (v.scaffold) v.scaffold.visible = false;
         } else {
-          if (v.stakes) { v.group.remove(v.stakes); v.stakes = null; }
+          this.removeSitePart(v, 'stakes');
           if (!v.scaffold) v.scaffold = this.makeScaffold(b, v);
           v.scaffold.visible = true;
         }
@@ -297,8 +334,8 @@ export class BuildingsRenderer {
         this.piles.pile('stone', Math.min(12, rem.stone), sx, w.heightAt(sx, sz), sz);
       } else {
         if (v.clipMats) this.setClip(v, false);
-        if (v.scaffold) { v.group.remove(v.scaffold); v.scaffold = null; }
-        if (v.stakes) { v.group.remove(v.stakes); v.stakes = null; }
+        this.removeSitePart(v, 'scaffold');
+        this.removeSitePart(v, 'stakes');
       }
       // a finished building is drawn in the batches; burning, it takes its own meshes back to char them
       const batch = this.batching && b.state === 'done';
@@ -316,6 +353,7 @@ export class BuildingsRenderer {
         v.group.rotation.set(Math.cos(dir) * tilt, 0, Math.sin(dir) * tilt);
         v.group.scale.set(1 + 0.1 * p.drop, 1 - 0.55 * p.drop, 1 + 0.1 * p.drop);
         v.group.position.set(b.cx + Math.sin(time * 53 + b.id) * tremor, y - (p.drop * 0.2 + p.sink * 0.6) * v.height, b.cz + Math.cos(time * 47 + b.id * 1.7) * tremor);
+        v.group.updateMatrix();
         const flick = 0.55 + 0.45 * Math.sin(time * 17 + b.id) * Math.sin(time * 6.3 + b.id * 0.7);
         for (const [key, bm] of mats) {
           bm.m.color.copy(bm.base).lerp(CHAR, p.char * 0.92);

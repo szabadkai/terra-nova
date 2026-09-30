@@ -5,7 +5,7 @@
 // camera here, since the big instanced meshes cover the whole map and three cannot cull them.
 import * as THREE from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
-import { uploadFirst } from './instancing';
+import { ownDepth, uploadChanged, uploadFirst } from './instancing';
 
 /** Resolves once the simplifier's WebAssembly is compiled; await it before building models. */
 export const lodReady: Promise<void> = MeshoptSimplifier.ready;
@@ -97,6 +97,22 @@ export const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : 
 /** Set while the water reflection renders, so instanced LODs can switch to their coarse level. */
 export const lodPass = { reflect: false };
 
+/** Every instanced pair, so each pass can leave out the meshes that have nothing to draw in it
+ *  (weakly held: a world's pairs go when its renderer does). */
+const pairs = new Set<WeakRef<LodPair>>();
+
+/**
+ * The pass about to draw: the view (and the shadow map drawn from inside it, which comes after the
+ * view has picked what it draws) or the water reflection. A mesh with no instances in a pass is
+ * hidden for it, so the pass does not set up its program and uniforms for an empty draw.
+ */
+export function lodSetPass(pass: 'main' | 'shadow' | 'reflect') {
+  for (const r of pairs) {
+    const p = r.deref();
+    if (p) p.pass(pass); else pairs.delete(r);
+  }
+}
+
 /** Pixels per world unit at distance 1 on a 1440-pixel-high view (the size LOD distances are tuned for). */
 export const K_REF = 1440 / (2 * Math.tan((36 * Math.PI) / 360));
 
@@ -109,20 +125,35 @@ export class LodView {
   readonly eye = new THREE.Vector3();
   readonly frustum = new THREE.Frustum();
   readonly shadow = new THREE.Frustum();
+  /** bumped whenever the view (its matrices or pixel scale) or the shadow camera moves: instanced
+   * renderers whose own data has not changed either can draw last frame's instances again */
+  viewVersion = 0;
+  shadowVersion = 0;
+  /** the shadow frustum is set this frame (false on a frame that keeps last frame's shadow map: then
+   * nothing is only a shadow caster, and instances sorted now would have none of those) */
+  shadowOn = false;
   private m = new THREE.Matrix4();
   private s = new THREE.Sphere();
+  private lastView = new Float32Array(33);
+  private lastShadow = new Float32Array(16);
 
   update(camera: THREE.PerspectiveCamera, heightPx: number, sun: THREE.DirectionalLight | null) {
     camera.updateMatrixWorld();
     this.eye.setFromMatrixPosition(camera.matrixWorld);
     this.K = heightPx / (2 * Math.tan((camera.fov * Math.PI) / 360));
     this.frustum.setFromProjectionMatrix(this.m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    if (changed(this.lastView, this.m.elements, 0) || this.lastView[32] !== Math.fround(this.K)) { this.lastView[32] = this.K; this.viewVersion++; }
     if (sun && sun.castShadow) {
       sun.updateMatrixWorld();
       sun.target.updateMatrixWorld();
       sun.shadow.updateMatrices(sun);
       this.shadow.copy(sun.shadow.getFrustum());
-    } else this.shadow.planes.forEach((p) => p.set(new THREE.Vector3(0, 1, 0), -1e9));
+      if (changed(this.lastShadow, sun.shadow.matrix.elements, 0)) this.shadowVersion++;
+      this.shadowOn = true;
+    } else {
+      this.shadow.planes.forEach((p) => p.set(new THREE.Vector3(0, 1, 0), -1e9));
+      this.shadowOn = false;
+    }
   }
 
   /** Pixels per world unit at a point. */
@@ -142,8 +173,46 @@ export class LodView {
   }
 }
 
+/** Whether 16 values differ from the copy at `at` in `last` (which then takes them). */
+function changed(last: Float32Array, v: ArrayLike<number>, at: number) {
+  let diff = false;
+  for (let i = 0; i < 16; i++) if (last[at + i] !== Math.fround(v[i])) { diff = true; last[at + i] = v[i]; }
+  return diff;
+}
+
 /** The frame's view, updated by the renderer before any instanced renderer runs. */
 export const lodView = new LodView();
+
+/**
+ * Whether an instanced renderer can keep last frame's instances: its own data unchanged (`key`, any
+ * number that changes with it), the view where it was, and the shadow camera either where it was or
+ * moved for fewer than `every` frames (the sun creeps with the time of day; what only casts a shadow
+ * into the view is sorted out again at least that often). Call once a frame; true means skip.
+ */
+export class InstanceKeep {
+  private key = NaN;
+  private view = -1;
+  private shadow = -1;
+  private shadowOn = false;
+  private age = 0;
+  constructor(private every = 30) {}
+  still(key: number): boolean {
+    const V = lodView;
+    // (a frame without the shadow pass needs no shadow casters; instances sorted on one have none of
+    // them, so the next frame that draws the shadow map sorts them again)
+    const shadowOk = !V.shadowOn || (this.shadowOn && (V.shadowVersion === this.shadow || this.age < this.every));
+    if (key === this.key && V.viewVersion === this.view && shadowOk && V.enabled) {
+      this.age++;
+      return true;
+    }
+    this.key = key;
+    this.view = V.viewVersion;
+    this.shadow = V.shadowVersion;
+    this.shadowOn = V.shadowOn;
+    this.age = 0;
+    return false;
+  }
+}
 
 /**
  * THREE.LOD whose switch distances follow the view's pixel density (tuned on a 1440-pixel-high
@@ -240,6 +309,7 @@ export class LodPair {
       m.frustumCulled = false;
       m.receiveShadow = o.receiveShadow ?? true;
       if (o.depth) m.customDepthMaterial = o.depth;
+      else ownDepth(m);
       return m;
     };
     this.near = mk(nearGeo, false);
@@ -251,6 +321,16 @@ export class LodPair {
     this.shadowC = colors >= 1 ? new Float32Array(cap * 3) : null;
     this.shadowC2 = colors === 2 ? new Float32Array(cap * 3) : null;
     this.hookPasses();
+    pairs.add(new WeakRef(this));
+  }
+
+  /** Show each mesh only in a pass where it has instances to draw (see lodSetPass). */
+  pass(p: 'main' | 'shadow' | 'reflect') {
+    const near = this.near, far = this.far;
+    if (far) {
+      near.visible = p === 'main' && this.nNear > 0;
+      far.visible = (p === 'main' ? this.nFar : p === 'reflect' ? this.nFar + this.nNear : this.nFar + this.nNear + this.nShadow) > 0;
+    } else near.visible = (p === 'shadow' ? this.nNear + this.nShadow : this.nNear) > 0;
   }
 
   get meshes(): THREE.InstancedMesh[] {
@@ -323,16 +403,18 @@ export class LodPair {
     if (c2 && this.shadowC2) (c2.array as Float32Array).set(this.shadowC2.subarray(0, nS * 3), at * 3);
     at += nS;
     host.count = own;
-    host.visible = at > 0;
     uploadFirst(host.instanceMatrix, at);
-    uploadFirst(host.instanceColor, at);
-    uploadFirst(c2, at);
+    // (the colours are each instance's own and stay put while the order of the instances does: sent
+    // only when they are not what the GPU already holds)
+    uploadChanged(host.instanceColor, at);
+    uploadChanged(c2, at);
     if (far) {
       near.count = nN;
-      near.visible = nN > 0;
       uploadFirst(near.instanceMatrix, nN);
-      uploadFirst(near.instanceColor, nN);
-      uploadFirst(this.nearC2, nN);
+      uploadChanged(near.instanceColor, nN);
+      uploadChanged(this.nearC2, nN);
     }
+    // the view draws next (the shadow map and the reflection switch in and out: lodSetPass)
+    this.pass('main');
   }
 }

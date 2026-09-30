@@ -20,7 +20,7 @@ import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
 import { Seasons } from './seasons';
 import { PostFX } from './postfx';
-import { G, MAX_LIGHTS, patchMaterial, patchedDepthMaterial } from './shaderPatch';
+import { G, MAX_LIGHTS, cacheSharedUniforms, cutOrder, noteLights, patchMaterial, patchedDepthMaterial, uniformCache } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
 import { getClipMaterial, getMaterial, setWindowGlow } from './materials';
 import { PlanarReflection, WaterCells, reflectionReach } from './reflection';
@@ -37,12 +37,13 @@ import { Birds } from './birds';
 import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
-import { commitInstances, withInstanceColor } from './instancing';
-import { ScreenLod, lodView } from './lod';
+import { commitInstances, ownDepth, withInstanceColor } from './instancing';
+import { ScreenLod, lodSetPass, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
 import { COARSE_DIST } from './geom';
-import { QUIET_PR } from './hardware';
+import { QUIET_PR, QUIET_SCALE } from './hardware';
 import { Trails } from './trails';
+import { perf, perfBaseline } from './perf';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 /** Share of the screen's resolution the world renders at before it is scaled up ('auto': full, stepped down while frames run late). */
@@ -172,21 +173,41 @@ export class GameRenderer {
   readonly lod = lodView;
   onEvent: ((e: GameEvent) => void) | null = null;
   private sound: ((name: string, x?: number, z?: number, vol?: number) => void) | null = null;
+  private fogBase = new THREE.Color(0x0e3558);
+  private ambient = new THREE.Color();
+  private nightAmbient = new THREE.Color(0.35, 0.4, 0.6);
+  private cameraRight = new THREE.Vector3();
+  private pickVector = new THREE.Vector3();
+  private pickNdc = { x: 0, y: 0 };
+  private pickRay = new THREE.Raycaster();
+  private pickNdcVector = new THREE.Vector2();
+  private staticUpdateT = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private game: Game) {
-    const r = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
+  constructor(private canvas: HTMLCanvasElement, private game: Game, powerPreference: WebGLPowerPreference = 'default') {
+    // (the world draws into targets of its own: the canvas only takes the final full-screen pass, so it
+    // needs neither depth nor stencil)
+    const r = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference, depth: false, stencil: false });
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.0;
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
+    const props = r.properties;
+    const program = (m: THREE.Material) => (props.get(m) as { currentProgram?: { id: number } }).currentProgram?.id ?? 0;
+    r.setOpaqueSort((a, b) => cutOrder(a, b, program));
     this.renderer = r;
     // the shadow map draws every building on its far model: at shadow-map resolution nobody can tell
+    // (and the instanced pairs show what they have for it: lodSetPass)
     const drawShadows = r.shadowMap.render.bind(r.shadowMap);
     r.shadowMap.render = (lights, scene, camera) => {
-      // (the coarse model once the view is out far enough that its error stays under the map's texels)
-      if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
-      else drawShadows(lights, scene, camera);
+      const sm = r.shadowMap;
+      if (!lights.length || !sm.enabled || !(sm.autoUpdate || sm.needsUpdate)) return drawShadows(lights, scene, camera);
+      lodSetPass('shadow');
+      try {
+        // (the coarse model once the view is out far enough that its error stays under the map's texels)
+        if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
+        else drawShadows(lights, scene, camera);
+      } finally { lodSetPass('main'); }
     };
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -286,8 +307,17 @@ export class GameRenderer {
       this.cam.jumpTo(hq.cx, hq.cz + 4, true);
       this.cam.zoomTo(30, true);
     }
+    this.giveDepths();
     this.applyQuality();
     window.addEventListener('resize', this.onResize);
+  }
+
+  /** Every instanced and batched mesh in the scene without a depth material of its own gets its kind's (ownDepth). */
+  private giveDepths() {
+    this.scene.traverse((o) => {
+      const m = o as THREE.InstancedMesh;
+      if ((m.isInstancedMesh || (o as THREE.BatchedMesh).isBatchedMesh) && !m.customDepthMaterial) ownDepth(m);
+    });
   }
 
   private onResize = () => this.resize();
@@ -384,6 +414,7 @@ export class GameRenderer {
       for (const o of trees.children) (o as THREE.InstancedMesh).dispose();
     }
     // the view as it is over the one with every sample in it, before the page shows it (behind the title screen)
+    this.giveDepths();
     if (!this.disposed) this.frame(0, 0);
   }
 
@@ -422,13 +453,20 @@ export class GameRenderer {
     this.fx.settings.dof = s.dof;
     this.fx.settings.grade = s.grade;
     this.fx.enableAO(s.ao);
+    // Four samples on a dense laptop target spend bandwidth for very little visible gain. Ultra
+    // keeps 4x; Quiet uses 2x (and Low none) while the final pass still sharpens scaled output.
+    this.fx.setSamples(perfBaseline ? 4 : s.quality === 'low' ? 0 : s.quality === 'ultra' && !s.quiet ? 4 : s.quiet ? 2 : 4);
     framePace.auto = s.resolution === 'auto';
     if (!framePace.auto) framePace.level = 0;
     framePace.cap = s.frameCap;
-    this.fx.scale = framePace.auto ? framePace.scale : RES_SCALE[s.resolution] ?? 1;
-    // the water keeps each reflection for two frames at every level (at Ultra too: a fresh one every
-    // frame cost 1.1-2.9 ms in a town and the ripples hide the difference)
-    this.reflEvery = 2;
+    this.fx.scale = this.worldScale();
+    // Reflections and shadows are deliberately temporal in quiet mode. At 60 fps they update at
+    // 15 and 30 fps respectively; at the idle 30 fps they halve again without spending power on
+    // differences which are almost impossible to see in an RTS view. Out of quiet mode the water keeps
+    // each reflection for two frames at every level (at Ultra too: a fresh one every frame cost
+    // 1.1-2.9 ms in a town and the ripples hide the difference).
+    this.reflEvery = perfBaseline ? (s.quality === 'ultra' ? 1 : 2) : s.quiet ? 4 : 2;
+    this.shadowEvery = perfBaseline ? 1 : s.quality === 'ultra' && !s.quiet ? 1 : 2;
     this.sky.cycle = s.dayCycle;
     this.terrain.uniforms.uBorderOn.value = s.borders ? 1 : 0;
     if (this.borders) { this.borders.posts.visible = s.borders; this.borders.caps.visible = s.borders; }
@@ -441,7 +479,10 @@ export class GameRenderer {
    */
   private sizeShadowMap() {
     const q = this.settings.quality;
-    const h = q === 'low' ? 1024 : q === 'medium' ? 2048 : 4096;
+    // Ultra owns the very large map. High + Quiet has one quarter of the old shadow texels; the
+    // tightly fitted camera keeps its on-screen texel density convincing.
+    const h = perfBaseline ? (q === 'low' ? 1024 : q === 'medium' ? 2048 : 4096)
+      : q === 'low' ? 1024 : q === 'medium' ? 1536 : q === 'high' ? (this.settings.quiet ? 1536 : 2560) : 4096;
     const w = Math.round((h * THREE.MathUtils.clamp(this.cam.camera.aspect / 1.6, 1, 1.4)) / 256) * 256;
     const sh = this.sky.shadow;
     if (sh.mapSize.x === w && sh.mapSize.y === h) return;
@@ -454,12 +495,23 @@ export class GameRenderer {
   private lastH = 0;
   /** the water's reflection is drawn every this many frames; the water keeps the last picture between */
   reflEvery = 2;
+  private reflectionScale = 0.5;
+  private shadowEvery = 1;
+  private shadowStale = true;
   /** the kept reflection is gone (target resized, or no water was in view): draw a fresh one */
   private reflStale = true;
   private frameNo = 0;
   /** Pixels per CSS pixel of the world's render target. */
   get renderPixelRatio() {
     return this.renderer.getPixelRatio() * this.fx.scale;
+  }
+  /** Effective world-resolution scale, including Quiet's deliberate headroom. */
+  get renderScale() {
+    return this.fx.scale;
+  }
+  private worldScale() {
+    const scale = framePace.auto ? framePace.scale : RES_SCALE[this.settings.resolution] ?? 1;
+    return scale * (!perfBaseline && framePace.auto && this.settings.quiet ? QUIET_SCALE : 1);
   }
   resize() {
     const w = this.canvas.clientWidth || window.innerWidth, h = this.canvas.clientHeight || window.innerHeight;
@@ -472,8 +524,10 @@ export class GameRenderer {
     this.fx.setSize(w, h);
     // the world renders at the resolution scale (the final pass scales it up to the canvas)
     const pr = this.renderPixelRatio;
-    this.reflection?.setSize((w * pr) / 2, (h * pr) / 2);
+    this.reflectionScale = perfBaseline ? 0.5 : this.settings.quiet ? 0.4 : 0.5;
+    this.reflection?.setSize(w * pr * this.reflectionScale, h * pr * this.reflectionScale);
     this.reflStale = true;
+    this.shadowStale = true;
     framePace.resized();
     const pxScale = (h * pr) / (2 * Math.tan((this.cam.camera.fov * Math.PI) / 360));
     this.particles.setScale(pxScale);
@@ -484,7 +538,9 @@ export class GameRenderer {
   // ------------------------------------------------------------ picking
   ndc(clientX: number, clientY: number) {
     const r = this.canvas.getBoundingClientRect();
-    return { x: ((clientX - r.left) / r.width) * 2 - 1, y: -((clientY - r.top) / r.height) * 2 + 1 };
+    this.pickNdc.x = ((clientX - r.left) / r.width) * 2 - 1;
+    this.pickNdc.y = -((clientY - r.top) / r.height) * 2 + 1;
+    return this.pickNdc;
   }
 
   pickGround(clientX: number, clientY: number): THREE.Vector3 | null {
@@ -503,28 +559,31 @@ export class GameRenderer {
   pickSettler(clientX: number, clientY: number, maxPx = 24): Settler | null {
     const r = this.canvas.getBoundingClientRect();
     let best: Settler | null = null, bd = maxPx * maxPx;
-    const v = new THREE.Vector3();
-    for (const it of [...this.settlers.visibleList, ...this.donkeys.visibleList, ...this.catapults.visibleList]) {
-      v.set(it.x, it.y + 0.45, it.z).project(this.cam.camera);
-      const sx = (v.x * 0.5 + 0.5) * r.width + r.left, sy = (-v.y * 0.5 + 0.5) * r.height + r.top;
-      const d = (sx - clientX) ** 2 + (sy - clientY) ** 2;
-      if (d < bd) { bd = d; best = it.s; }
-    }
+    const v = this.pickVector;
+    const scan = (list: { s: Settler; x: number; y: number; z: number }[]) => {
+      for (const it of list) {
+        v.set(it.x, it.y + 0.45, it.z).project(this.cam.camera);
+        const sx = (v.x * 0.5 + 0.5) * r.width + r.left, sy = (-v.y * 0.5 + 0.5) * r.height + r.top;
+        const d = (sx - clientX) ** 2 + (sy - clientY) ** 2;
+        if (d < bd) { bd = d; best = it.s; }
+      }
+    };
+    scan(this.settlers.visibleList); scan(this.donkeys.visibleList); scan(this.catapults.visibleList);
     return best;
   }
 
   pickShip(clientX: number, clientY: number): number {
     const n = this.ndc(clientX, clientY);
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(n.x, n.y), this.cam.camera);
+    const ray = this.pickRay;
+    ray.setFromCamera(this.pickNdcVector.set(n.x, n.y), this.cam.camera);
     return this.ships.pick(ray);
   }
 
   pickBuilding(clientX: number, clientY: number): Building | null {
     // raycast building meshes first (tall models), fall back to ground footprint
     const n = this.ndc(clientX, clientY);
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(n.x, n.y), this.cam.camera);
+    const ray = this.pickRay;
+    ray.setFromCamera(this.pickNdcVector.set(n.x, n.y), this.cam.camera);
     const hits = ray.intersectObjects(this.buildings.group.children, true);
     for (const h of hits) {
       let o: THREE.Object3D | null = h.object;
@@ -1034,10 +1093,15 @@ export class GameRenderer {
   // ------------------------------------------------------------ frame
   frame(dt: number, gameDt: number) {
     if (this.holding) return;
+    perf.beginFrame(this.renderer);
+    const frameGpu = perf.beginGpu(this.renderer.getContext(), 'frame');
+    const updateT = perf.begin();
     if (this.canvas.clientWidth !== this.lastW || this.canvas.clientHeight !== this.lastH) this.resize();
     // the automatic resolution has moved a step: the world's targets follow
-    if (framePace.auto && framePace.scale !== this.fx.scale) { this.fx.scale = framePace.scale; this.resize(); }
+    const worldScale = this.worldScale();
+    if (framePace.auto && worldScale !== this.fx.scale) { this.fx.scale = worldScale; this.resize(); }
     this.time += dt;
+    this.frameNo++;
     G.uTime.value = this.time;
     const g = this.game;
     this.cam.update(dt);
@@ -1046,8 +1110,12 @@ export class GameRenderer {
     this.updateWeather(dt);
     const zoom01 = (this.cam.dist - this.cam.minDist) / (this.cam.maxDist - this.cam.minDist);
     this.sky.update(gameDt, this.cam.target, this.cam.viewSize);
-    fitShadow(this.sky.sun, this.sky.shadow, this.cam.camera, this.cam.target, this.cam.viewSize, this.sky.sunDir, g.world);
-    lodView.update(this.cam.camera, this.lastH * this.renderPixelRatio, this.sky.sun);
+    const shadowEvery = this.settings.quiet && this.cam.settled ? this.shadowEvery * 2 : this.shadowEvery;
+    const shadowDue = this.shadowsLive && (this.shadowStale || this.frameNo % shadowEvery === 0);
+    if (shadowDue) fitShadow(this.sky.sun, this.sky.shadow, this.cam.camera, this.cam.target, this.cam.viewSize, this.sky.sunDir, g.world);
+    // Do not recompute the light's shadow matrix on a reuse frame: the kept texture and its matrix
+    // must remain a pair. Shadow-only instances are needed only on frames which draw that pass.
+    lodView.update(this.cam.camera, this.lastH * this.renderPixelRatio, shadowDue ? this.sky.sun : null);
     // fresh snow throws the moonlight back; hold the exposure down so a winter night still reads as night
     this.renderer.toneMappingExposure = this.sky.exposure * (1 - G.uSnow.value * G.uNight.value * 0.32);
     this.terrain.uniforms.uSunI.value = this.sky.sunIntensity / 3;
@@ -1059,20 +1127,26 @@ export class GameRenderer {
     const haze = 1 - this.rainAmount * (this.precip === 'rain' ? 0.45 : 0.25);
     (this.scene.fog as THREE.Fog).near = (60 + this.cam.dist) * haze;
     (this.scene.fog as THREE.Fog).far = (200 + this.cam.dist * 2) * haze;
-    (this.scene.background as THREE.Color).copy(new THREE.Color(0x0e3558).lerp(fogC, 0.3));
+    (this.scene.background as THREE.Color).copy(this.fogBase).lerp(fogC, 0.3);
     const night = G.uNight.value;
     setWindowGlow(night * 2.2);
-    const ambient = new THREE.Color(1, 1, 1).lerp(new THREE.Color(0.35, 0.4, 0.6), night);
+    const ambient = this.ambient.setRGB(1, 1, 1).lerp(this.nightAmbient, night);
     this.particles.setAmbient(ambient);
     this.rain.setAmbient(ambient);
 
     this.terrain.update(dt);
     this.trails.update(this.renderer, gameDt, this.cam.target.x, this.cam.target.z, this.cam.viewSize, this.cam.dist);
     this.borders.update();
-    this.trees.update(this.time);
-    this.stones.update();
-    this.fields.update();
-    this.vines.update();
+    // Static-world visibility has no reason to be rebuilt 30 times a second after the camera has
+    // settled. Changes still appear within 120 ms; camera motion immediately returns it to 60 Hz.
+    this.staticUpdateT -= dt;
+    if (!this.cam.settled || this.staticUpdateT <= 0) {
+      this.staticUpdateT = 0.12;
+      this.trees.update(this.time);
+      this.stones.update();
+      this.fields.update();
+      this.vines.update();
+    }
     this.grass.update(dt);
     this.piles.begin();
     this.buildings.update(dt, this.time);
@@ -1103,11 +1177,15 @@ export class GameRenderer {
     this.particles.update(dt, G.uWind.value);
     this.rain.update(dt, this.precip === 'rain' ? this.rainAmount : 0, this.cam.camera, this.cam.target, this.cam.viewSize, this.cam.dist, G.uWind.value);
 
-    // night lights
+    // night lights: the shaders only read them after dusk or in the gloom of rain (uNight)
     const lights = G.uLights.value;
-    let n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
-    n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+    let n = 0;
+    if (night > 0.001) {
+      n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+      n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+    }
     G.uLightCount.value = n;
+    noteLights(n);
     void MAX_LIGHTS;
 
     this.orders.update(dt);
@@ -1139,10 +1217,13 @@ export class GameRenderer {
       else if (hov.foe) c.setRGB(1.2, 0.1, 0.05); else c.setRGB(0.8, 0.78, 0.65);
     } else U.uHov.value.w = 0;
 
+    // (programs compiled since the last frame get the lamps' send-on-change)
+    cacheSharedUniforms(this.renderer);
     // one matrix update serves the reflection and the view (and its shadow map)
     this.scene.updateMatrixWorld();
     this.scene.matrixWorldAutoUpdate = false;
-    this.renderer.shadowMap.autoUpdate = this.shadowsLive;
+    this.renderer.shadowMap.autoUpdate = shadowDue;
+    perf.end('update', updateT);
 
     // planar water reflections: only the part of the texture the water in view samples, and only
     // what stands close enough to the water to show in it; between two draws the water keeps the
@@ -1150,7 +1231,6 @@ export class GameRenderer {
     // the view moves
     const U2 = this.water.uniforms;
     this.waterInView();
-    this.frameNo++;
     let reflOn = false;
     if (this.settings.reflections) {
       this.reflection.setup(this.cam.camera);
@@ -1159,6 +1239,8 @@ export class GameRenderer {
     }
     if (reflOn) {
       if (this.reflStale || this.frameNo % this.reflEvery === 0) {
+        const reflectionT = perf.begin();
+        const reflectionGpu = perf.beginGpu(this.renderer.getContext(), 'reflection');
         const hide = this.reflHide;
         hide.length = 0;
         hide.push(this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones);
@@ -1166,6 +1248,8 @@ export class GameRenderer {
         hide.push(this.settlers.group, this.animals.group, this.pigs.group, this.birds.group, this.lanterns.group, this.borders.posts, this.borders.caps);
         if (this.reflectionCull) this.buildings.dry(hide, reflectionReach(this.cam.camera));
         this.reflection.render(this.renderer, this.scene, hide, this.reflRect);
+        perf.endGpu(reflectionGpu);
+        perf.end('reflection', reflectionT);
         (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);
         // half a texel in, so the filtering never reaches texels that weren't drawn this frame
         const d = this.reflection.drawn, rt = this.reflection.rt;
@@ -1176,13 +1260,31 @@ export class GameRenderer {
     } else { U2.uReflOn.value = 0; this.reflStale = true; }
 
     const rainI = this.precip === 'rain' ? this.rainAmount : 0;
-    const right = new THREE.Vector3().setFromMatrixColumn(this.cam.camera.matrixWorld, 0);
+    const right = this.cameraRight.setFromMatrixColumn(this.cam.camera.matrixWorld, 0);
+    const postT = perf.begin();
     this.fx.render(this.time, zoom01, night, rainI, (this.rain.drift.x * right.x + this.rain.drift.y * right.z) / RAIN_FALL);
+    if (shadowDue) this.shadowStale = false;
+    perf.endGpu(frameGpu);
+    perf.end('scene+post', postT);
     this.scene.matrixWorldAutoUpdate = true;
+    perf.endFrame(this.renderer, {
+      scene: this.scene,
+      settings: this.settings,
+      resolution: `${this.fx.sceneRT.width}x${this.fx.sceneRT.height}`,
+      shadow: `${this.sky.shadow.mapSize.x}x${this.sky.shadow.mapSize.y}`,
+      reflection: `${this.reflection.rt.width}x${this.reflection.rt.height} / every ${this.reflEvery} frames`,
+      entities: {
+        settlers: this.game.settlers.size,
+        visibleActors: this.settlers.visibleList.length + this.donkeys.visibleList.length + this.catapults.visibleList.length,
+        buildings: this.game.buildings.size, animals: this.game.animals.size, ships: this.game.ships.size, trees: this.game.trees.size,
+      },
+    });
   }
 
   /** off: the shadow map keeps its last picture (for comparisons) */
   shadowsLive = true;
+  /** the lamps' send-on-change (shaderPatch.ts), switchable for comparisons */
+  readonly uniformCache = uniformCache;
 
   private waterCheckT = 0;
   private waterVisible = false;

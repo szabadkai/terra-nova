@@ -428,7 +428,7 @@ export class GameMenu {
     c.appendChild(this.seg('Detail level', `Resolution and shadow sharpness. Lower it if the game stutters.${rec ? ' ★ marks the level recommended for this machine.' : ''}`,
       LEVELS.map((q) => [q, LEVEL_NAMES[q]]), () => s.quality, (v) => set('quality')(v as Quality), rec || undefined));
     c.appendChild(this.detectRow());
-    c.appendChild(this.toggle('Quiet mode', `For laptops, to keep the fans quiet. Draws at most ${QUIET_PR} pixels per point on dense screens, and after ${IDLE_AFTER / 1000} seconds without a touch slows the frames to about ${REST_FPS} a second until the next one (the counter says "resting"). The title screen always rests, and a window that is not in front draws nothing while the game goes on.`, () => s.quiet, set('quiet')));
+    c.appendChild(this.toggle('Quiet mode', `For laptops, to keep the fans quiet. Prefers the low-power GPU on the next game, draws Auto resolution at 92% and at most ${QUIET_PR} pixels per point on dense screens, and after ${IDLE_AFTER / 1000} seconds without a touch slows the frames to about ${REST_FPS} a second until the next one (the counter says "resting"). The title screen always rests, and a window that is not in front draws nothing while the game goes on.`, () => s.quiet, set('quiet')));
     c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens. Auto draws at full and drops to 92% or 85% only while frames keep running late, and the counter shows when it does.',
       [['auto', 'Auto'], ['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
     const hz = framePace.hz;
@@ -439,7 +439,7 @@ export class GameMenu {
     c.appendChild(h('h3', '', 'Effects'));
     c.appendChild(this.toggle('Bloom and glow', 'Glowing windows, forges and water glints', () => s.bloom, set('bloom')));
     c.appendChild(this.toggle('Tilt-shift depth of field', 'Miniature diorama look', () => s.dof, set('dof')));
-    c.appendChild(this.toggle('Ambient occlusion', 'Soft contact shadows under eaves, around trees and at the foot of cliffs. The heaviest effect: a frame takes about 60% longer. Off is the first thing to try if the game stutters.', () => s.ao, set('ao')));
+    c.appendChild(this.toggle('Ambient occlusion', 'Soft contact shadows under eaves, around trees and at the foot of cliffs. The heaviest optional effect: typically 10–20% more GPU time, and no longer enabled by High automatically.', () => s.ao, set('ao')));
     c.appendChild(this.toggle('Colour grading', 'Filmic tone and vignette', () => s.grade, set('grade')));
     c.appendChild(this.toggle('Grass tufts', 'Wind-swept grass blades (always off on Low)', () => s.grass, set('grass')));
     c.appendChild(this.toggle('Water reflections', 'The land mirrored in lakes and sea', () => s.reflections, set('reflections')));

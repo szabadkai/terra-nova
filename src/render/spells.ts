@@ -7,6 +7,7 @@ import { FREEZE_TIME, SPELLS, SpellId } from '../game/faith';
 import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { G } from './shaderPatch';
+import { commitInstances } from './instancing';
 import type { Particles } from './particles';
 
 // ------------------------------------------------------------------ lightning ribbons
@@ -148,6 +149,8 @@ export class SpellFX {
     });
     this.ice = new THREE.InstancedMesh(crystalGeo(), mat, ICE_MAX);
     this.ice.count = 0;
+    this.ice.visible = false;
+    this.ice.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.ice.frustumCulled = false;
     this.ice.renderOrder = 5;
     this.group.add(this.ice);
@@ -493,8 +496,9 @@ export class SpellFX {
         if (Math.random() < dt * 3) this.particles.sparkle(s.x, w.heightAt(s.x, s.z) + 0.3 + Math.random() * 0.8, s.z, 2, [1.6, 2.0, 2.6]);
       }
     }
-    this.ice.count = n;
-    if (n) this.ice.instanceMatrix.needsUpdate = true;
+    // (hidden while empty: a transparent double-sided material is drawn in two passes, each of which
+    // has three look its program up again, empty or not; and only the crystals written are sent)
+    commitInstances(this.ice, n);
   }
 
   /** True while any effect is running (lets callers keep the preview hidden). */

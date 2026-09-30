@@ -2102,7 +2102,7 @@ export class HUD {
     }
     if (this.fpsT >= 1) {
       // with the automatic resolution below full, the share the world is drawn at follows
-      const res = framePace.auto && framePace.scale < 1 ? ` · ${Math.round(framePace.scale * 100)}%` : '';
+      const res = framePace.auto && this.gr.renderScale < 1 ? ` · ${Math.round(this.gr.renderScale * 100)}%` : '';
       const fps = this.frames / this.fpsT;
       this.fpsText = `${Math.round(fps)} fps${res}${framePace.resting ? ' · resting' : ''}`;
       if (this.fpsEl) this.fpsEl.textContent = this.fpsText;

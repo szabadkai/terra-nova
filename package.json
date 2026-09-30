@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "build:single": "tsc --noEmit && vite build --mode single",
     "preview": "vite preview",
+    "benchmark": "npm run build && node scripts/perf-benchmark.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

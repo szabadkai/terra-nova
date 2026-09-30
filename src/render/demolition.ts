@@ -180,7 +180,7 @@ export class Demolition {
   private pool(key: string): Pool {
     let p = this.pools.get(key);
     if (!p) {
-      const mesh = withInstanceColor(new THREE.InstancedMesh(this.chunkGeo, getMaterial(key), CAP));
+      const mesh = withInstanceColor(new THREE.InstancedMesh(this.chunkGeo, getMaterial(key, 'inst'), CAP));
       mesh.count = 0;
       mesh.visible = false;
       mesh.castShadow = true;

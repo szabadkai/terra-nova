@@ -10,7 +10,7 @@ import { DEER_HEAD, DEER_HIPS, DEER_KNEE, DEER_NECK, buildDeerGeos, buildGoodGeo
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
-import { LOD_PIXELS, LodPair, lodView, simplify } from './lod';
+import { InstanceKeep, LOD_PIXELS, LodPair, lodView, simplify } from './lod';
 import { commitInstances, uploadFirst, withInstanceColor } from './instancing';
 
 const tmpM = new THREE.Matrix4();
@@ -114,6 +114,10 @@ float cardAlpha(float st) {
 const TREE_FAR_ERR = 0.08;
 
 export class TreesRenderer {
+  /** the instances stay as they are while nothing that places them moved (lod.ts InstanceKeep) */
+  private keep = new InstanceKeep();
+  /** a tree is on its way down this frame */
+  private moving = false;
   group = new THREE.Group();
   /** screen pixels the far model's error may span before the near one is drawn: foliage bears more than LOD_PIXELS */
   lodPixels = 3;
@@ -151,6 +155,9 @@ export class TreesRenderer {
       fragEmissive: leafEmissive(0.1, 0.35),
     });
     const depth = patchedDepthMaterial({ wind: 'tree' });
+    // (the same for the parts with per-instance colours: one depth material drawn by both kinds would
+    // have its program looked up again at every switch between them in the shadow pass)
+    const depthC = patchedDepthMaterial({ wind: 'tree' });
     const leafTex = leafTexture(0);
     const needleTex = leafTexture(1);
     const twigTex = twigTexture();
@@ -228,9 +235,9 @@ export class TreesRenderer {
     geos.forEach((g, sp) => {
       const sm = DECIDUOUS[sp] ? seasonal(sp) : null;
       this.trunks.push(pair(g.trunk, far(g.trunk), barkMat, depth, 0));
-      const crown = pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depth, 1);
+      const crown = pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depthC, 1);
       this.crowns.push(crown);
-      if (sm) this.leafMats.push({ pair: crown, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depth });
+      if (sm) this.leafMats.push({ pair: crown, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depthC });
       if (g.cards) {
         const cf = g.cardsFar ?? g.cards;
         const cards = g.needles ? pair(g.cards, cf, needleMat, needleDepth, 1) : pair(g.cards, cf, sm!.card, sm!.cardDepth, 1);
@@ -298,6 +305,8 @@ export class TreesRenderer {
       let st = this.fallStart.get(t.id);
       if (st === undefined) { st = time; this.fallStart.set(t.id, st); }
       const k = Math.min(1, (time - st) / 1.5);
+      // (still on its way down: the instances have to follow it)
+      if (k < 1) this.moving = true;
       const ang = k * k * (Math.PI / 2 - 0.08);
       const axis = tmpV.set(Math.cos(t.fallDir), 0, -Math.sin(t.fallDir)).normalize();
       tmpQ.premultiply(tmpQ2.setFromAxisAngle(axis, ang));
@@ -310,6 +319,7 @@ export class TreesRenderer {
 
   update(time: number) {
     const g = this.game;
+    this.moving = false;
     if (g.treesVersion !== this.version) {
       this.version = g.treesVersion;
       this.rebuild(time);
@@ -332,6 +342,8 @@ export class TreesRenderer {
         m.customDepthMaterial = full ? c.fullDepth : c.thinDepth;
       }
     }
+    // (nothing moved since the last frame's instances: they are drawn again as they are)
+    if (!this.moving && this.keep.still(this.version * 4 + (bare ? 2 : 0) + (full ? 1 : 0) + this.lodPixels / 1024)) return;
     const V = lodView;
     const sp = this.spheres, M = this.mats;
     for (let i = 0; i < this.n; i++) {
@@ -416,6 +428,7 @@ const ROCK_MAP = /* glsl */ `
 const ROCK_FAR_ERR = 0.02;
 
 export class StonesRenderer {
+  private keep = new InstanceKeep();
   group = new THREE.Group();
   private pairs: LodPair[] = [];
   private version = -1;
@@ -472,6 +485,7 @@ export class StonesRenderer {
       }
       this.n = i;
     }
+    if (this.keep.still(this.version)) return;
     const V = lodView, f = this.info;
     for (let i = 0; i < this.n; i++) {
       const x = f[i * 5], y = f[i * 5 + 1], z = f[i * 5 + 2], r = f[i * 5 + 3];
@@ -869,6 +883,11 @@ export class AnimalsRenderer {
 // ------------------------------------------------------------------ arrows
 export class ProjectilesRenderer {
   mesh: THREE.InstancedMesh;
+  private from = new THREE.Vector3();
+  private to = new THREE.Vector3();
+  private pos = new THREE.Vector3();
+  private next = new THREE.Vector3();
+  private flip = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI);
   constructor(private game: Game) {
     const shaft = new THREE.CylinderGeometry(0.008, 0.008, 0.4, 4);
     shaft.rotateX(Math.PI / 2);
@@ -903,7 +922,7 @@ export class ProjectilesRenderer {
   update() {
     const g = this.game;
     let n = 0, ns = 0;
-    const from = new THREE.Vector3(), to = new THREE.Vector3(), pos = new THREE.Vector3(), nxt = new THREE.Vector3();
+    const from = this.from, to = this.to, pos = this.pos, nxt = this.next;
     for (const p of g.projectiles) {
       if (p.kind === 'stone') {
         if (ns >= 64) continue;
@@ -916,20 +935,16 @@ export class ProjectilesRenderer {
         continue;
       }
       if (n >= 400) continue;
-      const k = p.t / p.dur;
-      const arc = (t: number, out: THREE.Vector3) => {
-        const d = Math.hypot(p.tx - p.sx, p.tz - p.sz);
-        out.set(p.sx + (p.tx - p.sx) * t, p.sy + (p.ty - p.sy) * t + Math.sin(t * Math.PI) * d * 0.18, p.sz + (p.tz - p.sz) * t);
-        return out;
-      };
-      arc(k, pos);
-      arc(Math.min(1, k + 0.02), nxt);
+      const k = p.t / p.dur, k2 = Math.min(1, k + 0.02);
+      const dx = p.tx - p.sx, dz = p.tz - p.sz, d = Math.hypot(dx, dz);
+      pos.set(p.sx + dx * k, p.sy + (p.ty - p.sy) * k + Math.sin(k * Math.PI) * d * 0.18, p.sz + dz * k);
+      nxt.set(p.sx + dx * k2, p.sy + (p.ty - p.sy) * k2 + Math.sin(k2 * Math.PI) * d * 0.18, p.sz + dz * k2);
       from.copy(pos);
       to.copy(nxt);
       tmpM.lookAt(from, to, UP);
       tmpQ.setFromRotationMatrix(tmpM);
       // lookAt on matrix points -z towards target; arrow geometry points +z
-      tmpQ.multiply(new THREE.Quaternion().setFromAxisAngle(UP, Math.PI));
+      tmpQ.multiply(this.flip);
       tmpM.compose(pos, tmpQ, tmpV.set(1, 1, 1));
       this.mesh.setMatrixAt(n++, tmpM);
     }
@@ -951,11 +966,27 @@ export class PilesRenderer {
     }
   }
   private counts = new Map<Good, number>();
+  // this frame's piles as they were asked for (good, n, x, y, z, turn), and last frame's: the stacks
+  // are laid out and sent again only when the list is not the same
+  private asked: number[] = [];
+  private had: number[] = [];
   begin() {
-    this.counts.clear();
+    this.asked.length = 0;
   }
   /** Stack n items of good gd around (x, y, z). */
   pile(gd: Good, n: number, x: number, y: number, z: number, ry = 0) {
+    if (n <= 0) return;
+    this.asked.push(GOODS.indexOf(gd), n, x, y, z, ry);
+  }
+  end() {
+    const a = this.asked, h = this.had;
+    if (a.length === h.length && a.every((v, i) => v === h[i])) return;
+    this.had = a.slice();
+    this.counts.clear();
+    for (let i = 0; i < a.length; i += 6) this.stack(GOODS[a[i]], a[i + 1], a[i + 2], a[i + 3], a[i + 4], a[i + 5]);
+    for (const [gd, m] of this.meshes) commitInstances(m, this.counts.get(gd) ?? 0);
+  }
+  private stack(gd: Good, n: number, x: number, y: number, z: number, ry: number) {
     const m = this.meshes.get(gd)!;
     let c = this.counts.get(gd) ?? 0;
     const flat = gd === 'board' || gd === 'log' || gd === 'iron' || gd === 'gold';
@@ -981,9 +1012,6 @@ export class PilesRenderer {
       m.setMatrixAt(c++, tmpM);
     }
     this.counts.set(gd, c);
-  }
-  end() {
-    for (const [gd, m] of this.meshes) commitInstances(m, this.counts.get(gd) ?? 0);
   }
 }
 
