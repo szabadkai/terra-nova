@@ -57,8 +57,8 @@ function chartSheet(): string {
     <text class="pvm-seaname" transform="translate(40 330) rotate(-90)">Mare Occidentale</text>
     <text class="pvm-seaname" x="390" y="604">Mare Australe</text>
     <text class="pvm-seaname" x="560" y="16">Mare Septentrionale</text>
-    <g class="pvm-cartouche" transform="translate(898 574)"><rect x="-86" y="-26" width="172" height="44" rx="3"/><rect x="-82" y="-22" width="164" height="36" rx="2" class="in"/>
-      <text y="-5" class="t">Provincia Terra Nova</text><path d="M-40,7 h80" class="bar"/><path d="M-40,4 v6 M-20,5 v4 M0,4 v6 M20,5 v4 M40,4 v6" class="bar"/><text y="15" x="50" class="s">XX milia</text></g>
+    <g class="pvm-cartouche" transform="translate(910 572)"><rect x="-72" y="-31" width="144" height="62" rx="3"/><rect x="-68" y="-27" width="136" height="54" rx="2" class="in"/>
+      <text x="1.2" y="-15" class="k">Provincia</text><text x="1" y="2" class="t">Terra Nova</text><path d="M-30,10 h60" class="bar"/><path d="M-30,7 v6 M-15,8 v4 M0,7 v6 M15,8 v4 M30,7 v6" class="bar"/><text y="22" class="s">XX milia</text></g>
     <rect class="pvm-frame pvm-fit" data-inset="3" width="${MAP_W}" height="${MAP_H}"/><rect class="pvm-frame in pvm-fit" data-inset="8" width="${MAP_W}" height="${MAP_H}"/>
     <g class="pv-dyn"></g>
   </svg>`;

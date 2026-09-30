@@ -503,8 +503,9 @@ button.linkish { padding: 0; border: 0; background: none; color: var(--gold); fo
 .pv-chart .pvm-grain { fill: #000; mix-blend-mode: multiply; pointer-events: none; }
 .pv-chart .pvm-seaname { font-family: var(--font-title); font-size: 12px; font-style: italic; letter-spacing: .38em; fill: #3f514c; opacity: .7; text-anchor: middle; text-transform: uppercase; }
 .pv-chart .pvm-cartouche rect { fill: #efe2c0; stroke: #4b3520; stroke-width: 1.2; } .pv-chart .pvm-cartouche rect.in { fill: none; stroke-width: .6; }
-.pv-chart .pvm-cartouche .t { font: 700 12px var(--font-title); letter-spacing: .16em; text-anchor: middle; fill: #3a2814; text-transform: uppercase; }
-.pv-chart .pvm-cartouche .s { font: italic 8px var(--font-title); fill: #3a2814; } .pv-chart .pvm-cartouche .bar { fill: none; stroke: #3a2814; stroke-width: 1; }
+.pv-chart .pvm-cartouche .t { font: 700 14px var(--font-title); letter-spacing: .14em; text-anchor: middle; fill: #3a2814; text-transform: uppercase; }
+.pv-chart .pvm-cartouche .k { font: 700 8px var(--font-title); letter-spacing: .3em; text-anchor: middle; fill: #3a2814; text-transform: uppercase; }
+.pv-chart .pvm-cartouche .s { font: italic 8px var(--font-title); text-anchor: middle; fill: #3a2814; } .pv-chart .pvm-cartouche .bar { fill: none; stroke: #3a2814; stroke-width: 1; }
 .pv-chart .pvm-frame { fill: none; stroke: #3f2c18; stroke-width: 2.2; } .pv-chart .pvm-frame.in { stroke-width: .7; }
 .pv-chart .pvm-marks, .pv-chart .pvm-marks-sea, .pv-chart .pvm-coast, .pv-chart .pvm-coastshade, .pv-chart .pvm-border, .pv-chart .pvm-border-under, .pv-chart .pvm-river, .pv-chart .pvm-river-under,
 .pv-chart .pvm-plateau, .pv-chart .pvm-scarp, .pv-chart .pvm-trail, .pv-chart .pvm-frame, .pv-chart .pvm-cartouche, .pv-chart .pvm-seaname, .pv-chart .pvm-ripple, .pv-chart .pvm-rhumb, .pv-chart .pvm-rose, .pv-chart .pv-lines, .pv-chart .pv-road, .pv-chart .pv-strike { pointer-events: none; }
