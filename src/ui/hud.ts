@@ -35,7 +35,7 @@ import { OBJECTIVES, Objectives } from './objectives';
 import { missionLabel, type FocusSpec, type Tool } from '../game/campaign';
 import { QUAESTOR_ICON, VARRO_ICON, briefingOverlay, debriefOverlay, lockNote, toolLockNote } from './campaign';
 import { prefs, savePrefs } from './prefs';
-import { AUTO_STEPS, framePace } from '../render/framePace';
+import { framePace } from '../render/framePace';
 import { LowFpsWatch, lowFpsAdvice } from '../render/hardware';
 import { immersiveAvailable, isImmersive, leaveHint, toggleImmersive } from './immersive';
 
@@ -1825,7 +1825,7 @@ export class HUD {
     const advice = lowFpsAdvice(this.gr.settings);
     if (!advice) return;
     // (the automatic resolution also stops trying once the pacer has settled on a slower rate)
-    const atFloor = !framePace.auto || framePace.level === AUTO_STEPS.length - 1 || framePace.slowed;
+    const atFloor = !framePace.auto || framePace.level === framePace.steps.length - 1 || framePace.slowed;
     if (!lowFps.feed(fps, framePace.aimFps(), atFloor)) return;
     this.toast({ title: 'The frame rate is low', detail: advice, kind: 'info', action: { label: '🖼 Graphics', run: () => this.hooks.openMenu('graphics') }, ttl: 20, key: 'lowfps' });
   }

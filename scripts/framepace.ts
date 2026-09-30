@@ -4,7 +4,7 @@
 // display frame, ignores one-off spikes and pauses, comes back once frames are on time again, and
 // does not thrash when the full resolution is only just too slow. Nothing here touches the game.
 // Usage: npx tsx scripts/framepace.ts
-import { AUTO_STEPS, FramePace, REST_FPS, type FrameCap } from '../src/render/framePace';
+import { AUTO_STEPS, FramePace, LOW_STEPS, REST_FPS, type FrameCap } from '../src/render/framePace';
 
 let fails = 0;
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
@@ -193,6 +193,13 @@ const P175 = 1000 / 175;
   run(a, 10, 1000 / 60, () => 2, 16000);
   check(a.level === 0, 'light frames after the rest bring it back up');
   check(a.aimFps() === 60 && a.capFps('half') === 30, "the frame rate aimed at and the caps' rates are judged without the rest");
+  // Low's own steps: 70% down to half, under Low's cap of 30
+  const low = Object.assign(fresh({ period: 1000 / 60, auto: true, cap: '30' }), { steps: LOW_STEPS });
+  check(low.scale === 0.7, 'Low starts its automatic resolution at 70%');
+  run(low, 8, 1000 / 60, (_, scale) => (scale > 0.55 ? 45 : 20));
+  check(low.level === LOW_STEPS.length - 1 && low.scale === 0.5, `frames too heavy for 30 a second take Low down to half (${Math.round(low.scale * 100)}%)`);
+  run(low, 20, 1000 / 60, () => 8, 8000);
+  check(low.level === 0 && low.scale === 0.7, 'and light ones bring it back to 70%');
 }
 
 {

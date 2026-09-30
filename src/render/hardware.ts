@@ -19,7 +19,7 @@
 // pixels drawn at QUIET_PR and rests the frames while nothing is touched) and half the frame budget,
 // so the graphics card idles most of every frame and the fans stay off.
 import type { GameRenderer, Quality, RenderSettings } from './renderer';
-import { AUTO_STEPS, framePace } from './framePace';
+import { AUTO_STEPS, LOW_STEPS, framePace } from './framePace';
 
 export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -27,7 +27,7 @@ export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
  * to go; bloom and the tilt-shift blur (6-16% of a frame between them) are off at every level and
  * left to the player, since the fans of a laptop notice them more than the eye does. */
 export const PRESETS: Record<Quality, Pick<RenderSettings, 'quality' | 'resolution' | 'bloom' | 'dof' | 'ao' | 'grass' | 'reflections'>> = {
-  low: { quality: 'low', resolution: '70', bloom: false, dof: false, ao: false, grass: false, reflections: false },
+  low: { quality: 'low', resolution: 'auto', bloom: false, dof: false, ao: false, grass: false, reflections: false },
   medium: { quality: 'medium', resolution: '85', bloom: false, dof: false, ao: false, grass: true, reflections: true },
   high: { quality: 'high', resolution: 'auto', bloom: false, dof: false, ao: false, grass: true, reflections: true },
   ultra: { quality: 'ultra', resolution: 'auto', bloom: false, dof: false, ao: true, grass: true, reflections: true },
@@ -62,7 +62,7 @@ const PR_CAP: Record<Quality, number> = { low: 1, medium: 1.25, high: 1.5, ultra
 /** share of the screen a level's resolution draws: a fixed setting, or the lowest automatic step
  * (a level holds when it holds there: that is what the automatic resolution is for) */
 const AUTO_FLOOR = AUTO_STEPS[AUTO_STEPS.length - 1];
-const RES: Record<Quality, number> = { low: 0.7, medium: 0.85, high: AUTO_FLOOR, ultra: AUTO_FLOOR };
+const RES: Record<Quality, number> = { low: LOW_STEPS[LOW_STEPS.length - 1], medium: 0.85, high: AUTO_FLOOR, ultra: AUTO_FLOOR };
 
 /**
  * GPU ms of a frame of the world as a new game shows it, at each level on the reference GPU (an
@@ -408,6 +408,7 @@ export function lowFpsAdvice(s: Pick<RenderSettings, 'bloom' | 'ao' | 'dof' | 'q
   const on = [s.ao && 'ambient occlusion', s.bloom && 'bloom', s.dof && 'the tilt-shift blur'].filter(Boolean) as string[];
   if (on.length) return `Turning off ${on.length > 1 ? `${on.slice(0, -1).join(', ')} or ${on[on.length - 1]}` : on[0]} in the menu helps most.`;
   if (s.quality !== 'low') return 'A lower detail level in the menu helps most.';
-  if (s.resolution !== '50') return 'A lower resolution in the menu helps most.';
+  // (Low's automatic resolution is at half by the time the message comes)
+  if (s.resolution !== '50' && !(s.quality === 'low' && s.resolution === 'auto')) return 'A lower resolution in the menu helps most.';
   return null;
 }

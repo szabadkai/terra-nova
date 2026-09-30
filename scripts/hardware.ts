@@ -96,7 +96,8 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   const q = confirmLevel(gl, () => BUDGET * QUIET_SHARE * 1.2, BUDGET);
   check(q.quiet && RUNGS.findIndex((r) => r.level === q.level && r.ao === q.ao) > RUNGS.findIndex((r) => r.level === gl.level && r.ao === gl.ao), 'timing a portable machine holds it to half the budget: a frame that would pass a desktop steps it down');
   // what each level switches
-  check(!PRESETS.low.bloom && !PRESETS.low.dof && !PRESETS.low.ao && PRESETS.low.resolution !== 'auto', 'Low: bloom, AO and tilt-shift off, a fixed lower resolution');
+  check(!PRESETS.low.bloom && !PRESETS.low.dof && !PRESETS.low.ao && PRESETS.low.resolution === 'auto', 'Low: bloom, AO and tilt-shift off, automatic resolution (from 70% down to half: LOW_STEPS)');
+  check(lowFpsAdvice({ bloom: false, ao: false, dof: false, quality: 'low', resolution: 'auto' }) === null, 'Low on automatic resolution at its floor has nothing lower to suggest');
   check(!PRESETS.medium.bloom && !PRESETS.medium.dof && !PRESETS.medium.ao && PRESETS.medium.resolution !== 'auto', 'Medium: bloom, AO and tilt-shift off, a fixed lower resolution');
   check(!PRESETS.high.bloom && !PRESETS.high.dof && !PRESETS.high.ao && PRESETS.high.resolution === 'auto', 'High: AO, bloom and tilt-shift off for laptop headroom, automatic resolution');
   check(!PRESETS.ultra.bloom && !PRESETS.ultra.dof && PRESETS.ultra.ao && PRESETS.ultra.resolution === 'auto', 'Ultra: AO on, bloom and tilt-shift off, automatic resolution');

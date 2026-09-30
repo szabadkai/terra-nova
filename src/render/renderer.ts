@@ -40,7 +40,7 @@ import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
 import { commitInstances, ownDepth, withInstanceColor } from './instancing';
 import { ScreenLod, lodSetPass, lodView } from './lod';
-import { framePace, type FrameCap } from './framePace';
+import { AUTO_STEPS, LOW_STEPS, framePace, type FrameCap } from './framePace';
 import { COARSE_DIST } from './geom';
 import { QUIET_PR, QUIET_SCALE } from './hardware';
 import { Trails } from './trails';
@@ -480,6 +480,9 @@ export class GameRenderer {
     // keeps 4x; Quiet uses 2x (and Low none) while the final pass still sharpens scaled output.
     this.fx.setSamples(perfBaseline ? 4 : s.quality === 'low' ? 0 : s.quality === 'ultra' && !s.quiet ? 4 : s.quiet ? 2 : 4);
     framePace.auto = s.resolution === 'auto';
+    // (Low's automatic resolution starts at 70% and goes down to half)
+    framePace.steps = s.quality === 'low' ? LOW_STEPS : AUTO_STEPS;
+    framePace.level = Math.min(framePace.level, framePace.steps.length - 1);
     if (!framePace.auto) framePace.level = 0;
     framePace.cap = s.frameCap;
     this.setWorldScale(this.worldScale());
