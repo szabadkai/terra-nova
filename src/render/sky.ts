@@ -57,6 +57,12 @@ export class Sky {
   private cubeCam = new THREE.CubeCamera(0.1, 100, this.cubeRT);
   private envT = 0;
   private lastEnvTod = -1;
+  /** off at Low: the sky's light reaches the materials as spherical harmonics (a light probe, sums in
+   * the shader) instead of the filtered environment map (texture lookups in every lit pixel, and a cube
+   * render and a PMREM filter at every refresh) */
+  private envMap = true;
+  private probe = new THREE.LightProbe(undefined, 0);
+  private probeStale = true;
   weather = 0; // 0 clear .. 1 overcast/rain
   dome: THREE.Mesh;
   private domeMat: THREE.ShaderMaterial;
@@ -151,7 +157,9 @@ export class Sky {
     });
     this.dome = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 16), this.domeMat);
     this.dome.frustumCulled = false;
-    this.dome.renderOrder = -10;
+    // behind everything, so drawn after every solid thing and the ground (cutOrder): its fragments are
+    // then tested away wherever the land covers it, which at the play zoom is the whole screen
+    this.domeMat.userData.drawLate = 2;
     scene.add(this.dome);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.update(0, new THREE.Vector3(), 40);
@@ -224,9 +232,9 @@ export class Sky {
     du.uMoon.value = isNight ? horizonDip * (1 - overcast * 0.8) : 0;
     this.dome.position.set(target.x, 0, target.z);
 
-    // environment map refresh
+    // environment map (or light probe) refresh
     this.envT -= dt;
-    if (this.envRT === null || (this.envT <= 0 && Math.abs(this.timeOfDay - this.lastEnvTod) > 0.004)) {
+    if ((this.envMap ? this.envRT === null : this.probeStale) || (this.envT <= 0 && Math.abs(this.timeOfDay - this.lastEnvTod) > 0.004)) {
       this.envT = 1.5;
       this.lastEnvTod = this.timeOfDay;
       const u = this.skyMat.uniforms;
@@ -235,10 +243,72 @@ export class Sky {
       (u.uGround.value as THREE.Color).setRGB(ground[0] * 0.8, ground[1] * 0.8, ground[2] * 0.8);
       (u.uSunDir.value as THREE.Vector3).copy(sunVec);
       (u.uSunCol.value as THREE.Color).setRGB(sunC[0], sunC[1], sunC[2]).multiplyScalar(isNight ? 0 : horizonDip);
+      const intensity = 0.55 * (isNight ? 0.6 : 1);
+      if (!this.envMap) {
+        skySH(u.uZenith.value, u.uHorizon.value, u.uGround.value, u.uSunDir.value, u.uSunCol.value, this.probe.sh);
+        this.probe.intensity = intensity;
+        this.probeStale = false;
+        return;
+      }
       this.cubeCam.update(this.renderer, this.skyScene);
       this.envRT = this.envRT ? this.pmrem.fromCubemap(this.cubeRT.texture, this.envRT) : this.pmrem.fromCubemap(this.cubeRT.texture);
       this.scene.environment = this.envRT.texture;
-      this.scene.environmentIntensity = 0.55 * (isNight ? 0.6 : 1);
+      this.scene.environmentIntensity = intensity;
+    }
+  }
+
+  /** The environment map (every level but Low) or the light probe in its place. */
+  setEnvMap(on: boolean) {
+    if (on === this.envMap) return;
+    this.envMap = on;
+    if (on) {
+      this.scene.remove(this.probe);
+    } else {
+      this.scene.environment = null;
+      this.envRT?.dispose();
+      this.envRT = null;
+      this.scene.add(this.probe);
+      this.probeStale = true;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- the sky as spherical harmonics
+const SH_DIRS = (() => {
+  // a Fibonacci sphere: even coverage for the sky's smooth gradient
+  const n = 256, out: THREE.Vector3[] = [], ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i++) {
+    const y = 1 - (2 * i + 1) / n, r = Math.sqrt(1 - y * y), a = i * ga;
+    out.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+  }
+  return out;
+})();
+const shBasis: number[] = new Array(9).fill(0);
+const SUN_LOBES: [number, number][] = [[600, 30], [12, 0.5]];
+
+/**
+ * The sky the environment map is filtered from (skyMat's shader) projected on spherical harmonics:
+ * its gradient by sampling, the sun's two lobes exactly (max(cos, 0)^n spans 2 pi / (n + 1), and its
+ * bands keep (n + 1) / (n + 2) and n / (n + 3) of that).
+ */
+function skySH(zen: THREE.Color, hor: THREE.Color, gnd: THREE.Color, sunDir: THREE.Vector3, sunCol: THREE.Color, sh: THREE.SphericalHarmonics3) {
+  const c = sh.coefficients;
+  for (const v of c) v.set(0, 0, 0);
+  const w = (4 * Math.PI) / SH_DIRS.length;
+  for (const d of SH_DIRS) {
+    const h = d.y;
+    const t = Math.pow(THREE.MathUtils.clamp(h, 0, 1), 0.6), g = 1 - THREE.MathUtils.smoothstep(h, -0.25, 0);
+    let r = hor.r + (zen.r - hor.r) * t, gg = hor.g + (zen.g - hor.g) * t, b = hor.b + (zen.b - hor.b) * t;
+    r += (gnd.r - r) * g; gg += (gnd.g - gg) * g; b += (gnd.b - b) * g;
+    THREE.SphericalHarmonics3.getBasisAt(d, shBasis);
+    for (let i = 0; i < 9; i++) { const k = shBasis[i] * w; c[i].x += r * k; c[i].y += gg * k; c[i].z += b * k; }
+  }
+  THREE.SphericalHarmonics3.getBasisAt(sunDir, shBasis);
+  for (const [n, k] of SUN_LOBES) {
+    const e = (k * 2 * Math.PI) / (n + 1), band = [1, (n + 1) / (n + 2), n / (n + 3)];
+    for (let i = 0; i < 9; i++) {
+      const f = e * band[i === 0 ? 0 : i < 4 ? 1 : 2] * shBasis[i];
+      c[i].x += sunCol.r * f; c[i].y += sunCol.g * f; c[i].z += sunCol.b * f;
     }
   }
 }

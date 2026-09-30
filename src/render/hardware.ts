@@ -19,7 +19,7 @@
 // pixels drawn at QUIET_PR and rests the frames while nothing is touched) and half the frame budget,
 // so the graphics card idles most of every frame and the fans stay off.
 import type { GameRenderer, Quality, RenderSettings } from './renderer';
-import { AUTO_STEPS, framePace } from './framePace';
+import { AUTO_STEPS, LOW_STEPS, framePace } from './framePace';
 
 export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
 
@@ -27,7 +27,7 @@ export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
  * to go; bloom and the tilt-shift blur (6-16% of a frame between them) are off at every level and
  * left to the player, since the fans of a laptop notice them more than the eye does. */
 export const PRESETS: Record<Quality, Pick<RenderSettings, 'quality' | 'resolution' | 'bloom' | 'dof' | 'ao' | 'grass' | 'reflections'>> = {
-  low: { quality: 'low', resolution: '70', bloom: false, dof: false, ao: false, grass: false, reflections: false },
+  low: { quality: 'low', resolution: 'auto', bloom: false, dof: false, ao: false, grass: false, reflections: false },
   medium: { quality: 'medium', resolution: '85', bloom: false, dof: false, ao: false, grass: true, reflections: true },
   high: { quality: 'high', resolution: 'auto', bloom: false, dof: false, ao: false, grass: true, reflections: true },
   ultra: { quality: 'ultra', resolution: 'auto', bloom: false, dof: false, ao: true, grass: true, reflections: true },
@@ -62,16 +62,18 @@ const PR_CAP: Record<Quality, number> = { low: 1, medium: 1.25, high: 1.5, ultra
 /** share of the screen a level's resolution draws: a fixed setting, or the lowest automatic step
  * (a level holds when it holds there: that is what the automatic resolution is for) */
 const AUTO_FLOOR = AUTO_STEPS[AUTO_STEPS.length - 1];
-const RES: Record<Quality, number> = { low: 0.7, medium: 0.85, high: AUTO_FLOOR, ultra: AUTO_FLOOR };
+const RES: Record<Quality, number> = { low: LOW_STEPS[LOW_STEPS.length - 1], medium: 0.85, high: AUTO_FLOOR, ultra: AUTO_FLOOR };
 
 /**
  * GPU ms of a frame of the world as a new game shows it, at each level on the reference GPU (an
  * Apple M5 Pro, power 1): a part that does not grow with the pixels (the shadow map, vertices,
  * draws) and one per million pixels drawn. Fitted to headless runs at 1280x720 to 3440x1440 and 2x
  * (interleaved, so the levels' ratios hold: Low about half of High, Medium 0.7) and anchored to the
- * 10.5 ms a 30-minute town takes at 3440x1440 on High.
+ * 10.5 ms a 30-minute town takes at 3440x1440 on High. Low's since its lean shaders (no terrain detail,
+ * a light probe for the environment, the canvas at its own size): 0.63-0.76 of its old cost per pixel,
+ * fill-bound at 30 to 95 units (both builds alternated), and a shadow pass of a third of the triangles.
  */
-const COST: Record<Quality, [number, number]> = { low: [0.8, 1.5], medium: [1.0, 1.6], high: [1.2, 1.65], ultra: [1.3, 1.75] };
+const COST: Record<Quality, [number, number]> = { low: [0.65, 1.0], medium: [1.0, 1.6], high: [1.2, 1.65], ultra: [1.3, 1.75] };
 /**
  * What ambient occlusion adds, in the same terms. It works at half size from the depth the scene
  * leaves (postfx.ts), so almost all of it grows with the pixels: timed against no occlusion and
@@ -122,6 +124,14 @@ export function portable(s: Pick<Signals, 'gpu' | 'width' | 'height' | 'dpr' | '
   if (s.touch) return true;
   if (/laptop|mobile|max-q|\biris\b|xe graphics|\d{3,4}m\b/i.test(gpuLabel(s.gpu))) return true;
   return s.dpr >= 1.25 && Math.max(s.width, s.height) <= 1800;
+}
+
+/** A GPU that shades every fragment in the order drawn (desktop and laptop Intel, AMD and NVIDIA
+ * graphics), as against a tile-based one that shades only the frontmost (Apple's, and the phones'). */
+export function immediateMode(name: string): boolean {
+  const n = gpuLabel(name).toLowerCase();
+  if (/apple|mali|adreno|powervr|immortalis|xclipse|videocore|tegra|swiftshader|llvmpipe/.test(n)) return false;
+  return /intel|\biris\b|\barc\b|nvidia|geforce|quadro|\brtx\b|\bgtx\b|radeon|\bamd\b|\bati\b/.test(n);
 }
 
 export interface GpuGuess {
@@ -305,13 +315,19 @@ export function confirmLevel(guess: Guess, timeAt: (q: Quality, ao: boolean) => 
 // ------------------------------------------------------------------ browser side
 
 /** What the browser tells about the machine. */
-export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext): Signals {
+/** The GPU's name as the browser gives it. */
+export function gpuName(gl: WebGLRenderingContext | WebGL2RenderingContext): string {
   let gpu = String(gl.getParameter(gl.RENDERER) ?? '');
   // Chrome and Safari hide the name behind the extension; Firefox gives it here and warns about the extension
   if (!gpu || /^webkit webgl$|^mozilla$/i.test(gpu)) {
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     if (ext) gpu = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) ?? gpu);
   }
+  return gpu;
+}
+
+export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext): Signals {
+  const gpu = gpuName(gl);
   const nav = navigator as Navigator & { deviceMemory?: number };
   const s = {
     gpu,
@@ -408,6 +424,7 @@ export function lowFpsAdvice(s: Pick<RenderSettings, 'bloom' | 'ao' | 'dof' | 'q
   const on = [s.ao && 'ambient occlusion', s.bloom && 'bloom', s.dof && 'the tilt-shift blur'].filter(Boolean) as string[];
   if (on.length) return `Turning off ${on.length > 1 ? `${on.slice(0, -1).join(', ')} or ${on[on.length - 1]}` : on[0]} in the menu helps most.`;
   if (s.quality !== 'low') return 'A lower detail level in the menu helps most.';
-  if (s.resolution !== '50') return 'A lower resolution in the menu helps most.';
+  // (Low's automatic resolution is at half by the time the message comes)
+  if (s.resolution !== '50' && !(s.quality === 'low' && s.resolution === 'auto')) return 'A lower resolution in the menu helps most.';
   return null;
 }

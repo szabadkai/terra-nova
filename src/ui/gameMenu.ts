@@ -429,7 +429,7 @@ export class GameMenu {
       LEVELS.map((q) => [q, LEVEL_NAMES[q]]), () => s.quality, (v) => set('quality')(v as Quality), rec || undefined));
     c.appendChild(this.detectRow());
     c.appendChild(this.toggle('Quiet mode', `For laptops, to keep the fans quiet. Prefers the low-power GPU on the next game, draws Auto resolution at 92% and at most ${QUIET_PR} pixels per point on dense screens, and after ${IDLE_AFTER / 1000} seconds without a touch slows the frames to about ${REST_FPS} a second until the next one (the counter says "resting"). The title screen always rests, and a window that is not in front draws nothing while the game goes on.`, () => s.quiet, set('quiet')));
-    c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens. Auto draws at full and drops to 92% or 85% only while frames keep running late, and the counter shows when it does.',
+    c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens. Auto draws at full and drops to 92% or 85% only while frames keep running late (at Low it draws 70% and drops to 60% or 50%), and the counter shows when it does.',
       [['auto', 'Auto'], ['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
     const hz = framePace.hz;
     const fps = (cap: FrameCap) => `${framePace.capFps(cap)} fps`;

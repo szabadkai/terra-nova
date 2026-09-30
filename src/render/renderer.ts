@@ -9,6 +9,7 @@ import { RTSCamera } from './camera';
 import { Sky } from './sky';
 import { fitShadow } from './shadowFit';
 import { TerrainRenderer } from './terrain';
+import { DetailUsers } from './terrainDetail';
 import { WaterRenderer } from './water';
 import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
 import { SettlersRenderer } from './settlers';
@@ -39,9 +40,9 @@ import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
 import { commitInstances, ownDepth, withInstanceColor } from './instancing';
 import { ScreenLod, lodSetPass, lodView } from './lod';
-import { framePace, type FrameCap } from './framePace';
+import { AUTO_STEPS, LOW_STEPS, framePace, type FrameCap } from './framePace';
 import { COARSE_DIST } from './geom';
-import { QUIET_PR, QUIET_SCALE } from './hardware';
+import { QUIET_PR, QUIET_SCALE, gpuName, immediateMode } from './hardware';
 import { Trails } from './trails';
 import { perf, perfBaseline } from './perf';
 
@@ -85,6 +86,9 @@ const LEAF_FALL: Record<number, [number, number, number][]> = {
  * shadow then matches what is seen, and the fitted map's texel (about 4e-4 of a unit per unit of
  * distance, shadowFit) has grown to a few centimetres, so the model's error spans only a few texels */
 const SHADOW_COARSE_DIST = COARSE_DIST;
+/** at Low, settlers, animals, lanterns and other small things cast shadows only in a view closer than this */
+const LOW_SMALL_SHADOWS = 20;
+const NO_SKIP: THREE.Object3D[] = [];
 
 export class GameRenderer {
   renderer: THREE.WebGLRenderer;
@@ -182,6 +186,11 @@ export class GameRenderer {
   private pickRay = new THREE.Raycaster();
   private pickNdcVector = new THREE.Vector2();
   private staticUpdateT = 0;
+  /** the ground's and the stones' close-up detail layers: not at Low */
+  private detail: DetailUsers;
+  /** what casts no shadow at Low (hidden while its shadow map is drawn), and whether each was visible */
+  private lowShadowSkip: THREE.Object3D[] = [];
+  private lowShadowWas: boolean[] = [];
 
   constructor(private canvas: HTMLCanvasElement, private game: Game, powerPreference: WebGLPowerPreference = 'default') {
     // (the world draws into targets of its own: the canvas only takes the final full-screen pass, so it
@@ -203,11 +212,21 @@ export class GameRenderer {
       const sm = r.shadowMap;
       if (!lights.length || !sm.enabled || !(sm.autoUpdate || sm.needsUpdate)) return drawShadows(lights, scene, camera);
       lodSetPass('shadow');
+      // Low's map is too coarse for the shadows of small things (a settler's is a few blurred texels):
+      // they stay out of its pass, which drew more triangles than the view itself, unless the view is so
+      // close that there are few of them and they are big
+      const low = this.settings?.quality === 'low';
+      const skip = low && this.cam.dist >= LOW_SMALL_SHADOWS ? this.lowShadowSkip : NO_SKIP, was = this.lowShadowWas;
+      for (let i = 0; i < skip.length; i++) { was[i] = skip[i].visible; skip[i].visible = false; }
       try {
-        // (the coarse model once the view is out far enough that its error stays under the map's texels)
-        if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
+        // (the coarse model once the view is out far enough that its error stays under the map's
+        // texels, and always on Low's small map)
+        if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), low || this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
         else drawShadows(lights, scene, camera);
-      } finally { lodSetPass('main'); }
+      } finally {
+        lodSetPass('main');
+        for (let i = 0; i < skip.length; i++) skip[i].visible = was[i];
+      }
     };
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -222,6 +241,7 @@ export class GameRenderer {
     this.trails = new Trails(game);
     G.tTrail.value = this.trails.tex;
     this.terrain = new TerrainRenderer(game);
+    this.terrain.drawLate(immediateMode(gpuName(r.getContext())));
     this.scene.add(this.terrain.mesh);
     this.water = new WaterRenderer(game.world.W, game.world.H, this.terrain.heightTex);
     this.scene.add(this.water.mesh);
@@ -230,6 +250,7 @@ export class GameRenderer {
     this.scene.add(this.trees.group);
     this.stones = new StonesRenderer(game);
     this.scene.add(this.stones.group);
+    this.detail = new DetailUsers([this.terrain.mesh.material as THREE.Material, this.stones.mat], [this.terrain.uniforms, this.stones.detail]);
     this.fields = new FieldsRenderer(game);
     this.scene.add(this.fields.mesh);
     this.vines = new VinesRenderer(game);
@@ -298,6 +319,8 @@ export class GameRenderer {
       this.cam.shake = Math.max(this.cam.shake, shake);
     }, (n, x, z, v) => this.sound?.(n, x, z, v));
     this.scene.add(this.demolition.group);
+    this.lowShadowSkip = [this.settlers.group, this.donkeys.group, this.catapults.group, this.animals.group, this.pigs.group, this.birds.group,
+      this.lanterns.group, this.signs.group, this.borders.posts, this.fields.mesh, this.vines.group, this.piles.group, this.arrows.mesh, this.arrows.stones, this.demolition.group];
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
     this.waterCells = new WaterCells(game.world, WATER_LEVEL);
@@ -446,9 +469,10 @@ export class GameRenderer {
     const s = this.settings;
     // (a dense laptop screen at 2x is four times the pixels of 1x: quiet mode draws no more than QUIET_PR)
     const dpr = Math.min(window.devicePixelRatio, s.quiet ? QUIET_PR : Infinity);
-    const pr = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
-    this.renderer.setPixelRatio(pr);
+    this.basePixelRatio = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
     this.grass.enabled = s.grass && s.quality !== 'low';
+    this.detail.set(s.quality !== 'low');
+    this.sky.setEnvMap(s.quality !== 'low');
     this.fx.settings.bloom = s.bloom;
     this.fx.settings.dof = s.dof;
     this.fx.settings.grade = s.grade;
@@ -457,9 +481,12 @@ export class GameRenderer {
     // keeps 4x; Quiet uses 2x (and Low none) while the final pass still sharpens scaled output.
     this.fx.setSamples(perfBaseline ? 4 : s.quality === 'low' ? 0 : s.quality === 'ultra' && !s.quiet ? 4 : s.quiet ? 2 : 4);
     framePace.auto = s.resolution === 'auto';
+    // (Low's automatic resolution starts at 70% and goes down to half)
+    framePace.steps = s.quality === 'low' ? LOW_STEPS : AUTO_STEPS;
+    framePace.level = Math.min(framePace.level, framePace.steps.length - 1);
     if (!framePace.auto) framePace.level = 0;
     framePace.cap = s.frameCap;
-    this.fx.scale = this.worldScale();
+    this.setWorldScale(this.worldScale());
     // Reflections and shadows are deliberately temporal in quiet mode. At 60 fps they update at
     // 15 and 30 fps respectively; at the idle 30 fps they halve again without spending power on
     // differences which are almost impossible to see in an RTS view. Out of quiet mode the water keeps
@@ -507,7 +534,24 @@ export class GameRenderer {
   }
   /** Effective world-resolution scale, including Quiet's deliberate headroom. */
   get renderScale() {
-    return this.fx.scale;
+    return this.scaleNow;
+  }
+  /** the level's device pixels per CSS pixel, before the world's scale */
+  private basePixelRatio = 1;
+  /** the world's scale as last set (setWorldScale) */
+  private scaleNow = 1;
+  /**
+   * The world's resolution scale. At Low the canvas itself is drawn at that size and the browser
+   * enlarges it on the screen, so the final pass writes the world's pixels rather than the screen's
+   * (about a tenth of a Low frame); elsewhere the final pass scales it up to a full-size canvas.
+   * Takes effect on resize.
+   */
+  private setWorldScale(scale: number) {
+    this.scaleNow = scale;
+    const small = this.settings.quality === 'low';
+    this.renderer.setPixelRatio(small ? this.basePixelRatio * scale : this.basePixelRatio);
+    this.fx.scale = small ? 1 : scale;
+    this.fx.shownScale = small ? scale : 1;
   }
   private worldScale() {
     const scale = framePace.auto ? framePace.scale : RES_SCALE[this.settings.resolution] ?? 1;
@@ -1099,7 +1143,7 @@ export class GameRenderer {
     if (this.canvas.clientWidth !== this.lastW || this.canvas.clientHeight !== this.lastH) this.resize();
     // the automatic resolution has moved a step: the world's targets follow
     const worldScale = this.worldScale();
-    if (framePace.auto && worldScale !== this.fx.scale) { this.fx.scale = worldScale; this.resize(); }
+    if (framePace.auto && worldScale !== this.scaleNow) { this.setWorldScale(worldScale); this.resize(); }
     this.time += dt;
     this.frameNo++;
     G.uTime.value = this.time;
@@ -1134,6 +1178,7 @@ export class GameRenderer {
     this.particles.setAmbient(ambient);
     this.rain.setAmbient(ambient);
 
+    this.detail.frame();
     this.terrain.update(dt);
     this.trails.update(this.renderer, gameDt, this.cam.target.x, this.cam.target.z, this.cam.viewSize, this.cam.dist);
     this.borders.update();

@@ -5,7 +5,7 @@
 // nothing left for the automatic resolution to give.
 // Nothing here touches the game.
 // Usage: npx tsx scripts/hardware.ts
-import { LEVELS, LOW_FPS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SCALE, QUIET_SHARE, RUNGS, confirmLevel, fpsFor, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
+import { LEVELS, LOW_FPS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SCALE, QUIET_SHARE, RUNGS, confirmLevel, fpsFor, frameMs, gpuLabel, gpuPower, guessLevel, immediateMode, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
 import type { Quality } from '../src/render/renderer';
 
 let fails = 0;
@@ -96,11 +96,15 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   const q = confirmLevel(gl, () => BUDGET * QUIET_SHARE * 1.2, BUDGET);
   check(q.quiet && RUNGS.findIndex((r) => r.level === q.level && r.ao === q.ao) > RUNGS.findIndex((r) => r.level === gl.level && r.ao === gl.ao), 'timing a portable machine holds it to half the budget: a frame that would pass a desktop steps it down');
   // what each level switches
-  check(!PRESETS.low.bloom && !PRESETS.low.dof && !PRESETS.low.ao && PRESETS.low.resolution !== 'auto', 'Low: bloom, AO and tilt-shift off, a fixed lower resolution');
+  check(!PRESETS.low.bloom && !PRESETS.low.dof && !PRESETS.low.ao && PRESETS.low.resolution === 'auto', 'Low: bloom, AO and tilt-shift off, automatic resolution (from 70% down to half: LOW_STEPS)');
+  check(lowFpsAdvice({ bloom: false, ao: false, dof: false, quality: 'low', resolution: 'auto' }) === null, 'Low on automatic resolution at its floor has nothing lower to suggest');
   check(!PRESETS.medium.bloom && !PRESETS.medium.dof && !PRESETS.medium.ao && PRESETS.medium.resolution !== 'auto', 'Medium: bloom, AO and tilt-shift off, a fixed lower resolution');
   check(!PRESETS.high.bloom && !PRESETS.high.dof && !PRESETS.high.ao && PRESETS.high.resolution === 'auto', 'High: AO, bloom and tilt-shift off for laptop headroom, automatic resolution');
   check(!PRESETS.ultra.bloom && !PRESETS.ultra.dof && PRESETS.ultra.ao && PRESETS.ultra.resolution === 'auto', 'Ultra: AO on, bloom and tilt-shift off, automatic resolution');
   check(LEVELS.every((q) => !PRESETS[q].bloom && !PRESETS[q].dof), 'bloom and the tilt-shift blur are off at every level: on is the player\'s choice');
+  // which GPUs draw the ground after what stands on it (terrain.ts drawLate)
+  check(['ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)', 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)', 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)', 'Intel Iris OpenGL Engine'].every(immediateMode), 'Intel, NVIDIA and AMD shade in the order drawn (the ground goes last there)');
+  check(!['ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)', 'Apple GPU', 'Mali-G78', 'Adreno (TM) 650', 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)'].some(immediateMode), 'Apple, the phones\' GPUs and software drawing do not (the ground keeps its place)');
   check(!PRESETS.low.grass, 'Low: no grass');
 }
 

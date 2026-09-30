@@ -94,7 +94,16 @@ export function getWaterNormal(): THREE.DataTexture {
 // ---------------------------------------------------------------- building materials
 export interface MatTex { map: THREE.DataTexture; normal: THREE.DataTexture; }
 
-function build(size: number, fn: (u: number, v: number) => [number, number, number, number], strength: number, h = size): MatTex {
+/** Share of their size the buildings' textures are made at (Low: half, a quarter of the texels to work
+ * out at boot and to hold); set before the first material asks for one, as they are made once a page. */
+let texScale = 1;
+export function setTextureScale(s: number) { texScale = s; }
+export const textureScale = () => texScale;
+
+function build(size0: number, fn: (u: number, v: number) => [number, number, number, number], strength0: number, h0 = size0): MatTex {
+  const size = Math.max(16, Math.round(size0 * texScale)), h = Math.max(16, Math.round(h0 * texScale));
+  // (a texel spans more of the surface: the same slope is a bigger step from one to the next)
+  const strength = strength0 * (size / size0);
   const height = new Float32Array(size * h);
   const data = new Uint8Array(size * h * 4);
   for (let y = 0; y < h; y++)
@@ -112,10 +121,12 @@ function build(size: number, fn: (u: number, v: number) => [number, number, numb
   map.magFilter = THREE.LinearFilter;
   map.minFilter = THREE.LinearMipmapLinearFilter;
   map.generateMipmaps = true;
-  map.anisotropy = 8;
+  map.anisotropy = texScale < 1 ? 2 : 8;
   map.colorSpace = THREE.SRGBColorSpace;
   map.needsUpdate = true;
-  return { map, normal: normalFromHeight(size, height, strength, h) };
+  const normal = normalFromHeight(size, height, strength, h);
+  normal.anisotropy = map.anisotropy;
+  return { map, normal };
 }
 
 /** Every building material texture pair, in the order of its layer in the buildings' texture arrays (buildingFamilies.ts). */

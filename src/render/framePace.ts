@@ -18,6 +18,8 @@ export const IDLE_AFTER = 3000;
 
 /** Render scales the automatic resolution steps through, from full down. */
 export const AUTO_STEPS = [1, 0.92, 0.85];
+/** ...and at Low, which draws 70% of the screen and can go down to half of it */
+export const LOW_STEPS = [0.7, 0.6, 0.5];
 
 /** Refresh rates a measured period snaps to when it is within 2% of one (Hz). */
 const RATES = [24, 30, 48, 50, 60, 72, 75, 85, 90, 100, 120, 144, 165, 175, 180, 200, 240, 360];
@@ -62,7 +64,9 @@ export class FramePace {
   /** frames rendered and display frames they missed, since the start (for the counter and tests) */
   rendered = 0;
   missed = 0;
-  /** the current automatic step (index into AUTO_STEPS) */
+  /** the steps the automatic resolution goes through: AUTO_STEPS, or LOW_STEPS at Low */
+  steps = AUTO_STEPS;
+  /** the current automatic step (index into `steps`) */
   level = 0;
 
   private lastTick = -1;
@@ -86,7 +90,7 @@ export class FramePace {
 
   /** the render scale the automatic resolution asks for now */
   get scale() {
-    return AUTO_STEPS[this.level];
+    return this.steps[this.level];
   }
 
   /** how many display frames each rendered frame is given under the cap (and a slow rest) */
@@ -219,7 +223,7 @@ export class FramePace {
   }
 
   private steer(now: number) {
-    if (this.lateCount >= DROP_LATE && this.level < AUTO_STEPS.length - 1 && now - this.lastChange >= DROP_EVERY) {
+    if (this.lateCount >= DROP_LATE && this.level < this.steps.length - 1 && now - this.lastChange >= DROP_EVERY) {
       // a raise that did not hold: wait longer before trying again
       if (this.lastRaise >= 0 && now - this.lastRaise < RAISE_SETTLE) this.raiseWait = Math.min(RAISE_MAX, this.raiseWait * 2);
       this.lastRaise = -1;

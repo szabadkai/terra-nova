@@ -15,31 +15,32 @@
 import * as THREE from 'three';
 import { lookOf, windowGlow } from './materials';
 import { patchMaterial } from './shaderPatch';
-import { MAT_TEX_KEYS, matTexOf, type MatTexKey } from './textures';
+import { MAT_TEX_KEYS, matTexOf, textureScale, type MatTexKey } from './textures';
 
-/** a layer's size: the largest building texture */
-const SIZE = 512;
+/** a layer's size: the largest building texture (at Low's half-size textures, half) */
+const layerSize = () => Math.round(512 * textureScale());
 /** rows of the material table (the library has about sixty-five materials) */
 const ROWS = 128;
 /** texels a row: colour + roughness, emissive + metalness, layers + normal scale + snow, uv scale + grime + window */
 const ROW_W = 4;
 
-function layerTex(srgb: boolean): THREE.DataArrayTexture {
-  const t = new THREE.DataArrayTexture(new Uint8Array(SIZE * SIZE * 4 * MAT_TEX_KEYS.length), SIZE, SIZE, MAT_TEX_KEYS.length);
+function layerTex(size: number, srgb: boolean): THREE.DataArrayTexture {
+  const t = new THREE.DataArrayTexture(new Uint8Array(size * size * 4 * MAT_TEX_KEYS.length), size, size, MAT_TEX_KEYS.length);
   t.format = THREE.RGBAFormat;
   t.type = THREE.UnsignedByteType;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.magFilter = THREE.LinearFilter;
   t.minFilter = THREE.LinearMipmapLinearFilter;
   t.generateMipmaps = true;
-  t.anisotropy = 8;
+  t.anisotropy = textureScale() < 1 ? 2 : 8;
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
 class Atlas {
-  readonly albedo = layerTex(true);
-  readonly normal = layerTex(false);
+  readonly size = layerSize();
+  readonly albedo = layerTex(this.size, true);
+  readonly normal = layerTex(this.size, false);
   readonly table: THREE.DataTexture;
   private rows = new Map<string, { row: number; double: boolean }>();
   private filled = new Set<MatTexKey>();
@@ -64,11 +65,11 @@ class Atlas {
     const layer = pair ? this.fill(pair.key, pair.tex.map, pair.tex.normal) : -1;
     const img = pair?.tex.map.image as { width: number; height: number } | undefined;
     const d = this.table.image.data as Float32Array;
-    const o = row * ROW_W * 4;
+    const o = row * ROW_W * 4, size = this.size;
     d.set([L.color.r, L.color.g, L.color.b, L.roughness], o);
     d.set([L.emissive.r, L.emissive.g, L.emissive.b, L.metalness], o + 4);
     d.set([L.map ? layer : -1, L.normalMap ? layer : -1, L.normalScale, L.snow], o + 8);
-    d.set([img ? img.width / SIZE : 1, img ? img.height / SIZE : 1, L.grime, L.window ? 1 : 0], o + 12);
+    d.set([img ? img.width / size : 1, img ? img.height / size : 1, L.grime, L.window ? 1 : 0], o + 12);
     this.table.needsUpdate = true;
     r = { row, double: L.double };
     this.rows.set(key, r);
@@ -77,17 +78,17 @@ class Atlas {
 
   /** Copy a texture pair into its layer of both arrays (tiled to fill it), once. */
   private fill(key: MatTexKey, map: THREE.DataTexture, normal: THREE.DataTexture): number {
-    const layer = MAT_TEX_KEYS.indexOf(key);
+    const layer = MAT_TEX_KEYS.indexOf(key), size = this.size;
     if (this.filled.has(key)) return layer;
     this.filled.add(key);
     for (const [src, dst] of [[map, this.albedo], [normal, this.normal]] as const) {
       const { width: w, height: h, data } = src.image as { width: number; height: number; data: Uint8Array };
-      if (SIZE % w || SIZE % h) throw new Error(`buildingFamilies: ${key} is ${w}x${h}, not a divisor of ${SIZE}`);
+      if (size % w || size % h) throw new Error(`buildingFamilies: ${key} is ${w}x${h}, not a divisor of ${size}`);
       const out = dst.image.data as Uint8Array;
-      const base = layer * SIZE * SIZE * 4;
-      for (let y = 0; y < SIZE; y++) {
+      const base = layer * size * size * 4;
+      for (let y = 0; y < size; y++) {
         const row = data.subarray((y % h) * w * 4, ((y % h) + 1) * w * 4);
-        for (let x = 0; x < SIZE; x += w) out.set(row, base + (y * SIZE + x) * 4);
+        for (let x = 0; x < size; x += w) out.set(row, base + (y * size + x) * 4);
       }
       if (this.onGpu.has(dst)) dst.addLayerUpdate(layer);
       dst.needsUpdate = true;
