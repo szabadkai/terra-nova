@@ -71,10 +71,12 @@ export interface SaveMeta {
   thumb?: string; // small data URL
 }
 
-/** Game fields saved on their own (or never: `events` is per frame, the cache and `spots` rebuild themselves). */
+/** Game fields saved on their own (or never: `events` is per frame, the cache, `spots` and the exploration's
+ *  memory of what it revealed rebuild themselves). */
 const OWN = new Set([
   'world', 'path', 'rng', 'opts', 'players', 'buildings', 'settlers', 'trees', 'stones', 'fields',
   'animals', 'ships', 'signs', 'ai', 'events', 'storageRegionCache', 'spots',
+  'revealedB', 'revealedS', 'revealedSh', 'revealPass',
 ]);
 
 const isPlain = (v: unknown): boolean => {
