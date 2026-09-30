@@ -472,6 +472,7 @@ export class GameRenderer {
     this.renderer.setPixelRatio(pr);
     this.grass.enabled = s.grass && s.quality !== 'low';
     this.detail.set(s.quality !== 'low');
+    this.sky.setEnvMap(s.quality !== 'low');
     this.fx.settings.bloom = s.bloom;
     this.fx.settings.dof = s.dof;
     this.fx.settings.grade = s.grade;
