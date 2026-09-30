@@ -176,7 +176,9 @@ export class GameRenderer {
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
-    r.setOpaqueSort(cutOrder);
+    const props = r.properties;
+    const program = (m: THREE.Material) => (props.get(m) as { currentProgram?: { id: number } }).currentProgram?.id ?? 0;
+    r.setOpaqueSort((a, b) => cutOrder(a, b, program));
     this.renderer = r;
     // the shadow map draws every building on its far model: at shadow-map resolution nobody can tell
     // (and the instanced pairs show what they have for it: lodSetPass)

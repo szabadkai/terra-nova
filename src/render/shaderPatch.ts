@@ -291,6 +291,14 @@ const flagKey = (f = DEFAULT_FLAG) => `${f.len},${f.height},${f.align ? 1 : 0}`;
 
 let patchCount = 0;
 
+/** A short key for the code a patch injects (FNV-1a over it, with its length): the same code, the same key. */
+function codeKey(...parts: (string | undefined)[]) {
+  const code = parts.map((p) => p ?? '').join('\u0001');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < code.length; i++) { h ^= code.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36) + code.length.toString(36);
+}
+
 export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts = {}): T {
   const o = { wind: 'none', fog: true, clouds: true, lights: true, windAmp: 1, ...opts } as Required<PatchOpts> & PatchOpts;
   const uClip = { value: 1e9 };
@@ -303,7 +311,9 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   // a material that cuts pixels out of its surface (the view draws these after the solid ones: cutOrder)
   const cuts = /discard/.test([o.fragHead, o.fragMap, o.fragNormal, o.fragEmissive, o.fragPost, o.fragAO, o.fragRough].join(''));
   (mat as any).userData.cuts = cuts || !!o.clip;
-  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.ao ?? 1}|${o.shroudLate ? 1 : 0}|${o.key ?? ''}`;
+  // (the program's key is what the patch writes into the shader, not the material's name: materials
+  // whose shaders come out the same share one program, as the batched buildings' forty-odd do)
+  const key = `p${o.wind}${o.wind === 'flag' ? flagKey(o.flag) : ''}|${o.clip ? 1 : 0}|${o.fog ? 1 : 0}|${o.clouds ? 1 : 0}|${o.lights ? 1 : 0}|${o.snow ?? 0}|${o.grime ?? 0}|${o.ao ?? 1}|${o.shroudLate ? 1 : 0}|${codeKey(o.vertexHead, o.vertexBegin, o.fragHead, o.fragMap, o.fragRough, o.fragNormal, o.fragEmissive, o.fragAO, o.fragPost, o.snowHook)}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
@@ -479,7 +489,7 @@ export function patchedDepthMaterial(opts: PatchOpts & { alphaTest?: number; map
   const uClip = { value: 1e9 };
   (m as any).userData.uClip = uClip;
   const uWindAmp = { value: o.windAmp };
-  const key = `d${o.wind}${o.wind === 'flag' ? flagKey(opts.flag) : ''}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${opts.key ?? ''}`;
+  const key = `d${o.wind}${o.wind === 'flag' ? flagKey(opts.flag) : ''}|${o.clip ? 1 : 0}|${opts.map ? 1 : 0}|${codeKey(opts.vertexHead, opts.vertexBegin, opts.fragHead, opts.fragPost)}`;
   m.customProgramCacheKey = () => key;
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, { uTime: G.uTime, uWind: G.uWind, uWindStrength: G.uWindStrength, uClip, uWindAmp, ...(o.uniforms ?? {}) });
@@ -545,13 +555,18 @@ ${o.fragHead ?? ''}`);
  * own order (by material, then front to back). A tile-based GPU (every Apple one) keeps back the
  * shading of solid pixels until it knows which one is in front; a draw that can cut pixels out makes
  * it shade what it holds back so far first, so the ground under a building drawn after the first
- * leaf card was shaded for nothing.
+ * leaf card was shaded for nothing. `program` gives the program a material was last drawn with (0 if none yet).
  */
-export function cutOrder(a: THREE.RenderItem, b: THREE.RenderItem): number {
+export function cutOrder(a: THREE.RenderItem, b: THREE.RenderItem, program?: (m: THREE.Material) => number): number {
   if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder;
   if (a.renderOrder !== b.renderOrder) return a.renderOrder - b.renderOrder;
   const ca = a.material.alphaTest > 0 || a.material.userData.cuts ? 1 : 0, cb = b.material.alphaTest > 0 || b.material.userData.cuts ? 1 : 0;
   if (ca !== cb) return ca - cb;
+  // then by program: materials sharing one keep the textures they share bound, and the camera's uniforms
+  if (program) {
+    const pa = program(a.material), pb = program(b.material);
+    if (pa !== pb) return pa - pb;
+  }
   const ia = (a.material as unknown as { id: number }).id, ib = (b.material as unknown as { id: number }).id;
   if (ia !== ib) return ia - ib;
   if (a.z !== b.z) return a.z - b.z;
