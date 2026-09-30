@@ -8,6 +8,7 @@ import { HUD } from './ui/hud';
 import { generateIcons } from './ui/icons';
 import { showLoading, showMenu, MenuOptions } from './ui/menu';
 import { GameMenu } from './ui/gameMenu';
+import { setTextureScale } from './render/textures';
 import { applyAudioPrefs, applyRenderPrefs, detectGraphics, firstRun, prefs, savePrefs } from './ui/prefs';
 import { levelText, probeBattery } from './render/hardware';
 import { enterImmersive, onImmersiveChange, toggleImmersive } from './ui/immersive';
@@ -802,6 +803,8 @@ async function startNetGame(s: StartMsg) {
 }
 
 async function boot() {
+  // (Low's buildings wear textures at half size: made once a page, so before the first world asks for them)
+  setTextureScale(prefs.render.quality === 'low' ? 0.5 : 1);
   // ?mission=<id> goes straight into a tutorial mission (handy while working on one)
   // (?region=<id> for one of the campaign's regions, the same way)
   const devMission = (params.has('mission') || params.has('region')) && applyMissionOpts((params.get('mission') ?? params.get('region'))!);
