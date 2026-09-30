@@ -562,6 +562,11 @@ export function cutOrder(a: THREE.RenderItem, b: THREE.RenderItem, program?: (m:
   if (a.renderOrder !== b.renderOrder) return a.renderOrder - b.renderOrder;
   const ca = a.material.alphaTest > 0 || a.material.userData.cuts ? 1 : 0, cb = b.material.alphaTest > 0 || b.material.userData.cuts ? 1 : 0;
   if (ca !== cb) return ca - cb;
+  // the ground and then the sky after everything solid that stands on them (drawLate 1, 2): a GPU that
+  // shades every fragment in the order drawn (Intel, AMD, NVIDIA; not Apple's, which shades only the
+  // front one) then leaves them unshaded wherever something already covers them
+  const la = a.material.userData.drawLate ?? 0, lb = b.material.userData.drawLate ?? 0;
+  if (la !== lb) return la - lb;
   // then by program: materials sharing one keep the textures they share bound, and the camera's uniforms
   if (program) {
     const pa = program(a.material), pb = program(b.material);

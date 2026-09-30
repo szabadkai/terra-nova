@@ -151,7 +151,9 @@ export class Sky {
     });
     this.dome = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 16), this.domeMat);
     this.dome.frustumCulled = false;
-    this.dome.renderOrder = -10;
+    // behind everything, so drawn after every solid thing and the ground (cutOrder): its fragments are
+    // then tested away wherever the land covers it, which at the play zoom is the whole screen
+    this.domeMat.userData.drawLate = 2;
     scene.add(this.dome);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.update(0, new THREE.Vector3(), 40);

@@ -624,6 +624,10 @@ export class TerrainRenderer {
       snowHook: 'coverS *= 1.0 - tTrod * 0.5; snowC *= 1.0 - tTrod * 0.16 - tPrint * 0.3;',
       fragAO: 'reflectedLight.indirectDiffuse *= tAO; reflectedLight.indirectSpecular *= tAO; reflectedLight.directDiffuse *= mix(1.0, tAO, 0.35);',
     });
+    // drawn after the solid things on it (cutOrder), so their pixels are not shaded twice; a tie in
+    // depth goes to what was drawn first, as it did when the ground came first
+    mat.userData.drawLate = 1;
+    mat.depthFunc = THREE.LessDepth;
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = true;
