@@ -627,6 +627,7 @@ async function openCampaign(kind: 'tutorial' | 'province' = 'tutorial') {
       giveUp: () => { provinceLost(); void openCampaign('province'); },
       read: (n) => markDispatchesSeen(n),
       say: (id) => { if (!audio.started) audio.start(); void audio.say(id, { interrupt: true }); },
+      sayAll: (ids) => { if (!audio.started) audio.start(); void audio.sayAll(ids); },
     }));
     return;
   }

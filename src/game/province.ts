@@ -77,7 +77,7 @@ export interface ProvinceState {
   /** a region of ours Varro is marching on: to be defended before any other campaign (or given up) */
   strike: RegionId | null;
   /** the quaestor's dispatches, newest last */
-  log: { season: number; text: string; who: 'quaestor' | 'varro' }[];
+  log: { season: number; text: string; who: 'quaestor' | 'varro'; /** the recording's id (voice/lines.json), if the line has one */ voice?: string }[];
   column: Carry | null;
   /** 'won': Nova Ostia has fallen; 'recalled': Castra fell and the Senate called the legate home */
   end?: 'won' | 'recalled';
@@ -86,7 +86,7 @@ export interface ProvinceState {
 }
 
 export function newProvince(seed: number, difficulty: Difficulty = 1): ProvinceState {
-  return { seed, season: 1, difficulty, held: ['castra'], fortified: {}, strike: null, log: [{ season: 1, who: 'varro', text: 'The Senate has appointed me governor of Terra Nova. You will hand over the coast, the camp and the men at Castra, and return to Rome to account for them.' }], column: null, ledger: { won: 0, held: 0, lost: 0 } };
+  return { seed, season: 1, difficulty, held: ['castra'], fortified: {}, strike: null, log: [{ season: 1, ...OPENING }], column: null, ledger: { won: 0, held: 0, lost: 0 } };
 }
 
 export const holds = (s: ProvinceState, r: RegionId) => s.held.includes(r);
@@ -166,7 +166,35 @@ export function varrosTurn(s: ProvinceState): { kind: 'strike' | 'fortify'; regi
   return { kind: 'fortify', region: border[rng.int(0, border.length)] };
 }
 
-const say = (s: ProvinceState, who: 'quaestor' | 'varro', text: string) => s.log.push({ season: s.season, who, text });
+/** Varro's first letter, on the page before the campaign's first region. */
+const OPENING = { who: 'varro' as const, voice: 'dispatch.appointed', text: 'The Senate has appointed me governor of Terra Nova. You will hand over the coast, the camp and the men at Castra, and return to Rome to account for them.' };
+
+export type DispatchKind = 'won' | 'held' | 'lost' | 'fortify' | 'strike';
+export interface Dispatch { who: 'quaestor' | 'varro'; text: string; voice: string }
+/** What the log says of a region at one turn of the war, who says it, and the id of its recording. */
+export function dispatchOf(kind: DispatchKind, r: RegionId): Dispatch {
+  const name = REGION_INFO[r].name, voice = `dispatch.${kind}.${r}`;
+  switch (kind) {
+    case 'won': return { who: 'quaestor', voice, text: `${name} is ours. ${REGION_INFO[r].boon.text}.` };
+    case 'held': return { who: 'quaestor', voice, text: `${name} held. His legion went home lighter than it came.` };
+    case 'lost': return { who: 'quaestor', voice, text: `${name} is lost. We will have to take it again, and he will have fortified it.` };
+    case 'fortify': return { who: 'quaestor', voice, text: `Varro has fortified ${name}: more men in its towers, and more of them on the roads out of it. It will cost more to take.` };
+    case 'strike': return { who: 'varro', voice, text: r === 'castra'
+      ? 'The Senate’s patience is at an end, and so is mine. I am coming to Castra for the men who built it.'
+      : `${name} was never yours to hold. My legion is on the road to it.` };
+  }
+}
+/** Every dispatch that can be read, for the recordings (the campaign's two endings have their own, `province.end.*`). */
+export function allDispatches(): Dispatch[] {
+  const out: Dispatch[] = [{ ...OPENING }];
+  for (const r of REGION_IDS) {
+    if (r !== 'castra' && r !== 'novaostia') out.push(dispatchOf('won', r), dispatchOf('lost', r));
+    if (r !== 'novaostia') out.push(dispatchOf('held', r), dispatchOf('strike', r));
+    if (REGION_INFO[r].holder === 'varro') out.push(dispatchOf('fortify', r));
+  }
+  return out;
+}
+const say = (s: ProvinceState, d: Partial<Dispatch> & { who: 'quaestor' | 'varro'; text: string }) => s.log.push({ season: s.season, ...d });
 const count = (s: ProvinceState, k: 'won' | 'held' | 'lost') => { (s.ledger ??= { won: 0, held: 0, lost: 0 })[k]++; };
 
 /** How hard his strike on one of our regions comes (the defence's `fortified`): harder as the war goes on, half as hard once Castellum is ours. */
@@ -180,15 +208,12 @@ function nextSeason(s: ProvinceState) {
   s.season++;
   const t = varrosTurn(s);
   if (!t) return;
-  const name = REGION_INFO[t.region].name;
   if (t.kind === 'fortify') {
     s.fortified[t.region] = (s.fortified[t.region] ?? 0) + 1;
-    say(s, 'quaestor', `Varro has fortified ${name}: more men in its towers, and more of them on the roads out of it. It will cost more to take.`);
+    say(s, dispatchOf('fortify', t.region));
   } else {
     s.strike = t.region;
-    say(s, 'varro', t.region === 'castra'
-      ? 'The Senate’s patience is at an end, and so is mine. I am coming to Castra for the men who built it.'
-      : `${name} was never yours to hold. My legion is on the road to it.`);
+    say(s, dispatchOf('strike', t.region));
   }
 }
 
@@ -198,8 +223,8 @@ export function regionWon(s: ProvinceState, r: RegionId, column: Carry) {
   s.column = column;
   delete s.fortified[r];
   count(s, 'won');
-  if (r === 'novaostia') { s.end = 'won'; say(s, 'quaestor', 'Nova Ostia has opened its gates. The Senate’s ship came in on the same tide, with a new appointment for the governor of Terra Nova. It is addressed to you.'); return; }
-  say(s, 'quaestor', `${REGION_INFO[r].name} is ours. ${REGION_INFO[r].boon.text}.`);
+  if (r === 'novaostia') { s.end = 'won'; say(s, { who: 'quaestor', text: 'Nova Ostia has opened its gates. The Senate’s ship came in on the same tide, with a new appointment for the governor of Terra Nova. It is addressed to you.' }); return; }
+  say(s, dispatchOf('won', r));
   nextSeason(s);
 }
 
@@ -210,7 +235,7 @@ export function strikeHeld(s: ProvinceState, column: Carry) {
   s.strike = null;
   s.column = column;
   count(s, 'held');
-  say(s, 'quaestor', `${REGION_INFO[r].name} held. His legion went home lighter than it came.`);
+  say(s, dispatchOf('held', r));
   nextSeason(s);
 }
 
@@ -220,9 +245,9 @@ export function strikeLost(s: ProvinceState) {
   if (!r) return;
   s.strike = null;
   count(s, 'lost');
-  if (r === 'castra') { s.end = 'recalled'; say(s, 'varro', 'Castra is the Senate’s. The legate is recalled to Rome, where I am sure his accounts will be found in order.'); return; }
+  if (r === 'castra') { s.end = 'recalled'; say(s, { who: 'varro', text: 'Castra is the Senate’s. The legate is recalled to Rome, where I am sure his accounts will be found in order.' }); return; }
   s.held = s.held.filter((x) => x !== r);
-  say(s, 'quaestor', `${REGION_INFO[r].name} is lost. We will have to take it again, and he will have fortified it.`);
+  say(s, dispatchOf('lost', r));
   s.fortified[r] = (s.fortified[r] ?? 0) + 1;
   nextSeason(s);
 }

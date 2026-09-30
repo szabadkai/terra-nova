@@ -35,7 +35,7 @@ function load(): ProvinceState | null {
       difficulty: p.difficulty === 0 || p.difficulty === 2 ? p.difficulty : 1,
       held, fortified,
       strike: isRegion(p.strike) ? p.strike : null,
-      log: Array.isArray(p.log) ? p.log.filter((l) => l && typeof l.text === 'string').slice(-40).map((l) => ({ season: Number(l.season) || 1, text: l.text, who: l.who === 'varro' ? 'varro' : 'quaestor' })) : [],
+      log: Array.isArray(p.log) ? p.log.filter((l) => l && typeof l.text === 'string').slice(-40).map((l) => ({ season: Number(l.season) || 1, text: l.text, who: l.who === 'varro' ? 'varro' : 'quaestor', ...(typeof l.voice === 'string' ? { voice: l.voice } : {}) })) : [],
       column: column(p.column),
       end: p.end === 'won' || p.end === 'recalled' ? p.end : undefined,
       ledger: { won: Math.max(0, Math.floor(Number(p.ledger?.won) || 0)), held: Math.max(0, Math.floor(Number(p.ledger?.held) || 0)), lost: Math.max(0, Math.floor(Number(p.ledger?.lost) || 0)) },

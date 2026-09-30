@@ -30,5 +30,17 @@
   "defence.insulae.march": "varro",
   "defence.litus.march": "varro",
   "defence.ara.march": "varro",
-  "defence.castellum.march": "varro"
+  "defence.castellum.march": "varro",
+  "dispatch.appointed": "varro",
+  "dispatch.strike.castra": "varro",
+  "dispatch.strike.silva": "varro",
+  "dispatch.strike.saltus": "varro",
+  "dispatch.strike.aestuarium": "varro",
+  "dispatch.strike.vallis": "varro",
+  "dispatch.strike.metalla": "varro",
+  "dispatch.strike.collis": "varro",
+  "dispatch.strike.insulae": "varro",
+  "dispatch.strike.litus": "varro",
+  "dispatch.strike.ara": "varro",
+  "dispatch.strike.castellum": "varro"
 }

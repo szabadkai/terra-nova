@@ -36,9 +36,14 @@ const todo = want.filter((id) => force || !(existsSync(`${outDir}/${id}.mp3`) ||
 console.log(`${todo.length} of ${want.length} lines to synthesise into ${outDir} (${todo.reduce((n, id) => n + lines[id].length, 0)} characters)`);
 mkdirSync(outDir, { recursive: true });
 
+// numbers are said in words: with an accent tag on, v3 turns "12" into "Duece" and "20" into "Diente"
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const inWords = (n: number): string => n < 20 ? ONES[n] : n < 100 ? TENS[Math.floor(n / 10)] + (n % 10 ? ` ${ONES[n % 10]}` : '') : n < 1000 ? `${ONES[Math.floor(n / 100)]} hundred${n % 100 ? ` ${inWords(n % 100)}` : ''}` : String(n);
+
 // what is said: the accent/pace tag, the paragraph breaks as pauses, and a letter's signature said in full ("Q." is not "cue")
 const spoken = (id: string) => {
-  const text = lines[id].replace(/\s*—\s*Q\. Varro/g, '\n\n[pause] Quintus Varro').replace(/\bQ\. Varro/g, 'Quintus Varro');
+  const text = lines[id].replace(/\b\d+\b/g, (m) => inWords(Number(m))).replace(/\s*—\s*Q\. Varro/g, '\n\n[pause] Quintus Varro').replace(/\bQ\. Varro/g, 'Quintus Varro');
   return `${PROFILES[whoIs(id)].style} ${text.split(/\n\n+/).join('\n\n[pause] ').replace(/\[pause\] \[pause\]/g, '[pause]')}`;
 };
 

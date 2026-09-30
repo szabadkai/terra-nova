@@ -21,7 +21,7 @@ Aquila (AH-kwi-la) and Lupa (LOO-pa).
 Each line below is one recording, saved as `public/voice/<id>.mp3` (mono, 128 kbps; `scripts/voicesynth.ts` makes them with ElevenLabs). The
 game plays whichever recordings are there and leaves the rest to the text on screen, so the lines can
 arrive in any order. This file is generated from `src/game/missions.ts` by `scripts/voicelines.ts`;
-edit the missions, not this file. 256 lines, about 8179 words.
+edit the missions, not this file. 309 lines, about 9043 words.
 
 ## Everywhere
 
@@ -1248,3 +1248,217 @@ edit the missions, not this file. 256 lines, about 8179 words.
 - `defence.castellum.last` — *The quaestor, when the script's "last" comes*
 
   The last of them. His veterans, at the back where veterans stand. When these break, it is over.
+
+## The Province · the dispatches
+
+- `dispatch.appointed` — *A dispatch on the province page (VARRO)*
+
+  The Senate has appointed me governor of Terra Nova. You will hand over the coast, the camp and the men at Castra, and return to Rome to account for them.
+
+- `dispatch.held.castra` — *A dispatch on the province page (the quaestor)*
+
+  Castra held. His legion went home lighter than it came.
+
+- `dispatch.strike.castra` — *A dispatch on the province page (VARRO)*
+
+  The Senate’s patience is at an end, and so is mine. I am coming to Castra for the men who built it.
+
+- `dispatch.won.silva` — *A dispatch on the province page (the quaestor)*
+
+  Silva is ours. 40 boards and 20 logs to every start; the Ninth’s veterans.
+
+- `dispatch.lost.silva` — *A dispatch on the province page (the quaestor)*
+
+  Silva is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.silva` — *A dispatch on the province page (the quaestor)*
+
+  Silva held. His legion went home lighter than it came.
+
+- `dispatch.strike.silva` — *A dispatch on the province page (VARRO)*
+
+  Silva was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.silva` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Silva: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.saltus` — *A dispatch on the province page (the quaestor)*
+
+  Saltus is ours. 12 iron and 12 coal to every start: the pass’s mines.
+
+- `dispatch.lost.saltus` — *A dispatch on the province page (the quaestor)*
+
+  Saltus is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.saltus` — *A dispatch on the province page (the quaestor)*
+
+  Saltus held. His legion went home lighter than it came.
+
+- `dispatch.strike.saltus` — *A dispatch on the province page (VARRO)*
+
+  Saltus was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.saltus` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Saltus: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.aestuarium` — *A dispatch on the province page (the quaestor)*
+
+  Aestuarium is ours. 20 fish to every start, and a trade ship off every coast.
+
+- `dispatch.lost.aestuarium` — *A dispatch on the province page (the quaestor)*
+
+  Aestuarium is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.aestuarium` — *A dispatch on the province page (the quaestor)*
+
+  Aestuarium held. His legion went home lighter than it came.
+
+- `dispatch.strike.aestuarium` — *A dispatch on the province page (VARRO)*
+
+  Aestuarium was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.aestuarium` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Aestuarium: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.vallis` — *A dispatch on the province page (the quaestor)*
+
+  Vallis is ours. 30 bread and 10 meat to every start.
+
+- `dispatch.lost.vallis` — *A dispatch on the province page (the quaestor)*
+
+  Vallis is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.vallis` — *A dispatch on the province page (the quaestor)*
+
+  Vallis held. His legion went home lighter than it came.
+
+- `dispatch.strike.vallis` — *A dispatch on the province page (VARRO)*
+
+  Vallis was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.vallis` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Vallis: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.metalla` — *A dispatch on the province page (the quaestor)*
+
+  Metalla is ours. 10 gold to every start: morale from the first minute.
+
+- `dispatch.lost.metalla` — *A dispatch on the province page (the quaestor)*
+
+  Metalla is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.metalla` — *A dispatch on the province page (the quaestor)*
+
+  Metalla held. His legion went home lighter than it came.
+
+- `dispatch.strike.metalla` — *A dispatch on the province page (VARRO)*
+
+  Metalla was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.metalla` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Metalla: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.collis` — *A dispatch on the province page (the quaestor)*
+
+  Collis is ours. The tribes’ war band in every fight, four veterans, and no tribal raids anywhere.
+
+- `dispatch.lost.collis` — *A dispatch on the province page (the quaestor)*
+
+  Collis is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.collis` — *A dispatch on the province page (the quaestor)*
+
+  Collis held. His legion went home lighter than it came.
+
+- `dispatch.strike.collis` — *A dispatch on the province page (VARRO)*
+
+  Collis was never yours to hold. My legion is on the road to it.
+
+- `dispatch.won.insulae` — *A dispatch on the province page (the quaestor)*
+
+  Insulae is ours. The islands’ gold and iron: 8 of each.
+
+- `dispatch.lost.insulae` — *A dispatch on the province page (the quaestor)*
+
+  Insulae is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.insulae` — *A dispatch on the province page (the quaestor)*
+
+  Insulae held. His legion went home lighter than it came.
+
+- `dispatch.strike.insulae` — *A dispatch on the province page (VARRO)*
+
+  Insulae was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.insulae` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Insulae: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.litus` — *A dispatch on the province page (the quaestor)*
+
+  Litus is ours. The pirates’ swords, 8 swords and 4 bows, two of their warships off every coast, and no pirate sails anywhere.
+
+- `dispatch.lost.litus` — *A dispatch on the province page (the quaestor)*
+
+  Litus is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.litus` — *A dispatch on the province page (the quaestor)*
+
+  Litus held. His legion went home lighter than it came.
+
+- `dispatch.strike.litus` — *A dispatch on the province page (VARRO)*
+
+  Litus was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.litus` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Litus: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.ara` — *A dispatch on the province page (the quaestor)*
+
+  Ara is ours. Wine for the priests: 20 wine to every start.
+
+- `dispatch.lost.ara` — *A dispatch on the province page (the quaestor)*
+
+  Ara is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.ara` — *A dispatch on the province page (the quaestor)*
+
+  Ara held. His legion went home lighter than it came.
+
+- `dispatch.strike.ara` — *A dispatch on the province page (VARRO)*
+
+  Ara was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.ara` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Ara: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.won.castellum` — *A dispatch on the province page (the quaestor)*
+
+  Castellum is ours. Varro fortifies no further and strikes at half the weight; 30 stone to every start from its quarries.
+
+- `dispatch.lost.castellum` — *A dispatch on the province page (the quaestor)*
+
+  Castellum is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.held.castellum` — *A dispatch on the province page (the quaestor)*
+
+  Castellum held. His legion went home lighter than it came.
+
+- `dispatch.strike.castellum` — *A dispatch on the province page (VARRO)*
+
+  Castellum was never yours to hold. My legion is on the road to it.
+
+- `dispatch.fortify.castellum` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Castellum: more men in its towers, and more of them on the roads out of it. It will cost more to take.
+
+- `dispatch.fortify.novaostia` — *A dispatch on the province page (the quaestor)*
+
+  Varro has fortified Nova Ostia: more men in its towers, and more of them on the roads out of it. It will cost more to take.

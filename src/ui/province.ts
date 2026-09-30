@@ -147,6 +147,8 @@ export interface ProvinceHooks {
   read: (n: number) => void;
   /** a recording of the quaestor's to play (the epilogue), if there is one */
   say?: (voiceId: string) => void;
+  /** the recordings of the dispatches just shown, one after another */
+  sayAll?: (voiceIds: string[]) => void;
 }
 
 /** The quaestor's last count, spoken as `province.end.<end>` (the figures go in the table under it, not in the recording). */
@@ -225,6 +227,8 @@ export function provincePage(o: ProvinceHooks): MenuPage {
       return;
     }
     const fresh = s.log.slice(o.seen);
+    // (the dispatches are said once, when the page first shows them; the end has its own recording)
+    if (!s.end && fresh.length) o.sayAll?.(fresh.slice(-3).map((l) => l.voice).filter((v): v is string => !!v));
     const news = fresh.length ? `<div class="cp-sect">Dispatches</div>${fresh.slice(-3).map((l) => dispatch(l, true)).join('')}` : '';
     // the end of the campaign
     if (s.end) {

@@ -306,8 +306,25 @@ export class Audio {
     if (ctx.state === 'suspended') void ctx.resume();
     return el.play().then(() => true, () => { done(); return false; });
   }
+  /**
+   * Speak lines one after another, the first cutting anything short; a recording that is not there is
+   * skipped. Another `say`, `sayAll` or `stopVoice` ends the sequence.
+   */
+  async sayAll(ids: string[]) {
+    const turn = ++this.sayTurn;
+    for (const id of ids) {
+      if (turn !== this.sayTurn) return;
+      if (!(await this.say(id, { interrupt: true }))) continue;
+      const el = this.voiceEl;
+      while (el && this.voiceEl === el && turn === this.sayTurn) await new Promise((r) => setTimeout(r, 100));
+      if (this.voiceEl && this.voiceEl !== el) return; // someone else has the floor
+      if (turn === this.sayTurn) await new Promise((r) => setTimeout(r, 350));
+    }
+  }
+  private sayTurn = 0;
   /** Cut the narration short (a new mission, the title screen). */
   stopVoice() {
+    this.sayTurn++;
     const el = this.voiceEl;
     if (!el) return;
     this.voiceEl = null;

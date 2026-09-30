@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { MISSIONS } from '../src/game/missions';
 import { REGIONS } from '../src/game/regions';
 import { missionById, type Mission, type Speaker } from '../src/game/campaign';
-import { REGION_INFO, REGION_IDS } from '../src/game/province';
+import { REGION_INFO, REGION_IDS, allDispatches } from '../src/game/province';
 import { EPILOGUE } from '../src/ui/province';
 import { numeralOf } from '../src/game/campaign';
 
@@ -42,6 +42,12 @@ MISSIONS.forEach((m, i) => linesOf(m, `Mission ${numeralOf(i)} · ${m.title} —
 REGIONS.forEach((m) => linesOf(m, `The Province · ${m.title} — ${m.subtitle}`));
 // the defences of the regions that can be held: the capital, and every region whose conquest is drawn
 for (const r of REGION_IDS) { const d = missionById(`defence.${r}`); if (d) linesOf(d, `The Province · the defence of ${REGION_INFO[r].name}`); }
+// the province page's dispatches (the log a turn of the war writes): one line for each region and kind
+{
+  const mine: Line[] = [];
+  for (const d of allDispatches()) { const l = { id: d.voice, when: `A dispatch on the province page (${d.who === 'varro' ? 'VARRO' : 'the quaestor'})`, text: d.text, who: d.who === 'varro' ? 'varro' as const : undefined }; mine.push(l); lines.push(l); }
+  byMission.push({ title: 'The Province · the dispatches', lines: mine });
+}
 
 let fails = 0;
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
