@@ -85,6 +85,9 @@ const LEAF_FALL: Record<number, [number, number, number][]> = {
  * shadow then matches what is seen, and the fitted map's texel (about 4e-4 of a unit per unit of
  * distance, shadowFit) has grown to a few centimetres, so the model's error spans only a few texels */
 const SHADOW_COARSE_DIST = COARSE_DIST;
+/** at Low, settlers, animals, lanterns and other small things cast shadows only in a view closer than this */
+const LOW_SMALL_SHADOWS = 20;
+const NO_SKIP: THREE.Object3D[] = [];
 
 export class GameRenderer {
   renderer: THREE.WebGLRenderer;
@@ -182,6 +185,9 @@ export class GameRenderer {
   private pickRay = new THREE.Raycaster();
   private pickNdcVector = new THREE.Vector2();
   private staticUpdateT = 0;
+  /** what casts no shadow at Low (hidden while its shadow map is drawn), and whether each was visible */
+  private lowShadowSkip: THREE.Object3D[] = [];
+  private lowShadowWas: boolean[] = [];
 
   constructor(private canvas: HTMLCanvasElement, private game: Game, powerPreference: WebGLPowerPreference = 'default') {
     // (the world draws into targets of its own: the canvas only takes the final full-screen pass, so it
@@ -203,11 +209,21 @@ export class GameRenderer {
       const sm = r.shadowMap;
       if (!lights.length || !sm.enabled || !(sm.autoUpdate || sm.needsUpdate)) return drawShadows(lights, scene, camera);
       lodSetPass('shadow');
+      // Low's map is too coarse for the shadows of small things (a settler's is a few blurred texels):
+      // they stay out of its pass, which drew more triangles than the view itself, unless the view is so
+      // close that there are few of them and they are big
+      const low = this.settings?.quality === 'low';
+      const skip = low && this.cam.dist >= LOW_SMALL_SHADOWS ? this.lowShadowSkip : NO_SKIP, was = this.lowShadowWas;
+      for (let i = 0; i < skip.length; i++) { was[i] = skip[i].visible; skip[i].visible = false; }
       try {
-        // (the coarse model once the view is out far enough that its error stays under the map's texels)
-        if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
+        // (the coarse model once the view is out far enough that its error stays under the map's
+        // texels, and always on Low's small map)
+        if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), low || this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
         else drawShadows(lights, scene, camera);
-      } finally { lodSetPass('main'); }
+      } finally {
+        lodSetPass('main');
+        for (let i = 0; i < skip.length; i++) skip[i].visible = was[i];
+      }
     };
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -298,6 +314,8 @@ export class GameRenderer {
       this.cam.shake = Math.max(this.cam.shake, shake);
     }, (n, x, z, v) => this.sound?.(n, x, z, v));
     this.scene.add(this.demolition.group);
+    this.lowShadowSkip = [this.settlers.group, this.donkeys.group, this.catapults.group, this.animals.group, this.pigs.group, this.birds.group,
+      this.lanterns.group, this.signs.group, this.borders.posts, this.fields.mesh, this.vines.group, this.piles.group, this.arrows.mesh, this.arrows.stones, this.demolition.group];
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
     this.waterCells = new WaterCells(game.world, WATER_LEVEL);
