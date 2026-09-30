@@ -78,10 +78,16 @@ function freeze(root: THREE.Object3D) {
 export class BuildingsRenderer {
   group = new THREE.Group();
   views = new Map<number, BView>();
-  /** finished buildings, one draw per material (buildingBatches.ts); the renderer adds its group to the scene */
+  /** finished buildings, three draws a pass (buildingBatches.ts); the renderer adds its group to the scene */
   readonly batches = new BuildingBatches();
   /** off: every building draws its own meshes (for comparisons); takes effect as buildings update */
   batching = true;
+
+  /** Batch every finished building again, in families or a batch per material (for comparisons). */
+  setFamilies(on: boolean) {
+    this.batches.families = on;
+    for (const v of this.views.values()) if (v.batched) { this.batches.remove(v.batched); v.batched = this.batches.add(v.group, v.lod); }
+  }
   private scaffoldMat: THREE.Material;
   private ropeMat: THREE.Material;
 

@@ -117,12 +117,13 @@ export interface PatchOpts {
   fragPost?: string; // before opaque_fragment
   uniforms?: Record<string, THREE.IUniform>;
   key?: string;
-  /** how much snow may settle on this material (0 = none, 1 = full) */
-  snow?: number;
+  /** how much snow may settle on this material (0 = none, 1 = full), or a GLSL expression for it
+   * (the buildings' batches, whose materials differ from piece to piece: none of the lookups where it is 0) */
+  snow?: number | string;
   /** runs where the snow is laid on: may change `coverS` (0..1) and the snow's colour `snowC` */
   snowHook?: string;
-  /** splash-back grime where the surface meets the ground (0 = none, 1 = full) */
-  grime?: number;
+  /** splash-back grime where the surface meets the ground (0 = none, 1 = full), or a GLSL expression for it (as `snow`) */
+  grime?: number | string;
   /**
    * A transparent material that may finish early deep in the shroud, as opaque ones do, once its map
    * code has worked out its alpha (what shows through it is the shroud's own colour, or what lies
@@ -424,24 +425,26 @@ ${o.fragRough}`);
     if (emissive) fs = fs.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 ${emissive}`);
     const grimeAmt = o.grime ?? 0;
-    if (grimeAmt > 0) {
+    if (typeof grimeAmt === 'string' || grimeAmt > 0) {
+      const amt = typeof grimeAmt === 'string' ? `(${grimeAmt})` : grimeAmt.toFixed(2);
       fs = fs.replace('#include <common>', `#include <common>
 uniform sampler2D tHeight;
 uniform float uGrime;`);
-      fs = fs.replace('#include <lights_physical_fragment>', `{
+      fs = fs.replace('#include <lights_physical_fragment>', `${typeof grimeAmt === 'string' ? `if (${amt} > 0.0) ` : ''}{
     // rain splash and soil creep darken the bottom of walls; it follows the real terrain
     float gh = texture2D(tHeight, (vWPos.xz + 0.5) / uMapSize).r;
     float above = vWPos.y - gh;
     float gn = texture2D(tNoise, vWPos.xz * 0.9 + vWPos.y * 0.6).r;
-    float grime = (1.0 - smoothstep(0.02, 0.26 + gn * 0.16, above)) * uGrime * ${grimeAmt.toFixed(2)};
+    float grime = (1.0 - smoothstep(0.02, 0.26 + gn * 0.16, above)) * uGrime * ${amt};
     diffuseColor.rgb *= mix(vec3(1.0), vec3(0.58, 0.52, 0.44), grime);
     roughnessFactor = mix(roughnessFactor, 1.0, grime * 0.5);
   }
 #include <lights_physical_fragment>`);
     }
     const snowAmt = o.snow ?? 0;
-    if (snowAmt > 0) {
-      fs = fs.replace('#include <lights_physical_fragment>', `if (uSnow > 0.0) {
+    if (typeof snowAmt === 'string' || snowAmt > 0) {
+      const amt = typeof snowAmt === 'string' ? `(${snowAmt})` : snowAmt.toFixed(2);
+      fs = fs.replace('#include <lights_physical_fragment>', `if (uSnow > 0.0${typeof snowAmt === 'string' ? ` && ${amt} > 0.0` : ''}) {
     // snow settles on upward-facing surfaces while it snows and melts away afterwards (none at all,
     // and none of its lookups, once the last of it has gone)
     #ifndef FLAT_SHADED
@@ -451,7 +454,7 @@ uniform float uGrime;`);
     #endif
     float upS = smoothstep(0.3, 0.85, wnS.y);
     float nS = texture2D(tNoise, vWPos.xz * 0.37).r * 0.6 + texture2D(tNoise, vWPos.xz * 1.9).g * 0.4;
-    float coverS = clamp(uSnow * 1.7 - (1.0 - upS) * 1.3 - nS * 0.45 + 0.15, 0.0, 1.0) * ${snowAmt.toFixed(2)};
+    float coverS = clamp(uSnow * 1.7 - (1.0 - upS) * 1.3 - nS * 0.45 + 0.15, 0.0, 1.0) * ${amt};
     vec3 snowC = vec3(0.66, 0.7, 0.76);
     ${o.snowHook ?? ''}
     diffuseColor.rgb = mix(diffuseColor.rgb, snowC, coverS);

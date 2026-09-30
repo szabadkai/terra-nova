@@ -118,11 +118,28 @@ function build(size: number, fn: (u: number, v: number) => [number, number, numb
   return { map, normal: normalFromHeight(size, height, strength, h) };
 }
 
+/** Every building material texture pair, in the order of its layer in the buildings' texture arrays (buildingFamilies.ts). */
+export const MAT_TEX_KEYS = ['plaster', 'marble', 'timber', 'roof', 'rubble', 'brick', 'shingle', 'stone', 'planks', 'thatch', 'cobble', 'cloth'] as const;
+export type MatTexKey = (typeof MAT_TEX_KEYS)[number];
+
 const cache = new Map<string, MatTex>();
-function cached(key: string, f: () => MatTex) {
+/** which pair a texture is the map or normal map of */
+const pairOf = new WeakMap<THREE.Texture, MatTexKey>();
+function cached(key: MatTexKey, f: () => MatTex) {
   let t = cache.get(key);
-  if (!t) { t = f(); cache.set(key, t); }
+  if (!t) {
+    t = f();
+    cache.set(key, t);
+    pairOf.set(t.map, key);
+    pairOf.set(t.normal, key);
+  }
   return t;
+}
+
+/** The pair a building texture belongs to (with both of its textures), if it is one. */
+export function matTexOf(t: THREE.Texture | null | undefined): { key: MatTexKey; tex: MatTex } | undefined {
+  const key = t ? pairOf.get(t) : undefined;
+  return key ? { key, tex: cache.get(key)! } : undefined;
 }
 
 /** Anisotropic periodic value noise: separate integer periods along x and y. */

@@ -127,8 +127,48 @@ export function getBurnMaterial(key: string): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** What a library material looks like, for the batches' families (buildingFamilies.ts), which draw
+ *  every material in one shader and look this up per piece. */
+export interface Look {
+  color: THREE.Color;
+  roughness: number;
+  metalness: number;
+  /** emissive colour times its intensity (a window's intensity is the night glow, `window`) */
+  emissive: THREE.Color;
+  normalScale: number;
+  map: THREE.Texture | null;
+  normalMap: THREE.Texture | null;
+  double: boolean;
+  snow: number;
+  grime: number;
+  window: boolean;
+}
+
+export function lookOf(key: string): Look {
+  const m = getMaterial(key) as THREE.MeshStandardMaterial;
+  const o = patchOpts(key, false);
+  const window = key === 'window';
+  return {
+    color: m.color.clone(),
+    roughness: m.roughness,
+    metalness: m.metalness,
+    emissive: m.emissive.clone().multiplyScalar(window ? 1 : m.emissiveIntensity),
+    normalScale: m.normalScale.x,
+    map: m.map,
+    normalMap: m.normalMap,
+    double: m.side === THREE.DoubleSide,
+    snow: o.snow,
+    grime: o.grime,
+    window,
+  };
+}
+
+/** the night glow of the windows drawn in the batches' families */
+export const windowGlow = { value: 0 };
+
 /** Night window glow intensity for all window materials. */
 export function setWindowGlow(v: number) {
+  windowGlow.value = v;
   for (const kind of ['', 'batch', 'inst']) {
     const m = base.get(kind + 'window') as THREE.MeshStandardMaterial | undefined;
     if (m) m.emissiveIntensity = v;

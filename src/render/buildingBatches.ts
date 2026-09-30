@@ -1,15 +1,22 @@
-// Finished buildings drawn in batches: one BatchedMesh per material holds that material's piece of
-// every finished building, near and far model alike, so the town costs a draw per material and pass
-// instead of one per building, material and pass (about 1,800 draws in a 30-minute town, over the
-// view, the shadow map and the water reflection). Each building keeps its own meshes, hidden: picking
-// still hits them, and they come back when the building burns. An instance shows exactly when the
-// level group it stands for (the near or far model) and the building are shown, so the view's level
-// of detail, the shadow map's far models (withFar) and the reflection's coarsest level carry over as
-// they are. Moving parts, flags (their cloth bends in the vertex shader) and sites stay on their own.
+// Finished buildings drawn in batches: a BatchedMesh per family of materials (buildingFamilies.ts:
+// single-sided, double-sided, and those that cast no shadow) holds every piece of every finished
+// building, near and far model alike, each with its material's row in the families' table, so the
+// town costs three draws a pass instead of one per building, material and pass (about 1,800 draws in
+// a 30-minute town, over the view, the shadow map and the water reflection). `families` off: a batch
+// per material instead, drawn with the library's own materials (for comparisons). Each building
+// keeps its own meshes: picking still hits them, and they come back when the building burns. An
+// instance shows exactly when the level group it stands for (the near or far model) and the building
+// are shown, so the view's level of detail, the shadow map's far models (withFar) and the reflection's
+// coarsest level carry over as they are. Moving parts, flags (their cloth bends in the vertex shader)
+// and sites stay on their own.
 import * as THREE from 'three';
 import { ScreenLod } from './lod';
 import { getMaterial } from './materials';
 import { ownDepth } from './instancing';
+import { familyMaterial, getAtlas } from './buildingFamilies';
+
+/** the material rows of a piece's vertices, as a family batch takes them (one array, refilled for each piece) */
+let rowScratch = new Float32Array(1 << 16);
 
 interface Slot {
   /** the model the instance is a piece of (a ScreenLod level, or the building itself) */
@@ -38,7 +45,8 @@ class Batch extends THREE.BatchedMesh {
   private slots: (Slot | null)[] = [];
   /** each instance's bounds in the world (x, y, z, r): buildings stand still */
   private bounds = new Float32Array(64 * 4);
-  private geoIds = new Map<THREE.BufferGeometry, number>();
+  /** where a geometry sits in the batch, by material row (-1 in a batch of one material) */
+  private geoIds = new Map<THREE.BufferGeometry, Map<number, number>>();
   private identity = false;
 
   constructor(material: THREE.Material, castShadow: boolean) {
@@ -54,14 +62,26 @@ class Batch extends THREE.BatchedMesh {
     return this as unknown as Internals;
   }
 
-  put(geo: THREE.BufferGeometry, slot: Slot, matrix: THREE.Matrix4): number {
-    let gid = this.geoIds.get(geo);
+  /** Add an instance of `geo`, drawn with material row `row` of a family's table (-1: the batch's own material). */
+  put(geo: THREE.BufferGeometry, slot: Slot, matrix: THREE.Matrix4, row = -1): number {
+    let ids = this.geoIds.get(geo);
+    if (!ids) this.geoIds.set(geo, (ids = new Map()));
+    let gid = ids.get(row);
     if (gid === undefined) {
       const n = geo.getAttribute('position').count;
       const max = this.t._maxVertexCount;
       if (n > this.unusedVertexCount) this.setGeometrySize(Math.max(max * 2, max + n), 0);
-      gid = this.addGeometry(geo);
-      this.geoIds.set(geo, gid);
+      let src = geo;
+      if (row >= 0) {
+        // the piece with its material's row on every vertex (the batch copies it in)
+        if (rowScratch.length < n) rowScratch = new Float32Array(Math.max(n, rowScratch.length * 2));
+        const rows = rowScratch.subarray(0, n).fill(row);
+        src = new THREE.BufferGeometry();
+        for (const k of ['position', 'normal', 'uv']) src.setAttribute(k, geo.getAttribute(k));
+        src.setAttribute('aMat', new THREE.BufferAttribute(rows, 1));
+      }
+      gid = this.addGeometry(src);
+      ids.set(row, gid);
     }
     if (this.instanceCount >= this.maxInstanceCount) {
       this.setInstanceCount(this.maxInstanceCount * 2);
@@ -153,6 +173,8 @@ export class BuildingBatches {
   /** the batches; add it to the scene (not under the buildings, which are raycast for picking) */
   readonly group = new THREE.Group();
   private batches = new Map<string, Batch>();
+  /** off: a batch per material (for comparisons); takes effect for buildings batched from then on */
+  families = true;
 
   constructor() {
     this.group.name = 'building batches';
@@ -173,17 +195,19 @@ export class BuildingBatches {
         if (!mesh.isMesh || !mesh.userData.matKey || !mesh.visible) continue;
         const mat = mesh.material as THREE.Material;
         if ((mat.userData.wind && mat.userData.wind !== 'none') || mat.userData.clip) continue;
-        const key = `${mat.uuid}|${mesh.castShadow ? 1 : 0}`;
+        const matKey = mesh.userData.matKey as string;
+        const fam = this.families ? getAtlas().rowOf(matKey) : null;
+        const key = fam ? `family|${fam.double ? 2 : 1}|${mesh.castShadow ? 1 : 0}` : `${mat.uuid}|${mesh.castShadow ? 1 : 0}`;
         let batch = this.batches.get(key);
         if (!batch) {
-          // (the library's twin for batches: the building's own meshes that stay out, its moving
-          // parts, use the plain one)
-          batch = new Batch(getMaterial(mesh.userData.matKey, 'batch'), mesh.castShadow);
-          batch.userData.matKey = mesh.userData.matKey;
+          // (a family's material, or the library's twin for batches: the building's own meshes that
+          // stay out, its moving parts, use the plain one)
+          batch = new Batch(fam ? familyMaterial(fam.double) : getMaterial(matKey, 'batch'), mesh.castShadow);
+          batch.name = fam ? key : `${matKey}|${mesh.castShadow ? 1 : 0}`;
           this.batches.set(key, batch);
           this.group.add(batch);
         }
-        out.items.push({ batch, id: batch.put(mesh.geometry, { level, root }, out.matrix), mesh, parent: level });
+        out.items.push({ batch, id: batch.put(mesh.geometry, { level, root }, out.matrix, fam ? fam.row : -1), mesh, parent: level });
         level.remove(mesh);
       }
     }
