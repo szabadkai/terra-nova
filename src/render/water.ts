@@ -35,6 +35,8 @@ export class WaterRenderer {
     patchMaterial(mat, {
       key: 'water',
       snow: 0,
+      // (it leaves the shroud once its colour code has its alpha: the rest of the water shader is for nothing there)
+      shroudLate: true,
       uniforms: this.uniforms,
       lights: true,
       fragHead: /* glsl */ `

@@ -20,7 +20,7 @@ import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
 import { Seasons } from './seasons';
 import { PostFX } from './postfx';
-import { G, MAX_LIGHTS, patchMaterial, patchedDepthMaterial } from './shaderPatch';
+import { G, MAX_LIGHTS, cacheSharedUniforms, cutOrder, noteLights, patchMaterial, patchedDepthMaterial, uniformCache } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
 import { getClipMaterial, getMaterial, setWindowGlow } from './materials';
 import { PlanarReflection, WaterCells, reflectionReach } from './reflection';
@@ -38,7 +38,7 @@ import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
 import { commitInstances, withInstanceColor } from './instancing';
-import { ScreenLod, lodView } from './lod';
+import { ScreenLod, lodSetPass, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
 import { QUIET_PR } from './hardware';
 import { Trails } from './trails';
@@ -168,18 +168,27 @@ export class GameRenderer {
   private sound: ((name: string, x?: number, z?: number, vol?: number) => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement, private game: Game) {
-    const r = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
+    // (the world draws into targets of its own: the canvas only takes the final full-screen pass, so it
+    // needs neither depth nor stencil)
+    const r = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', depth: false, stencil: false });
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.0;
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFShadowMap;
+    r.setOpaqueSort(cutOrder);
     this.renderer = r;
     // the shadow map draws every building on its far model: at shadow-map resolution nobody can tell
+    // (and the instanced pairs show what they have for it: lodSetPass)
     const drawShadows = r.shadowMap.render.bind(r.shadowMap);
     r.shadowMap.render = (lights, scene, camera) => {
-      if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera));
-      else drawShadows(lights, scene, camera);
+      const sm = r.shadowMap;
+      if (!lights.length || !sm.enabled || !(sm.autoUpdate || sm.needsUpdate)) return drawShadows(lights, scene, camera);
+      lodSetPass('shadow');
+      try {
+        if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera));
+        else drawShadows(lights, scene, camera);
+      } finally { lodSetPass('main'); }
     };
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
     r.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -1095,11 +1104,15 @@ export class GameRenderer {
     this.particles.update(dt, G.uWind.value);
     this.rain.update(dt, this.precip === 'rain' ? this.rainAmount : 0, this.cam.camera, this.cam.target, this.cam.viewSize, this.cam.dist, G.uWind.value);
 
-    // night lights
+    // night lights: the shaders only read them after dusk or in the gloom of rain (uNight)
     const lights = G.uLights.value;
-    let n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
-    n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+    let n = 0;
+    if (night > 0.001) {
+      n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+      n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+    }
     G.uLightCount.value = n;
+    noteLights(n);
     void MAX_LIGHTS;
 
     this.orders.update(dt);
@@ -1131,6 +1144,8 @@ export class GameRenderer {
       else if (hov.foe) c.setRGB(1.2, 0.1, 0.05); else c.setRGB(0.8, 0.78, 0.65);
     } else U.uHov.value.w = 0;
 
+    // (programs compiled since the last frame get the lamps' send-on-change)
+    cacheSharedUniforms(this.renderer);
     // one matrix update serves the reflection and the view (and its shadow map)
     this.scene.updateMatrixWorld();
     this.scene.matrixWorldAutoUpdate = false;
@@ -1173,6 +1188,8 @@ export class GameRenderer {
 
   /** off: the shadow map keeps its last picture (for comparisons) */
   shadowsLive = true;
+  /** the lamps' send-on-change (shaderPatch.ts), switchable for comparisons */
+  readonly uniformCache = uniformCache;
 
   private waterCheckT = 0;
   private waterVisible = false;

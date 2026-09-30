@@ -4,7 +4,7 @@
 // no longer re-renders the whole town upside down).
 import * as THREE from 'three';
 import type { World } from '../game/world';
-import { lodPass } from './lod';
+import { lodPass, lodSetPass } from './lod';
 
 /** size of a water cell, in nodes */
 const CELL = 4;
@@ -215,8 +215,11 @@ export class PlanarReflection {
     renderer.setRenderTarget(this.rt);
     renderer.clear();
     lodPass.reflect = true;
-    renderer.render(scene, vc);
-    lodPass.reflect = false;
+    lodSetPass('reflect');
+    try { renderer.render(scene, vc); } finally {
+      lodSetPass('main');
+      lodPass.reflect = false;
+    }
     renderer.setRenderTarget(oldTarget);
     renderer.shadowMap.autoUpdate = shadowAuto;
     hide.forEach((o, i) => (o.visible = vis[i]));

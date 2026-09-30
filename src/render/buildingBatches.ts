@@ -190,9 +190,13 @@ export class BuildingBatches {
     b.items.length = 0;
   }
 
-  /** Follow the building when its transform changes (the ground under it levelled). */
+  /**
+   * Follow the building when its transform changes (the ground under it levelled). The root's matrix
+   * must be up to date (the buildings renderer composes it whenever it moves one): composing it here
+   * every frame would mark the whole building's world matrices for recomputing every frame.
+   */
   move(root: THREE.Object3D, b: Batched) {
-    root.updateMatrix();
+    if (root.matrixAutoUpdate) root.updateMatrix();
     if (root.matrix.equals(b.matrix)) return;
     b.matrix.copy(root.matrix);
     for (const it of b.items) it.batch.place(it.id, b.matrix);

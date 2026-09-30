@@ -97,6 +97,22 @@ export const triCount = (g: THREE.BufferGeometry) => (g.index ? g.index.count : 
 /** Set while the water reflection renders, so instanced LODs can switch to their coarse level. */
 export const lodPass = { reflect: false };
 
+/** Every instanced pair, so each pass can leave out the meshes that have nothing to draw in it
+ *  (weakly held: a world's pairs go when its renderer does). */
+const pairs = new Set<WeakRef<LodPair>>();
+
+/**
+ * The pass about to draw: the view (and the shadow map drawn from inside it, which comes after the
+ * view has picked what it draws) or the water reflection. A mesh with no instances in a pass is
+ * hidden for it, so the pass does not set up its program and uniforms for an empty draw.
+ */
+export function lodSetPass(pass: 'main' | 'shadow' | 'reflect') {
+  for (const r of pairs) {
+    const p = r.deref();
+    if (p) p.pass(pass); else pairs.delete(r);
+  }
+}
+
 /** Pixels per world unit at distance 1 on a 1440-pixel-high view (the size LOD distances are tuned for). */
 export const K_REF = 1440 / (2 * Math.tan((36 * Math.PI) / 360));
 
@@ -241,6 +257,16 @@ export class LodPair {
     this.shadowC = colors >= 1 ? new Float32Array(cap * 3) : null;
     this.shadowC2 = colors === 2 ? new Float32Array(cap * 3) : null;
     this.hookPasses();
+    pairs.add(new WeakRef(this));
+  }
+
+  /** Show each mesh only in a pass where it has instances to draw (see lodSetPass). */
+  pass(p: 'main' | 'shadow' | 'reflect') {
+    const near = this.near, far = this.far;
+    if (far) {
+      near.visible = p === 'main' && this.nNear > 0;
+      far.visible = (p === 'main' ? this.nFar : p === 'reflect' ? this.nFar + this.nNear : this.nFar + this.nNear + this.nShadow) > 0;
+    } else near.visible = (p === 'shadow' ? this.nNear + this.nShadow : this.nNear) > 0;
   }
 
   get meshes(): THREE.InstancedMesh[] {
@@ -313,16 +339,16 @@ export class LodPair {
     if (c2 && this.shadowC2) (c2.array as Float32Array).set(this.shadowC2.subarray(0, nS * 3), at * 3);
     at += nS;
     host.count = own;
-    host.visible = at > 0;
     uploadFirst(host.instanceMatrix, at);
     uploadFirst(host.instanceColor, at);
     uploadFirst(c2, at);
     if (far) {
       near.count = nN;
-      near.visible = nN > 0;
       uploadFirst(near.instanceMatrix, nN);
       uploadFirst(near.instanceColor, nN);
       uploadFirst(this.nearC2, nN);
     }
+    // the view draws next (the shadow map and the reflection switch in and out: lodSetPass)
+    this.pass('main');
   }
 }
