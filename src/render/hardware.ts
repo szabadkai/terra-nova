@@ -69,9 +69,11 @@ const RES: Record<Quality, number> = { low: LOW_STEPS[LOW_STEPS.length - 1], med
  * Apple M5 Pro, power 1): a part that does not grow with the pixels (the shadow map, vertices,
  * draws) and one per million pixels drawn. Fitted to headless runs at 1280x720 to 3440x1440 and 2x
  * (interleaved, so the levels' ratios hold: Low about half of High, Medium 0.7) and anchored to the
- * 10.5 ms a 30-minute town takes at 3440x1440 on High.
+ * 10.5 ms a 30-minute town takes at 3440x1440 on High. Low's since its lean shaders (no terrain detail,
+ * a light probe for the environment, the canvas at its own size): 0.63-0.76 of its old cost per pixel,
+ * fill-bound at 30 to 95 units (both builds alternated), and a shadow pass of a third of the triangles.
  */
-const COST: Record<Quality, [number, number]> = { low: [0.8, 1.5], medium: [1.0, 1.6], high: [1.2, 1.65], ultra: [1.3, 1.75] };
+const COST: Record<Quality, [number, number]> = { low: [0.65, 1.0], medium: [1.0, 1.6], high: [1.2, 1.65], ultra: [1.3, 1.75] };
 /**
  * What ambient occlusion adds, in the same terms. It works at half size from the depth the scene
  * leaves (postfx.ts), so almost all of it grows with the pixels: timed against no occlusion and
