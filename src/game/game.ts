@@ -861,6 +861,14 @@ export class Game {
     updateWild(this, dt);
   }
 
+  /** Where each building, settler and ship last revealed its disc (updateExplored), by id: `seen` and
+   *  `explored` only ever grow, so the same disc revealed again for the same player changes nothing
+   *  and is skipped. Derived state, never saved: a loaded game starts empty and reveals everything once. */
+  private revealedB = new Map<number, number[]>();
+  private revealedS = new Map<number, number[]>();
+  private revealedSh = new Map<number, number[]>();
+  private revealPass = 0;
+
   /** What each player has seen of the map (`world.seen`, a bit a player, the same on every machine), and the
    *  local player's fog (`world.explored`, this machine's view of the same). */
   updateExplored(force: boolean) {
@@ -868,6 +876,7 @@ export class Game {
     let changed = false;
     const localBit = 1 << this.local;
     let bit = 1;
+    const pass = ++this.revealPass;
     const reveal = (cx: number, cz: number, r: number) => {
       w.forRadius(cx, cz, r, (i) => {
         w.seen[i] |= bit;
@@ -877,19 +886,28 @@ export class Game {
         }
       });
     };
+    // (the disc of `id` in `m` unless it is the one it last revealed)
+    const revealOnce = (m: Map<number, number[]>, id: number, cx: number, cz: number, r: number) => {
+      let e = m.get(id);
+      if (!e) m.set(id, (e = [NaN, 0, 0, 0, 0]));
+      e[4] = pass;
+      if (!force && e[0] === cx && e[1] === cz && e[2] === r && e[3] === bit) return;
+      e[0] = cx; e[1] = cz; e[2] = r; e[3] = bit;
+      reveal(cx, cz, r);
+    };
     for (const p of this.players) {
       bit = 1 << p.id;
       for (const b of this.buildings.values()) {
         if (b.owner !== p.id) continue;
         const r = b.def.military && b.occupied ? b.def.military.radius + 4 : b.size + 5;
-        if (!force && b.state !== 'done' && !b.def.military) { reveal(b.cx, b.cz, b.size + 4); continue; }
-        reveal(b.cx, b.cz, r);
+        if (!force && b.state !== 'done' && !b.def.military) { revealOnce(this.revealedB, b.id, b.cx, b.cz, b.size + 4); continue; }
+        revealOnce(this.revealedB, b.id, b.cx, b.cz, r);
       }
       for (const s of this.settlers.values()) {
         if (s.owner !== p.id || s.hidden || s.dead) continue;
-        reveal(s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
+        revealOnce(this.revealedS, s.id, s.x, s.z, s.job === 'swordsman' || s.job === 'bowman' ? 7 : s.job === 'catapult' ? 6 : 4.5);
       }
-      for (const sh of this.ships.values()) if (sh.owner === p.id) reveal(sh.x, sh.z, 8);
+      for (const sh of this.ships.values()) if (sh.owner === p.id) revealOnce(this.revealedSh, sh.id, sh.x, sh.z, 8);
       // a realm whose headquarters has fallen can hide its strongholds no longer (nor can any rival's in a mission that says so)
       const shown = this.mission?.rules?.reveal === 'strongholds';
       for (const b of this.buildings.values()) {
@@ -897,6 +915,8 @@ export class Game {
         reveal(b.cx, b.cz, b.size + 3);
       }
     }
+    // (now and then, forget what is gone)
+    if (pass % 64 === 0) for (const m of [this.revealedB, this.revealedS, this.revealedSh]) for (const [id, e] of m) if (e[4] !== pass) m.delete(id);
     if (changed) w.exploredDirty = true;
   }
 
