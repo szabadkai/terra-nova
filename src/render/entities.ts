@@ -109,10 +109,14 @@ float cardAlpha(float st) {
 }` : ''}`;
 
 /** Geometric error allowed in a far tree (model units): used once it is under LOD_PIXELS on screen. */
-const TREE_FAR_ERR = 0.03;
+/** Geometric error allowed in a far tree part (model units): 8 cm on a crown of noise is nothing, and
+ * lets the far crown drop to about a quarter of the near one (the leaf cards have their own far set). */
+const TREE_FAR_ERR = 0.08;
 
 export class TreesRenderer {
   group = new THREE.Group();
+  /** screen pixels the far model's error may span before the near one is drawn: foliage bears more than LOD_PIXELS */
+  lodPixels = 3;
   private trunks: LodPair[] = [];
   private crowns: LodPair[] = [];
   private cards: (LodPair | null)[] = [];
@@ -335,7 +339,7 @@ export class TreesRenderer {
       const c = V.cull(x, y, z, r);
       if (!c) continue;
       // the tree's scale sits in its matrix: far detail goes where its error shrinks under a pixel
-      const lv = c === 1 ? -1 : V.px(x, y, z) * TREE_FAR_ERR * (r / 1.7) < LOD_PIXELS ? 1 : 0;
+      const lv = c === 1 ? -1 : V.px(x, y, z) * TREE_FAR_ERR * (r / 1.7) < this.lodPixels ? 1 : 0;
       const s = this.species[i];
       const col = this.cols[i];
       this.trunks[s].addArray(lv, M, i * 16);

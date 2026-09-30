@@ -40,6 +40,7 @@ import { LanternsRenderer } from './lanterns';
 import { commitInstances, withInstanceColor } from './instancing';
 import { ScreenLod, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
+import { COARSE_DIST } from './geom';
 import { QUIET_PR } from './hardware';
 import { Trails } from './trails';
 
@@ -78,6 +79,11 @@ const LEAF_FALL: Record<number, [number, number, number][]> = {
   2: [[0.85, 0.66, 0.1], [0.74, 0.52, 0.08], [0.6, 0.44, 0.12]],
   4: [[0.72, 0.16, 0.05], [0.8, 0.4, 0.08], [0.5, 0.2, 0.08]],
 };
+
+/** the shadow map draws buildings on their coarse model from the distance the view shows it: the
+ * shadow then matches what is seen, and the fitted map's texel (about 4e-4 of a unit per unit of
+ * distance, shadowFit) has grown to a few centimetres, so the model's error spans only a few texels */
+const SHADOW_COARSE_DIST = COARSE_DIST;
 
 export class GameRenderer {
   renderer: THREE.WebGLRenderer;
@@ -178,7 +184,8 @@ export class GameRenderer {
     // the shadow map draws every building on its far model: at shadow-map resolution nobody can tell
     const drawShadows = r.shadowMap.render.bind(r.shadowMap);
     r.shadowMap.render = (lights, scene, camera) => {
-      if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera));
+      // (the coarse model once the view is out far enough that its error stays under the map's texels)
+      if (this.buildings) this.buildings.withFar(() => drawShadows(lights, scene, camera), this.cam.dist >= SHADOW_COARSE_DIST ? 2 : 1);
       else drawShadows(lights, scene, camera);
     };
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
@@ -419,8 +426,9 @@ export class GameRenderer {
     if (!framePace.auto) framePace.level = 0;
     framePace.cap = s.frameCap;
     this.fx.scale = framePace.auto ? framePace.scale : RES_SCALE[s.resolution] ?? 1;
-    // below Ultra the water keeps each reflection for two frames
-    this.reflEvery = s.quality === 'ultra' ? 1 : 2;
+    // the water keeps each reflection for two frames at every level (at Ultra too: a fresh one every
+    // frame cost 1.1-2.9 ms in a town and the ripples hide the difference)
+    this.reflEvery = 2;
     this.sky.cycle = s.dayCycle;
     this.terrain.uniforms.uBorderOn.value = s.borders ? 1 : 0;
     if (this.borders) { this.borders.posts.visible = s.borders; this.borders.caps.visible = s.borders; }
@@ -1154,6 +1162,8 @@ export class GameRenderer {
         const hide = this.reflHide;
         hide.length = 0;
         hide.push(this.water.mesh, this.grass.mesh, this.particles.group, this.rain.mesh, this.markers, this.arrows.mesh, this.arrows.stones);
+        // specks in a reflection, and a third of its triangles: settlers, animals, birds, lanterns, border posts
+        hide.push(this.settlers.group, this.animals.group, this.pigs.group, this.birds.group, this.lanterns.group, this.borders.posts, this.borders.caps);
         if (this.reflectionCull) this.buildings.dry(hide, reflectionReach(this.cam.camera));
         this.reflection.render(this.renderer, this.scene, hide, this.reflRect);
         (U2.uReflMat.value as THREE.Matrix4).copy(this.reflection.textureMatrix);

@@ -61,11 +61,11 @@ export class BuildingsRenderer {
   private ropeMat: THREE.Material;
 
   private shown: boolean[] = [];
-  /** Run fn (the shadow map) with every building on its far model, then put back the levels the view picked. */
-  withFar(fn: () => void) {
+  /** Run fn (the shadow map) with every building on `level` (1 far, 2 coarse), then put back the levels the view picked. */
+  withFar(fn: () => void, level = 1) {
     const shown = this.shown;
     shown.length = 0;
-    for (const v of this.views.values()) if (v.lod) { for (const l of v.lod.levels) shown.push(l.object.visible); v.lod.showCoarsest(); }
+    for (const v of this.views.values()) if (v.lod) { for (const l of v.lod.levels) shown.push(l.object.visible); v.lod.showLevel(level); }
     try { fn(); } finally {
       let k = 0;
       for (const v of this.views.values()) if (v.lod) for (const l of v.lod.levels) l.object.visible = shown[k++];

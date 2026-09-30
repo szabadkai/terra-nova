@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
 import { ROOF_TILE, SHINGLE_ROWS } from './textures';
-import { ScreenLod } from './lod';
+import { ScreenLod, simplify } from './lod';
 
 /** Materials whose texture grain should run along the longest axis of a box. */
 const GRAIN_MATS = new Set(['timber', 'wood']);
@@ -613,6 +613,26 @@ export interface Anchors {
 
 /** camera distance beyond which buildings switch to their far model */
 export const FAR_DIST = 36;
+/** ...and beyond which to the coarse one: the far model simplified to about COARSE_RATIO of its
+ * triangles, with no vertex more than COARSE_ERR (model units) from where it was. The shadow map
+ * draws the coarse model too once the view is far enough out that the error stays under its texels
+ * (BuildingsRenderer.withFar), and the water's reflection always. */
+export const COARSE_DIST = 64;
+export const COARSE_RATIO = 0.2;
+export const COARSE_ERR = 0.12;
+
+/** the coarse copy of a merged part, made once and shared by every player's model (rekey shares the merged geometry) */
+const coarseGeos = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>();
+function coarseOf(merged: THREE.BufferGeometry): THREE.BufferGeometry {
+  let c = coarseGeos.get(merged);
+  if (!c) {
+    // (non-indexed like the merged parts: a batch takes one kind or the other, not both)
+    c = simplify(merged, COARSE_RATIO, COARSE_ERR).geo.toNonIndexed();
+    c.computeBoundingSphere();
+    coarseGeos.set(merged, c);
+  }
+  return c;
+}
 
 export class ModelBuilder {
   parts = new Map<string, THREE.BufferGeometry[]>();
@@ -687,23 +707,26 @@ export class ModelBuilder {
   }
 
   /** Meshes for this model; the merged geometry is shared by every instance built from it. With a
-   *  far copy, the group holds a THREE.LOD that swaps between the two by camera distance. */
+   *  far copy, the group holds a THREE.LOD that swaps between near, far and the far's coarse copy
+   *  by camera distance. */
   build(materials: (key: string) => THREE.Material): THREE.Group {
     const near = this.buildLevel(materials);
     if (!this.far) return near;
     const lod = new ScreenLod();
     lod.addLevel(near, 0);
     lod.addLevel(this.far.buildLevel(materials), FAR_DIST, 0.1);
+    lod.addLevel(this.far.buildLevel(materials, true), COARSE_DIST, 0.1);
     const group = new THREE.Group();
     group.add(lod);
     return group;
   }
 
-  private buildLevel(materials: (key: string) => THREE.Material): THREE.Group {
+  /** `coarse`: the static parts simplified (coarseOf); the movers stay as they are. */
+  private buildLevel(materials: (key: string) => THREE.Material, coarse = false): THREE.Group {
     const group = new THREE.Group();
     for (const [key, merged] of this.mergeParts()) {
       const mat = materials(key);
-      const mesh = new THREE.Mesh(merged, mat);
+      const mesh = new THREE.Mesh(coarse ? coarseOf(merged) : merged, mat);
       // wind-bent materials (flags) bring a depth material that bends the same way
       if (mat.userData.depth) mesh.customDepthMaterial = mat.userData.depth;
       mesh.castShadow = !key.startsWith('glow') && key !== 'window';
