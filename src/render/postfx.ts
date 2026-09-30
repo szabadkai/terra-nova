@@ -695,6 +695,9 @@ export class PostFX {
   settings: FxSettings = { bloom: true, dof: true, ao: false, grade: true };
   /** resolution scale of the world (1 = the canvas's own); takes effect on setSize */
   scale = 1;
+  /** how much of the screen's size the canvas itself is drawn at (Low draws it small and lets the
+   * browser enlarge it): the sharpening goes by the two together */
+  shownScale = 1;
   private w = 1;
   private h = 1;
   /** the first frame (behind the loading screen) runs the bloom and half-size passes both ways, compiling them */
@@ -785,7 +788,8 @@ export class PostFX {
     this.blurRT.setSize(hw, hh);
     (this.blurMat.uniforms.uRes.value as THREE.Vector2).set(hw, hh);
     // a little sharpening wins back some of the crispness lost by scaling up
-    this.final.uniforms.uSharpen.value = this.scale < 0.99 ? 0.35 * Math.min(1, (1 - this.scale) / 0.3) : 0;
+    const shown = this.scale * this.shownScale;
+    this.final.uniforms.uSharpen.value = shown < 0.99 ? 0.35 * Math.min(1, (1 - shown) / 0.3) : 0;
     this.bloom.setSize(W, H);
     this.ao?.setSize(hw, hh);
     this.aoValid = false;

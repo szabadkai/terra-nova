@@ -468,8 +468,7 @@ export class GameRenderer {
     const s = this.settings;
     // (a dense laptop screen at 2x is four times the pixels of 1x: quiet mode draws no more than QUIET_PR)
     const dpr = Math.min(window.devicePixelRatio, s.quiet ? QUIET_PR : Infinity);
-    const pr = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
-    this.renderer.setPixelRatio(pr);
+    this.basePixelRatio = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
     this.grass.enabled = s.grass && s.quality !== 'low';
     this.detail.set(s.quality !== 'low');
     this.sky.setEnvMap(s.quality !== 'low');
@@ -483,7 +482,7 @@ export class GameRenderer {
     framePace.auto = s.resolution === 'auto';
     if (!framePace.auto) framePace.level = 0;
     framePace.cap = s.frameCap;
-    this.fx.scale = this.worldScale();
+    this.setWorldScale(this.worldScale());
     // Reflections and shadows are deliberately temporal in quiet mode. At 60 fps they update at
     // 15 and 30 fps respectively; at the idle 30 fps they halve again without spending power on
     // differences which are almost impossible to see in an RTS view. Out of quiet mode the water keeps
@@ -531,7 +530,24 @@ export class GameRenderer {
   }
   /** Effective world-resolution scale, including Quiet's deliberate headroom. */
   get renderScale() {
-    return this.fx.scale;
+    return this.scaleNow;
+  }
+  /** the level's device pixels per CSS pixel, before the world's scale */
+  private basePixelRatio = 1;
+  /** the world's scale as last set (setWorldScale) */
+  private scaleNow = 1;
+  /**
+   * The world's resolution scale. At Low the canvas itself is drawn at that size and the browser
+   * enlarges it on the screen, so the final pass writes the world's pixels rather than the screen's
+   * (about a tenth of a Low frame); elsewhere the final pass scales it up to a full-size canvas.
+   * Takes effect on resize.
+   */
+  private setWorldScale(scale: number) {
+    this.scaleNow = scale;
+    const small = this.settings.quality === 'low';
+    this.renderer.setPixelRatio(small ? this.basePixelRatio * scale : this.basePixelRatio);
+    this.fx.scale = small ? 1 : scale;
+    this.fx.shownScale = small ? scale : 1;
   }
   private worldScale() {
     const scale = framePace.auto ? framePace.scale : RES_SCALE[this.settings.resolution] ?? 1;
@@ -1123,7 +1139,7 @@ export class GameRenderer {
     if (this.canvas.clientWidth !== this.lastW || this.canvas.clientHeight !== this.lastH) this.resize();
     // the automatic resolution has moved a step: the world's targets follow
     const worldScale = this.worldScale();
-    if (framePace.auto && worldScale !== this.fx.scale) { this.fx.scale = worldScale; this.resize(); }
+    if (framePace.auto && worldScale !== this.scaleNow) { this.setWorldScale(worldScale); this.resize(); }
     this.time += dt;
     this.frameNo++;
     G.uTime.value = this.time;
