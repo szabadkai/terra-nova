@@ -40,6 +40,7 @@ import { LanternsRenderer } from './lanterns';
 import { commitInstances, withInstanceColor } from './instancing';
 import { ScreenLod, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
+import { QUIET_PR } from './hardware';
 import { Trails } from './trails';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
@@ -61,10 +62,14 @@ export interface RenderSettings {
   weather: 'auto' | 'clear' | 'drizzle' | 'rain' | 'storm' | 'snow';
   borders: boolean;
   reflections: boolean;
+  /** quiet (laptop) mode: at most QUIET_PR device pixels per CSS pixel however dense the screen, and
+   * the frames slow to about 30 a second while the player touches nothing (see framePace.rest) */
+  quiet: boolean;
 }
 
+/** Bloom and the tilt-shift blur are off by default, and the frames are capped at about 60: a laptop's fans notice both, the eye hardly. */
 export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
-  quality: 'high', resolution: 'auto', frameCap: 'off', bloom: true, dof: true, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true,
+  quality: 'high', resolution: 'auto', frameCap: '60', bloom: false, dof: false, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true, quiet: true,
 };
 
 /** Falling-leaf colours of the deciduous species (oak, birch, fruit tree). */
@@ -401,7 +406,8 @@ export class GameRenderer {
 
   applyQuality() {
     const s = this.settings;
-    const dpr = window.devicePixelRatio;
+    // (a dense laptop screen at 2x is four times the pixels of 1x: quiet mode draws no more than QUIET_PR)
+    const dpr = Math.min(window.devicePixelRatio, s.quiet ? QUIET_PR : Infinity);
     const pr = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
     this.renderer.setPixelRatio(pr);
     this.grass.enabled = s.grass && s.quality !== 'low';

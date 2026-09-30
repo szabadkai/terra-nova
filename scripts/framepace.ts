@@ -4,7 +4,7 @@
 // display frame, ignores one-off spikes and pauses, comes back once frames are on time again, and
 // does not thrash when the full resolution is only just too slow. Nothing here touches the game.
 // Usage: npx tsx scripts/framepace.ts
-import { AUTO_STEPS, FramePace, type FrameCap } from '../src/render/framePace';
+import { AUTO_STEPS, FramePace, REST_FPS, type FrameCap } from '../src/render/framePace';
 
 let fails = 0;
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
@@ -162,6 +162,39 @@ const P175 = 1000 / 175;
   run(p, 5, P175, () => 12);
   check(p.level === 0, `with the automatic resolution off, late frames leave the level at full`);
 }
+// --- a rest on top of the cap
+{
+  const p = fresh({ period: 1000 / 120, cap: 'off' });
+  p.rest = 'slow';
+  const r = run(p, 4, 1000 / 120, () => 2);
+  check(Math.abs(r.renders / 4 - REST_FPS) <= 1, `a slow rest on a 120 Hz display gives about ${REST_FPS} frames a second (${(r.renders / 4).toFixed(1)}) with the cap off`);
+  check(p.resting, 'and the pacer says it is resting');
+  p.cap = '30';
+  check(!p.resting, 'a cap of about 30 already gives that: no rest to speak of');
+  p.cap = 'off';
+  p.rest = null;
+  const r2 = run(p, 2, 1000 / 120, () => 2, 4000);
+  check(Math.abs(r2.renders / 2 - 120) <= 2, `the rest lifted, every display frame is drawn again (${(r2.renders / 2).toFixed(0)} a second)`);
+  p.rest = 'stop';
+  const r3 = run(p, 2, 1000 / 120, () => 2, 6000);
+  check(r3.renders === 0 && p.resting, 'a stop draws nothing');
+  p.rest = null;
+  const r4 = run(p, 1, 1000 / 120, () => 2, 8000);
+  check(r4.late === 0 && r4.renders > 100, `the first frame after a stop is not judged late, and frames resume at once (${r4.renders} in a second)`);
+  // the automatic resolution is not steered by resting frames
+  const a = fresh({ period: 1000 / 60, auto: true });
+  run(a, 6, 1000 / 60, () => 20);
+  const dropped = a.level;
+  check(dropped > 0, `heavy frames dropped the automatic resolution to ${Math.round(AUTO_STEPS[dropped] * 100)}%`);
+  a.rest = 'slow';
+  run(a, 10, 1000 / 60, () => 10, 6000);
+  check(a.level === dropped, 'ten seconds of on-time resting frames do not raise it: they say nothing about the render');
+  a.rest = null;
+  run(a, 10, 1000 / 60, () => 2, 16000);
+  check(a.level === 0, 'light frames after the rest bring it back up');
+  check(a.aimFps() === 60 && a.capFps('half') === 30, "the frame rate aimed at and the caps' rates are judged without the rest");
+}
+
 {
   // the probe without requestAnimationFrame (headless) keeps the period it has
   const p = fresh({ period: P175 });

@@ -5,14 +5,14 @@
 // nothing left for the automatic resolution to give.
 // Nothing here touches the game.
 // Usage: npx tsx scripts/hardware.ts
-import { LEVELS, LowFpsWatch, PRESETS, RUNGS, confirmLevel, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, type Signals } from '../src/render/hardware';
+import { LEVELS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SHARE, RUNGS, confirmLevel, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
 import type { Quality } from '../src/render/renderer';
 
 let fails = 0;
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
 
 const BUDGET = 1000 / 60;
-const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1080, dpr: 1, cores: 8, memory: 8, touch: false, ...o });
+const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1080, dpr: 1, cores: 8, memory: 8, touch: false, portable: false, ...o });
 
 // --- GPU names as the browsers give them
 {
@@ -72,11 +72,35 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
     const ms = g.gpu.power ? RUNGS.map((r) => `${r.level[0]}${r.ao ? '+' : ''} ${frameMs(r.level, c.s, g.gpu.power, r.ao).toFixed(1)}`).join(' ') : 'unknown GPU';
     check(g.level === c.level && g.ao === !!c.ao, `${c.name}: ${levelText(g.level, g.ao).toLowerCase()} (${fx}; ${ms} ms${g.capWhy ? `; capped: ${g.capWhy}` : ''}) — expected ${c.level}${c.ao ? ' with AO' : ''}`);
   }
+  // machines on a battery are fitted for quiet: quiet mode, half the budget
+  const m5 = 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)';
+  const lap = sig({ gpu: m5, width: 1512, height: 982, dpr: 2, portable: true });
+  const desk = sig({ gpu: m5, width: 1512, height: 982, dpr: 2 });
+  const gl = guessLevel(lap, BUDGET), gd = guessLevel(desk, BUDGET);
+  check(gl.quiet && !gd.quiet, 'a portable machine is guessed in quiet mode, the same screen on a desk is not');
+  check(Math.abs(pixelsAt('ultra', lap, true) / pixelsAt('ultra', lap) - (QUIET_PR / 2) ** 2) < 1e-9, `quiet mode draws (${QUIET_PR}/2)² of the pixels of a 2x screen on Ultra`);
+  check(frameMs('ultra', lap, 1, true, true) < frameMs('ultra', lap, 1, true) * 0.6, 'and its frame costs well under two thirds as much');
+  const weak = sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)', width: 1470, height: 956, dpr: 2 });
+  const gw = guessLevel({ ...weak, portable: true }, BUDGET), gwd = guessLevel(weak, BUDGET);
+  check(RUNGS.findIndex((r) => r.level === gw.level && r.ao === gw.ao) >= RUNGS.findIndex((r) => r.level === gwd.level && r.ao === gwd.ao), `an M1 Air lands no higher in quiet mode (${levelText(gw.level, gw.ao)}) than as a desktop (${levelText(gwd.level, gwd.ao)}): half the budget, a quarter fewer pixels`);
+  check(portable({ gpu: '', width: 1920, height: 1080, dpr: 1, touch: false }, { charging: false, level: 0.8 }), 'a battery that is discharging says portable');
+  check(portable({ gpu: '', width: 1920, height: 1080, dpr: 1, touch: false }, { charging: true, level: 0.6 }), 'a battery that is charging and not full says portable');
+  check(!portable({ gpu: 'NVIDIA GeForce RTX 3080', width: 1920, height: 1080, dpr: 1, touch: false }, { charging: true, level: 1 }), "a full, charging battery is what a desktop reports: not portable on its own");
+  check(portable({ gpu: 'NVIDIA GeForce RTX 4070 Laptop GPU', width: 1920, height: 1080, dpr: 1, touch: false }, null), 'a laptop GPU by name');
+  check(portable({ gpu: 'Intel Iris Xe Graphics', width: 1920, height: 1080, dpr: 1, touch: false }, null), 'an integrated Intel laptop GPU by name');
+  check(portable({ gpu: m5, width: 1512, height: 982, dpr: 2, touch: false }, null), 'a 2x screen of a laptop\'s size (a 14-inch MacBook Pro)');
+  check(portable({ gpu: m5, width: 1728, height: 1117, dpr: 2, touch: false }, null), 'a 2x screen of a laptop\'s size (a 16-inch MacBook Pro)');
+  check(!portable({ gpu: m5, width: 2560, height: 1440, dpr: 2, touch: false }, null), 'a 5K desktop monitor at 2x is not');
+  check(!portable({ gpu: m5, width: 3440, height: 1440, dpr: 1, touch: false }, null), 'an ultrawide at 1x is not');
+  check(portable({ gpu: 'Adreno 740', width: 412, height: 915, dpr: 2.6, touch: true }, null), 'a phone is');
+  const q = confirmLevel(gl, () => BUDGET * QUIET_SHARE * 1.2, BUDGET);
+  check(q.quiet && RUNGS.findIndex((r) => r.level === q.level && r.ao === q.ao) > RUNGS.findIndex((r) => r.level === gl.level && r.ao === gl.ao), 'timing a portable machine holds it to half the budget: a frame that would pass a desktop steps it down');
   // what each level switches
   check(!PRESETS.low.bloom && !PRESETS.low.dof && !PRESETS.low.ao && PRESETS.low.resolution !== 'auto', 'Low: bloom, AO and tilt-shift off, a fixed lower resolution');
   check(!PRESETS.medium.bloom && !PRESETS.medium.dof && !PRESETS.medium.ao && PRESETS.medium.resolution !== 'auto', 'Medium: bloom, AO and tilt-shift off, a fixed lower resolution');
-  check(PRESETS.high.bloom && PRESETS.high.dof && PRESETS.high.ao && PRESETS.high.resolution === 'auto', 'High: bloom, AO and tilt-shift on, automatic resolution');
-  check(PRESETS.ultra.bloom && PRESETS.ultra.dof && PRESETS.ultra.ao && PRESETS.ultra.resolution === 'auto', 'Ultra: bloom, AO and tilt-shift on, automatic resolution');
+  check(!PRESETS.high.bloom && !PRESETS.high.dof && PRESETS.high.ao && PRESETS.high.resolution === 'auto', 'High: AO on, bloom and tilt-shift off (the fans notice them), automatic resolution');
+  check(!PRESETS.ultra.bloom && !PRESETS.ultra.dof && PRESETS.ultra.ao && PRESETS.ultra.resolution === 'auto', 'Ultra: AO on, bloom and tilt-shift off, automatic resolution');
+  check(LEVELS.every((q) => !PRESETS[q].bloom && !PRESETS[q].dof), 'bloom and the tilt-shift blur are off at every level: on is the player\'s choice');
   check(!PRESETS.low.grass, 'Low: no grass');
 }
 

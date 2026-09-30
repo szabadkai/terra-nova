@@ -63,6 +63,12 @@ export class RTSCamera {
   private lastPinch = 0;
   shake = 0;
   cinematic = false;
+  /** the view is where it is going: nothing is moving it, and nothing would be missed drawing it less often */
+  get settled() {
+    return !this.drag && !this.grab && !this.anchor && this.shake <= 0 && !this.cinematic
+      && Math.abs(this.goal.x - this.target.x) + Math.abs(this.goal.z - this.target.z) < 0.02
+      && Math.abs(this.goalDist - this.dist) < this.dist * 0.002 && Math.abs(this.goalYaw - this.yaw) < 0.002 && Math.abs(this.goalTilt - this.tilt) < 0.002;
+  }
   private el: HTMLElement | null = null;
   private raycaster = new THREE.Raycaster();
   private v2 = new THREE.Vector2();

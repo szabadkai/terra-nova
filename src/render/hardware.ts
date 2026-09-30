@@ -9,19 +9,29 @@
 // The levels are steps on a ladder of settings ("rungs", RUNGS): High and Ultra each come with
 // ambient occlusion and without it, and the detection gives up the occlusion of a level before it
 // gives up the level, since it is the costliest single effect.
+//
+// A machine that runs on a battery (a laptop, a tablet, a phone: `Signals.portable`) is fitted for
+// quiet rather than for the last frame: quiet mode (RenderSettings.quiet, which caps the device
+// pixels drawn at QUIET_PR and rests the frames while nothing is touched) and half the frame budget,
+// so the graphics card idles most of every frame and the fans stay off.
 import type { GameRenderer, Quality, RenderSettings } from './renderer';
 import { AUTO_STEPS, framePace } from './framePace';
 
 export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
 
-/** The settings a level stands for. The three post effects (bloom, ambient occlusion and the
- * tilt-shift blur) are the heaviest single costs, so they are the first to go. */
+/** The settings a level stands for. Ambient occlusion is the heaviest single effect and the first
+ * to go; bloom and the tilt-shift blur (6-16% of a frame between them) are off at every level and
+ * left to the player, since the fans of a laptop notice them more than the eye does. */
 export const PRESETS: Record<Quality, Pick<RenderSettings, 'quality' | 'resolution' | 'bloom' | 'dof' | 'ao' | 'grass' | 'reflections'>> = {
   low: { quality: 'low', resolution: '70', bloom: false, dof: false, ao: false, grass: false, reflections: false },
   medium: { quality: 'medium', resolution: '85', bloom: false, dof: false, ao: false, grass: true, reflections: true },
-  high: { quality: 'high', resolution: 'auto', bloom: true, dof: true, ao: true, grass: true, reflections: true },
-  ultra: { quality: 'ultra', resolution: 'auto', bloom: true, dof: true, ao: true, grass: true, reflections: true },
+  high: { quality: 'high', resolution: 'auto', bloom: false, dof: false, ao: true, grass: true, reflections: true },
+  ultra: { quality: 'ultra', resolution: 'auto', bloom: false, dof: false, ao: true, grass: true, reflections: true },
 };
+/** the most device pixels per CSS pixel quiet mode draws (a 2x laptop screen is four times the pixels of 1x) */
+export const QUIET_PR = 1.25;
+/** the share of the frame budget a portable machine is fitted to: the card idles the rest of each frame */
+export const QUIET_SHARE = 0.5;
 export const LEVEL_NAMES: Record<Quality, string> = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' };
 
 /** A level with or without the ambient occlusion its preset carries: one step of the ladder. */
@@ -74,6 +84,31 @@ export interface Signals {
   memory: number;
   /** a touch screen is the main input (a phone or a tablet) */
   touch: boolean;
+  /** runs on a battery (a laptop, a tablet or a phone), as far as the browser lets on: see portable() */
+  portable: boolean;
+}
+
+/** what the Battery API said at boot (Chrome and Edge; nothing elsewhere) */
+let battery: { charging: boolean; level: number } | null = null;
+
+/** Ask the browser about a battery once, early, so that readSignals can answer at once. */
+export function probeBattery(): Promise<void> {
+  const nav = navigator as Navigator & { getBattery?: () => Promise<{ charging: boolean; level: number }> };
+  if (typeof nav.getBattery !== 'function') return Promise.resolve();
+  return nav.getBattery().then((b) => { battery = { charging: b.charging, level: b.level }; }, () => undefined);
+}
+
+/**
+ * Whether this machine runs on a battery. Sure signs: a battery that is not full or is discharging
+ * (a desktop's, when the browser reports one at all, is always full and charging), a touch screen,
+ * a GPU with a laptop's name. A likely one: a dense screen (1.25x and up) no larger than a laptop's,
+ * up to 1800 CSS pixels wide (a 16-inch MacBook Pro is 1728, a 4K desktop monitor at 150% is 2560).
+ */
+export function portable(s: Pick<Signals, 'gpu' | 'width' | 'height' | 'dpr' | 'touch'>, bat = battery): boolean {
+  if (bat && (!bat.charging || bat.level < 1)) return true;
+  if (s.touch) return true;
+  if (/laptop|mobile|max-q|\biris\b|xe graphics|\d{3,4}m\b/i.test(gpuLabel(s.gpu))) return true;
+  return s.dpr >= 1.25 && Math.max(s.width, s.height) <= 1800;
 }
 
 export interface GpuGuess {
@@ -163,17 +198,17 @@ export function gpuPower(name: string): GpuGuess {
   return g(0);
 }
 
-/** Million pixels a level draws on this screen. */
-export function pixelsAt(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>) {
-  const pr = Math.min(s.dpr, PR_CAP[level]);
+/** Million pixels a level draws on this screen (in quiet mode, at most QUIET_PR device pixels per CSS pixel). */
+export function pixelsAt(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>, quiet = false) {
+  const pr = Math.min(s.dpr, PR_CAP[level], quiet ? QUIET_PR : Infinity);
   return (s.width * pr * RES[level]) * (s.height * pr * RES[level]) / 1e6;
 }
 
 /** ms a frame of a new game's world takes at `level` (with or without its occlusion) on a GPU of `power` (1 = the reference). */
-export function frameMs(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>, power: number, ao = PRESETS[level].ao) {
+export function frameMs(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>, power: number, ao = PRESETS[level].ao, quiet = false) {
   const [f, k] = COST[level];
   const [af, ak] = ao ? AO_COST : [0, 0];
-  return (f + af + (k + ak) * pixelsAt(level, s)) / Math.max(power, 1e-3);
+  return (f + af + (k + ak) * pixelsAt(level, s, quiet)) / Math.max(power, 1e-3);
 }
 
 /** The frame budget: the display's period, but 60 frames a second at most (nothing needs 175 fps). */
@@ -183,6 +218,8 @@ export interface Guess {
   level: Quality;
   /** with the level's ambient occlusion (only levels that have one) */
   ao: boolean;
+  /** fitted for quiet: a portable machine (QUIET_SHARE of the budget, quiet mode's pixel cap) */
+  quiet: boolean;
   gpu: GpuGuess;
   /** the highest level the device allows (a phone, a tablet, little memory, few cores) and why */
   cap: Quality;
@@ -192,6 +229,8 @@ export interface Guess {
 /** The level the signals point to, before any timing. */
 export function guessLevel(s: Signals, budget = budgetMs()): Guess {
   const gpu = gpuPower(s.gpu);
+  const quiet = s.portable;
+  if (quiet) budget *= QUIET_SHARE;
   let cap: Quality = 'ultra', capWhy = '';
   const lower = (q: Quality, why: string) => { if (LEVELS.indexOf(q) < LEVELS.indexOf(cap)) { cap = q; capWhy = why; } };
   if (s.touch) lower(Math.min(s.width, s.height) < 600 ? 'low' : 'medium', Math.min(s.width, s.height) < 600 ? 'a phone' : 'a tablet');
@@ -201,15 +240,17 @@ export function guessLevel(s: Signals, budget = budgetMs()): Guess {
   if (gpu.software) lower('low', 'no graphics card (software drawing)');
   const top = LEVELS.indexOf(cap);
   // an unknown GPU starts as high as the device allows (but not Ultra): the timing decides
-  const start = !gpu.power ? RUNGS.find((r) => LEVELS.indexOf(r.level) <= Math.min(top, LEVELS.indexOf('high'))) : RUNGS.find((r) => LEVELS.indexOf(r.level) <= top && frameMs(r.level, s, gpu.power, r.ao) * LATE <= budget);
+  const start = !gpu.power ? RUNGS.find((r) => LEVELS.indexOf(r.level) <= Math.min(top, LEVELS.indexOf('high'))) : RUNGS.find((r) => LEVELS.indexOf(r.level) <= top && frameMs(r.level, s, gpu.power, r.ao, quiet) * LATE <= budget);
   const { level, ao } = start ?? RUNGS[RUNGS.length - 1];
-  return { level, ao, gpu, cap, capWhy };
+  return { level, ao, quiet, gpu, cap, capWhy };
 }
 
 export interface Detected {
   level: Quality;
   /** the level's ambient occlusion is on (false where the machine can't hold it, or the level has none) */
   ao: boolean;
+  /** quiet mode: a portable machine (the guess's `quiet`) */
+  quiet: boolean;
   /** Low that still misses the budget drops to half resolution */
   resolution?: RenderSettings['resolution'];
   guess: Guess;
@@ -228,6 +269,8 @@ const MAX_STEPS = 2;
  */
 export function confirmLevel(guess: Guess, timeAt: (q: Quality, ao: boolean) => number, budget = budgetMs()): Detected {
   const timed: [Quality, number, boolean][] = [];
+  const quiet = guess.quiet;
+  if (quiet) budget *= QUIET_SHARE;
   let i = RUNGS.findIndex((r) => r.level === guess.level && r.ao === guess.ao);
   // a known GPU is timed down to this level, every step of it included
   const floor = guess.gpu.power ? Math.max(0, LEVELS.indexOf(guess.level) - MAX_STEPS) : 0;
@@ -235,9 +278,9 @@ export function confirmLevel(guess: Guess, timeAt: (q: Quality, ao: boolean) => 
     const { level, ao } = RUNGS[i];
     const ms = timeAt(level, ao);
     timed.push([level, ms, ao]);
-    if (ms <= budget) return { level, ao, guess, timed };
+    if (ms <= budget) return { level, ao, quiet, guess, timed };
     const next = RUNGS[i + 1];
-    if (!next || LEVELS.indexOf(next.level) < floor) return { level, ao, resolution: level === 'low' && ms > budget * 1.3 ? '50' : undefined, guess, timed };
+    if (!next || LEVELS.indexOf(next.level) < floor) return { level, ao, quiet, resolution: level === 'low' && ms > budget * 1.3 ? '50' : undefined, guess, timed };
     i++;
   }
 }
@@ -253,7 +296,7 @@ export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext):
     if (ext) gpu = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) ?? gpu);
   }
   const nav = navigator as Navigator & { deviceMemory?: number };
-  return {
+  const s = {
     gpu,
     width: Math.max(screen.width || 0, innerWidth),
     height: Math.max(screen.height || 0, innerHeight),
@@ -262,6 +305,7 @@ export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext):
     memory: nav.deviceMemory || 0,
     touch: matchMedia('(pointer: coarse)').matches && nav.maxTouchPoints > 0,
   };
+  return { ...s, portable: portable(s) };
 }
 
 /**
@@ -302,14 +346,17 @@ export function detect(gr: GameRenderer, base: RenderSettings, timed = true, gro
   const sig = readSignals(gr.renderer.getContext());
   const budget = budgetMs();
   const guess = guessLevel(sig, budget);
-  if (!timed) return { level: guess.level, ao: guess.ao, guess, timed: [] };
+  const quiet = guess.quiet;
+  // (the levels are timed as quiet mode would draw them)
+  base = { ...base, quiet };
+  if (!timed) return { level: guess.level, ao: guess.ao, quiet, guess, timed: [] };
   // the canvas may be smaller than the screen it will fill
   const el = gr.renderer.domElement;
   const canvas = { width: el.clientWidth || innerWidth, height: el.clientHeight || innerHeight, dpr: sig.dpr };
   const late = LATE + (1 - LATE) * Math.min(1, Math.max(0, grown));
   return confirmLevel(guess, (q, ao) => {
     const ms = timeLevel(gr, q, ao, base, budget);
-    return ms * late * (frameMs(q, sig, 1, ao) / frameMs(q, canvas, 1, ao));
+    return ms * late * (frameMs(q, sig, 1, ao, quiet) / frameMs(q, canvas, 1, ao, quiet));
   }, budget);
 }
 

@@ -9,7 +9,7 @@ import { generateIcons } from './ui/icons';
 import { showLoading, showMenu, MenuOptions } from './ui/menu';
 import { GameMenu } from './ui/gameMenu';
 import { applyAudioPrefs, applyRenderPrefs, detectGraphics, firstRun, prefs, savePrefs } from './ui/prefs';
-import { levelText } from './render/hardware';
+import { levelText, probeBattery } from './render/hardware';
 import { enterImmersive, onImmersiveChange, toggleImmersive } from './ui/immersive';
 import { Audio } from './audio/audio';
 import { CursorSetter, type CursorKind } from './ui/cursors';
@@ -20,7 +20,7 @@ import { afloat, canBombard } from './game/naval';
 import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
 import { lodReady } from './render/lod';
-import { framePace } from './render/framePace';
+import { IDLE_AFTER, framePace } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, timeAgo, warmUp } from './ui/saveStore';
 import { columnOf, missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
@@ -300,7 +300,7 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
     const d = detectGraphics(gr, game);
     prefs.hw.told = false;
     savePrefs();
-    console.info(`Graphics: ${levelText(d.level, d.ao).toLowerCase()} for ${d.guess.gpu.label}${d.timed.length ? ` (timed ${d.timed.map(([q, ms, ao]) => `${q}${ao ? ' + AO' : ''} ${ms.toFixed(1)} ms`).join(', ')})` : ''}`);
+    console.info(`Graphics: ${levelText(d.level, d.ao).toLowerCase()}${d.quiet ? ' in quiet mode' : ''} for ${d.guess.gpu.label}${d.timed.length ? ` (timed ${d.timed.map(([q, ms, ao]) => `${q}${ao ? ' + AO' : ''} ${ms.toFixed(1)} ms`).join(', ')})` : ''}`);
   }
   loading?.remove();
 }
@@ -374,7 +374,7 @@ function graphicsChosen() {
   if (!prefs.hw.level || prefs.hw.told) return null;
   prefs.hw.told = true;
   savePrefs();
-  return `Graphics set to ${levelText(prefs.hw.level, prefs.hw.ao)} for this machine`;
+  return `Graphics set to ${levelText(prefs.hw.level, prefs.hw.ao)} for this machine${prefs.hw.quiet ? ', in quiet mode' : ''}`;
 }
 
 /** the title screen's menu, while it is up */
@@ -797,6 +797,8 @@ async function boot() {
   // a game that was being played when the page went away carries on (unless the URL asks for a new one)
   const resume = wantsResume() && !params.has('play') && !params.has('seed') && !devMission;
   setupGlobalInput();
+  // (a machine on a battery is fitted for quiet: the detection asks, so the answer must be in by then)
+  void probeBattery();
   (window as any).netStats = () => room?.stats();
   // every world waits for the display's refresh rate, read off a few animation frames before anything
   // heavy runs, and for the simplifier that makes the models' copies for the distance
@@ -1245,11 +1247,42 @@ function onClick(e: PointerEvent) {
 }
 
 // ---------------------------------------------------------------- main loop
+/** the window is in front (until its first blur: a frame that has never been clicked still draws) */
+let focused = true;
+window.addEventListener('blur', () => { focused = false; });
+window.addEventListener('focus', () => { focused = true; inputAt = performance.now(); });
+/** when the player last touched anything */
+let inputAt = performance.now();
+for (const t of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) window.addEventListener(t, () => { inputAt = performance.now(); }, { capture: true, passive: true });
+
+/**
+ * How much of a rest the frames get now (framePace.rest): none at all while the window is not in
+ * front, about 30 a second on the title screen, in the Esc menu and (in quiet mode) once the player
+ * has touched nothing for IDLE_AFTER and the view has come to rest; otherwise the cap alone.
+ */
+function restNow(now: number) {
+  if (!focused) return 'stop';
+  if (state === 'menu' || (state === 'play' && gameMenu)) return 'slow';
+  if (state === 'play' && gr?.settings.quiet && now - inputAt > IDLE_AFTER && gr.cam.settled) return 'slow';
+  return null;
+}
+
 let last = performance.now();
 function loop() {
   const now = performance.now();
+  framePace.rest = restNow(now);
   // under a frame cap most display frames are let by; the time they took goes into the next one
-  if (!framePace.due(now)) { requestAnimationFrame(loop); return; }
+  if (!framePace.due(now)) {
+    // (a game in a window that is not in front goes on unseen, as it does in a hidden tab with a friend)
+    if (framePace.rest === 'stop' && state === 'play' && game && gr && !shaping) {
+      last = now;
+      driver.hold = !!gameMenu || !!hud?.modal;
+      driver.pump(now);
+      gr.handleEvents(game.events.splice(0));
+    }
+    requestAnimationFrame(loop);
+    return;
+  }
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   // (nothing drawn while a world is being shaped: it is not all there yet)

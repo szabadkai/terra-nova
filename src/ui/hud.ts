@@ -1820,6 +1820,8 @@ export class HUD {
    */
   private watchFps(fps: number) {
     if (document.visibilityState !== 'visible') return;
+    // (a rest holds the frames back on purpose)
+    if (framePace.resting) { lowFps.slow = 0; return; }
     const advice = lowFpsAdvice(this.gr.settings);
     if (!advice) return;
     // (the automatic resolution also stops trying once the pacer has settled on a slower rate)
@@ -2102,7 +2104,7 @@ export class HUD {
       // with the automatic resolution below full, the share the world is drawn at follows
       const res = framePace.auto && framePace.scale < 1 ? ` · ${Math.round(framePace.scale * 100)}%` : '';
       const fps = this.frames / this.fpsT;
-      this.fpsText = `${Math.round(fps)} fps${res}`;
+      this.fpsText = `${Math.round(fps)} fps${res}${framePace.resting ? ' · resting' : ''}`;
       if (this.fpsEl) this.fpsEl.textContent = this.fpsText;
       this.frames = 0;
       this.fpsT = 0;

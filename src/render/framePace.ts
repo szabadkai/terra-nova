@@ -2,10 +2,19 @@
 // measured from requestAnimationFrame, a frame cap that renders every Nth display frame so the frames
 // that are shown arrive evenly, and the automatic resolution that takes the world's render scale
 // down a step while frames keep missing their display frame and brings it back once they don't.
+// A `rest` on top of the cap holds the frame rate down when nothing needs it: the title screen and
+// an idle player get about 30 frames a second, a window that is not in front none at all.
 // One instance (`framePace`) is shared by the main loop, the renderer, the menu and the counter.
 
 /** off, half or a third of the display's rate, or about 60 / 30 frames a second */
 export type FrameCap = 'off' | 'half' | 'third' | '60' | '30';
+
+/** No rest, about REST_FPS frames a second (the title screen, a player who has touched nothing for a while), or no frames at all (the window is not in front) */
+export type Rest = null | 'slow' | 'stop';
+/** frames a second a slow rest gives (as near as the display's rate divides) */
+export const REST_FPS = 30;
+/** ms without any input before an idle player's frames slow down */
+export const IDLE_AFTER = 3000;
 
 /** Render scales the automatic resolution steps through, from full down. */
 export const AUTO_STEPS = [1, 0.92, 0.85];
@@ -41,6 +50,8 @@ function snap(period: number) {
 
 export class FramePace {
   cap: FrameCap = 'off';
+  /** the rest in force now, set by the main loop before each frame (see Rest) */
+  rest: Rest = null;
   /** the automatic resolution is steering (off: the level stays at full) */
   auto = false;
   /** the display's refresh period in ms; from `probe` at boot, then followed while running */
@@ -78,8 +89,12 @@ export class FramePace {
     return AUTO_STEPS[this.level];
   }
 
-  /** how many display frames each rendered frame is given under the cap */
+  /** how many display frames each rendered frame is given under the cap (and a slow rest) */
   every(period = this.period) {
+    return Math.max(this.capEvery(period), this.rest === 'slow' ? Math.max(1, Math.round(1000 / period / REST_FPS)) : 1);
+  }
+
+  private capEvery(period: number) {
     switch (this.cap) {
       case 'half': return 2;
       case 'third': return 3;
@@ -89,9 +104,14 @@ export class FramePace {
     }
   }
 
+  /** a rest is holding frames back below what the cap alone would give */
+  get resting() {
+    return this.rest === 'stop' || (this.rest === 'slow' && this.every() > this.capEvery(this.period));
+  }
+
   /** the frame rate frames that are on time give under the cap, at most 60 (for the low frame rate message) */
   aimFps() {
-    return Math.min(60, Math.round(10000 / this.lightPeriod / this.every(this.lightPeriod)) / 10);
+    return Math.min(60, Math.round(10000 / this.lightPeriod / this.capEvery(this.lightPeriod)) / 10);
   }
 
   /** frames have been heavy for so long that the period settled on a slower rate than the display's */
@@ -103,7 +123,7 @@ export class FramePace {
   capFps(cap: FrameCap) {
     const was = this.cap;
     this.cap = cap;
-    const n = this.every();
+    const n = this.capEvery(this.period);
     this.cap = was;
     return Math.round(1000 / this.period / n);
   }
@@ -117,6 +137,8 @@ export class FramePace {
     const dt = this.lastTick < 0 ? 0 : now - this.lastTick;
     this.lastTick = now;
     if (dt > 0 && dt < GAP) this.track(dt, now);
+    // (no frames at all: the next one, when the rest ends, is not judged against this pause)
+    if (this.rest === 'stop') { this.lastRender = -1; this.forget(); return false; }
     const n = this.every();
     const interval = n * this.period;
     if (this.lastRender >= 0) {
@@ -187,6 +209,8 @@ export class FramePace {
     if (late) this.missed += Math.max(0, Math.round(took / this.period) - this.every());
     if (this.settle > 0) { this.settle--; return; }
     if (!this.auto) { this.level = 0; return; }
+    // resting frames say nothing about the render: the level stays where the last busy spell left it
+    if (this.resting) { this.forget(); return; }
     this.win.push(late);
     if (late) { this.lateCount++; this.lates.push(now); }
     if (this.win.length > WINDOW && this.win.shift()) this.lateCount--;
