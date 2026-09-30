@@ -21,11 +21,10 @@ import { resumeVoyage } from './sea';
 import { shipFields } from './naval';
 import { resumeTour } from './geology';
 import { reconcileLoads, resumeDonkey } from './trade';
+import { magicOf, packFile, unpackFile, type TypedArray } from '../core/pack';
 
 export const SAVE_FORMAT = 'terra-nova-save';
 export const SAVE_VERSION = 1;
-
-type TypedArray = Float32Array | Uint8Array | Int8Array | Int32Array | Uint32Array | Uint16Array | Int16Array | Float64Array;
 
 export type SettlerData = Omit<Settler, 'actions' | 'onAbort' | 'path'>;
 export type BuildingData = Omit<Building, 'def'>;
@@ -67,6 +66,8 @@ export interface SaveMeta {
   won: boolean;
   /** the campaign mission being played, by id */
   mission?: string;
+  /** the name of the map of the players' own the game is on (map.ts), if it is on one */
+  map?: string;
   thumb?: string; // small data URL
 }
 
@@ -132,7 +133,7 @@ export function describe(g: Game): SaveMeta {
     savedAt: Date.now(), time: g.time, seed: g.opts.seed, size: g.opts.size, players: g.players.length,
     aiLevel: g.ai[0]?.level ?? g.opts.aiLevel, pop: pop.total, soldiers: pop.soldiers,
     buildings: g.countBuildings(g.local, undefined, false), over: g.over, won: (g.over && g.winner === g.local) || !!g.ms?.won,
-    mission: g.opts.mission,
+    mission: g.opts.mission, map: g.opts.map?.name,
   };
 }
 
@@ -291,66 +292,16 @@ function settle(g: Game) {
 }
 
 // ------------------------------------------------------------------ files
-// A save file is gzip over: "TNSV", the little-endian u32 length of a JSON header, the header (each
-// typed array replaced by {$buf: offset, type, n}), then the arrays' raw bytes, 8-byte aligned and
-// offset from the end of the header.
-const MAGIC = 0x56534e54; // "TNSV"
+// A save file is the packed form of src/core/pack.ts under the magic "TNSV".
+const MAGIC = magicOf('TNSV');
 const NOT_A_SAVE = 'This is not a Terra Nova saved game';
 
-const ARRAY_TYPES: Record<string, { new (b: ArrayBuffer, o?: number, n?: number): TypedArray; BYTES_PER_ELEMENT: number }> = {
-  Float32Array, Float64Array, Uint8Array, Int8Array, Int32Array, Uint32Array, Uint16Array, Int16Array,
-};
-
-const align8 = (n: number) => (n + 7) & ~7;
-
-async function pipe(bytes: Uint8Array, stream: CompressionStream | DecompressionStream): Promise<Uint8Array> {
-  const out = new Response(new Blob([bytes as BlobPart]).stream().pipeThrough(stream));
-  return new Uint8Array(await out.arrayBuffer());
-}
-
 export async function encodeSave(data: SaveData): Promise<Uint8Array> {
-  const bufs: TypedArray[] = [];
-  let at = 0;
-  const header = JSON.stringify(data, (_k, v) => {
-    if (!ArrayBuffer.isView(v) || v instanceof DataView) return v;
-    const a = v as TypedArray;
-    bufs.push(a);
-    const ref = { $buf: at, type: a.constructor.name, n: a.length };
-    at = align8(at + a.byteLength);
-    return ref;
-  });
-  const head = new TextEncoder().encode(header);
-  const base = align8(8 + head.length);
-  const raw = new Uint8Array(base + at);
-  const dv = new DataView(raw.buffer);
-  dv.setUint32(0, MAGIC, true);
-  dv.setUint32(4, head.length, true);
-  raw.set(head, 8);
-  let off = base;
-  for (const a of bufs) {
-    raw.set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), off);
-    off = align8(off + a.byteLength);
-  }
-  return pipe(raw, new CompressionStream('gzip'));
+  return packFile(data, MAGIC);
 }
 
 export async function decodeSave(file: Uint8Array): Promise<SaveData> {
-  let raw: Uint8Array;
-  try { raw = await pipe(file, new DecompressionStream('gzip')); } catch { throw new Error(NOT_A_SAVE); }
-  const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-  if (raw.length < 8 || dv.getUint32(0, true) !== MAGIC) throw new Error(NOT_A_SAVE);
-  const len = dv.getUint32(4, true);
-  const base = align8(8 + len);
-  let header: string;
-  try { header = new TextDecoder('utf-8', { fatal: true }).decode(raw.subarray(8, 8 + len)); } catch { throw new Error(NOT_A_SAVE); }
-  const data = JSON.parse(header, (_k, v) => {
-    if (!v || typeof v !== 'object' || typeof v.$buf !== 'number') return v;
-    const T = ARRAY_TYPES[v.type];
-    const start = base + v.$buf, bytes = v.n * (T?.BYTES_PER_ELEMENT ?? 0);
-    if (!T || start + bytes > raw.length) throw new Error('The saved game is damaged');
-    // copy out so every array starts on its own aligned buffer
-    return new T(raw.slice(start, start + bytes).buffer);
-  });
+  const data = await unpackFile(file, MAGIC, NOT_A_SAVE, 'The saved game is damaged');
   const err = saveError(data);
   if (err) throw new Error(err);
   return data as SaveData;

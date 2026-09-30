@@ -142,6 +142,8 @@ export class GameRenderer {
   selected: { kind: 'building' | 'settler' | 'ship'; id: number } | null = null;
   /** a "Show me" ring on the ground (the campaign's), drawn where nothing is selected until `until` (render seconds) */
   teach: { x: number; z: number; r: number; until: number } | null = null;
+  /** the map editor's brush: a ring on the ground where it would land, in its tool's colour */
+  brush: { x: number; z: number; r: number; color: number } | null = null;
   private ghost: THREE.Group | null = null;
   private ghostType: BuildingType | null = null;
   private ghostMat: THREE.MeshStandardMaterial;
@@ -266,7 +268,8 @@ export class GameRenderer {
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
     this.waterCells = new WaterCells(game.world, WATER_LEVEL);
-    const hq = game.buildings.get(game.players[game.local].hq);
+    // (the editor's world has no players: the view starts over its middle)
+    const hq = game.buildings.get(game.players[game.local]?.hq ?? 0);
     if (hq) {
       this.cam.jumpTo(hq.cx, hq.cz + 4, true);
       this.cam.zoomTo(30, true);
@@ -1114,11 +1117,12 @@ export class GameRenderer {
       }
     } else if (this.teach && this.time < this.teach.until) U.uSel.value.set(this.teach.x, 0, this.teach.z, this.teach.r);
     else { this.teach = null; U.uSel.value.w = 0; }
-    const hov = this.orders.hoverRing(this.selected?.kind === 'building' ? this.selected.id : 0);
+    const hov = this.brush ?? this.orders.hoverRing(this.selected?.kind === 'building' ? this.selected.id : 0);
     if (hov) {
       U.uHov.value.set(hov.x, 0, hov.z, hov.r);
       const c = U.uHovCol.value as THREE.Color;
-      if (hov.foe) c.setRGB(1.2, 0.1, 0.05); else c.setRGB(0.8, 0.78, 0.65);
+      if ('color' in hov) c.setHex(hov.color).multiplyScalar(1.2);
+      else if (hov.foe) c.setRGB(1.2, 0.1, 0.05); else c.setRGB(0.8, 0.78, 0.65);
     } else U.uHov.value.w = 0;
 
     // one matrix update serves the reflection and the view (and its shadow map)

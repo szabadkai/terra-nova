@@ -12,6 +12,7 @@ Rules that apply to every item:
 - **The game's arithmetic is the same in every browser**: no `Math.sin/cos/atan2/hypot/pow` and no `**` in `src/game` (the engines round them differently in the last bit); use `sin`, `cos`, `atan2`, `hypot` and `sq` from `src/core/fmath.ts`. Render code may use `Math.*` freely. `scripts/lockstep.ts` checks.
 - **Each gameplay feature gets a headless check** in `scripts/`.
 - **The campaign is data** (`src/game/missions.ts`, framework `src/game/campaign.ts`): a mission is a map, cumulative unlocks, rules for its rivals, a setup run once on a fresh game, goals with `done()`, and the quaestor's tips; every goal has a `satisfy()` and every mission a `probe()`, which `npx tsx scripts/campaign.ts` drives (`seeds <id> <from> <to>` finds maps that fit, `time <id>` lets a level-1 AI play it). Everything the game does for a mission is gated on `opts.mission`, so free play and the passive baseline stay bit-identical. The narration (`voice/SCRIPT.md`, `voice/lines.json`) is generated from the missions by `scripts/voicelines.ts`: change the words there, never in the script; the recordings go to `public/voice/<id>.mp3` and `--check` lists the ones still missing.
+- **A map is data** (`src/game/map.ts`, the format and the `MapBuilder` API; MAPS.md is the guide): a game started on one (`GameOptions.map`) lays it in deterministically, the save carries it, and `scripts/mapedit.ts` checks that a captured generator's map plays exactly as its seed does, so the generator's order of trees, rocks and deer is part of the format. The editor (`src/ui/editor.ts`) works the world's own arrays through the builder and keeps the world's trees, rocks, deer and headquarters in step after each change; anything new a map holds needs a place in `MapData`, in `applyMap`, in the builder's `cut`/`paste` (undo) and in the editor's sync.
 - **A new heavy effect gets its switch in each detection level** (`PRESETS` in `src/render/hardware.ts`, checked by `scripts/hardware.ts`): new players get the level their machine was timed to hold, so an effect that is on everywhere by default lands on machines that were never timed with it.
 
 ---
@@ -60,7 +61,16 @@ Hide the UI and use a free camera. Scrub the time of day and the season, and set
 
 Either change will move the baselines on purpose. Record the new medians.
 
-## 9. Playing with a friend: what's left
+## 9. Maps of the players' own: what's left
+
+The editor, the `MapBuilder` API and map files stand (MAPS.md). Left for later:
+
+- **A map with a friend.** The host's map is not sent through the room (`StartMsg` carries only the options; a map is 50–200 KB of typed arrays, so it wants its own binary action in `room.ts`, chunked by Trystero). Until then the lobby hosts the generator's map.
+- **A mission on a map of one's own**: the campaign's missions are data (`Mission.map` is a seed); letting a mission name a map file would let people script scenarios with the campaign's rules (rivals, raids, goals).
+- **The editor on touch**: the brushes take a mouse; a finger should paint and two should move the view.
+- **Sharing**: a gallery of maps by link (`?map=<url>` plays any fetched map file already), and the map's name and author on the loading screen and in the save list (`SaveMeta.map` holds the name).
+
+## 10. Playing with a friend: what's left
 
 Two people can play over the internet with no server (title screen → Play with a friend: WebRTC between the browsers, found through Trystero over public Nostr relays by a six-letter room code; deterministic lockstep at sixty ticks a second, turns of 100 ms, the input delay set by the host from the measured round trip, a state hash compared every turn). Left for later:
 

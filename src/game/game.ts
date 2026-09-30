@@ -5,6 +5,7 @@ import {
   T_DIRT, T_ROCK, T_SNOW, TOOLS, emptyStock,
 } from './defs';
 import { generateMap } from './mapgen';
+import { applyMap, type MapData } from './map';
 import { PathFinder } from './path';
 import { populateWild, updateWild, wander } from './wildlife';
 import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, TradeOrder, Tree } from './types';
@@ -59,6 +60,8 @@ export interface GameOptions {
   local?: number;
   /** the campaign mission this game plays (missions.ts), by id; none in free play */
   mission?: string;
+  /** a map of the players' own (map.ts) in place of the generator's: its size wins, and `players` may not exceed its starts */
+  map?: MapData;
 }
 
 export const OUT_CAP = 8;
@@ -155,23 +158,34 @@ export class Game {
     this.opts = opts;
     this.local = opts.local ?? 0;
     this.rng = new RNG(opts.seed ^ 0x5bd1e995);
+    if (opts.map) {
+      if (opts.map.size !== opts.size) opts.size = opts.map.size;
+      if (opts.players > opts.map.starts.length) throw new Error(`The map ${opts.map.name ? `"${opts.map.name}" ` : ''}has starts for ${opts.map.starts.length} player${opts.map.starts.length === 1 ? '' : 's'}, not ${opts.players}`);
+    }
     this.world = new World(opts.size, opts.size);
     this.path = new PathFinder(this.world);
     this.spots = new Spots(this.world.N);
     if (!generate) return;
-    const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands });
-    this.starts = gen.starts;
-    this.isles = gen.isles;
-
-    for (const t of gen.trees) this.addTree(t.node, t.species, t.growth);
-    for (const s of gen.stones) this.addStone(s.node, s.amount);
-    for (const d of gen.deer) this.addAnimal(d.node, d.herd);
-    this.deerTarget = gen.deer.length;
-    populateWild(this, gen.starts);
+    if (opts.map) {
+      // a map of the players' own: laid in as data, the trees, rocks and deer in its order
+      const laid = applyMap(this, opts.map);
+      this.starts = laid.starts;
+      this.isles = laid.isles;
+      this.deerTarget = laid.deer;
+    } else {
+      const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands });
+      this.starts = gen.starts;
+      this.isles = gen.isles;
+      for (const t of gen.trees) this.addTree(t.node, t.species, t.growth);
+      for (const s of gen.stones) this.addStone(s.node, s.amount);
+      for (const d of gen.deer) this.addAnimal(d.node, d.herd);
+      this.deerTarget = gen.deer.length;
+    }
+    populateWild(this, this.starts);
 
     for (let p = 0; p < opts.players; p++) {
       this.players.push(this.newPlayer(p));
-      this.setupStart(p, gen.starts[p].x, gen.starts[p].y);
+      this.setupStart(p, this.starts[p].x, this.starts[p].y);
       if (this.isHuman(p)) continue;
       // a mission may leave a rival without a mind (dormant), or with one that never marches (builder)
       const rule = rivalRule(this.mission, p);

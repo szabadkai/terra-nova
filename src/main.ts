@@ -26,6 +26,9 @@ import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, ti
 import { missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
 import { markDone, progress, saveProgress } from './ui/campaignStore';
 import { campaignPage } from './ui/campaign';
+import { MapEditor, editorGame } from './ui/editor';
+import { mapsPage } from './ui/mapsPage';
+import { MapBuilder, decodeMap, type MapData } from './game/map';
 
 let canvas = document.getElementById('c') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui')!;
@@ -52,7 +55,9 @@ let hud: HUD | null = null;
 let menuEl: HTMLElement | null = null;
 /** the Esc menu in a game, or the options modal on the title screen; the game is paused while it is open */
 let gameMenu: GameMenu | null = null;
-let state: 'menu' | 'play' = 'menu';
+let state: 'menu' | 'play' | 'edit' = 'menu';
+/** the map editor, while it is up */
+let editor: MapEditor | null = null;
 /** steps the game: alone, or in lockstep with the other players of a networked game */
 let driver: Lockstep;
 /** the room of a game with a friend, from its lobby on */
@@ -199,11 +204,11 @@ function queueWorld(job: () => Promise<void>): Promise<void> {
   return run;
 }
 
-/** Create (or re-create) the world in place — no page reloads, so it also works inside sandboxed frames. */
-function buildWorld(from?: SaveData): Promise<void> {
+/** Create (or re-create) the world in place — no page reloads, so it also works inside sandboxed frames. `edit`: the editor's world for a map, with no players. */
+function buildWorld(from?: SaveData, edit?: MapData): Promise<void> {
   // (the loading screen at once, while the title screen's world may still be being finished)
   const loading = showLoading(uiRoot, from ? 'Unrolling the map…' : 'Shaping the land…');
-  return queueWorld(() => shapeWorld(from, loading));
+  return queueWorld(() => shapeWorld(from, loading, edit));
 }
 
 /**
@@ -224,7 +229,7 @@ function titleWorld(): Promise<void> {
 }
 
 /** With no `loading` screen, for the title screen, which stays up over its world. */
-async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | null) {
+async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | null, edit?: MapData) {
   const behind = !loading;
   await new Promise((r) => setTimeout(r, 30));
   let loaded: Game | null = null;
@@ -251,11 +256,17 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
   if (loaded) {
     game = loaded;
     // (the mission too, or "Restart" after loading a mission's save would play its map as free play)
-    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel, mission: game.opts.mission });
+    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel, mission: game.opts.mission, map: game.opts.map });
     if (!opts.mission) delete opts.mission;
+    if (!opts.map) delete opts.map;
     islands = game.opts.islands !== false;
+  } else if (edit) {
+    game = editorGame(Game, edit);
   } else {
-    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0, mission: net ? undefined : opts.mission });
+    // (a map of the player's own, in free play alone: with a friend or in a mission the generator's)
+    const map = net || opts.mission ? undefined : opts.map;
+    if (map) { opts.size = map.size; opts.players = Math.min(opts.players, map.starts.length); }
+    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0, mission: net ? undefined : opts.mission, map });
   }
   driver = new Lockstep(game, net ? net.seats.map((s) => s.slot).sort((a, b) => a - b) : [game.local], net?.delay ?? 0);
   if (net && room) {
@@ -264,7 +275,12 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
     driver.start();
     for (const e of earlyTurns.splice(0)) driver.onPacket(e.slot, e.pkt);
   }
-  gr = new GameRenderer(canvas, game);
+  try {
+    gr = new GameRenderer(canvas, game);
+  } catch (e) {
+    loading?.remove();
+    throw e;
+  }
   applyRenderPrefs(gr);
   gr.setSound((n, x, z, v) => audio.play(n, x, z, v));
   bindCanvas(canvas);
@@ -366,8 +382,9 @@ function showMainMenu() {
   menuEl?.remove();
   const menu = showMenu(uiRoot, opts, () => { void play(); }, (o) => {
     Object.assign(opts, o);
+    if (!o.map) delete opts.map;
     void titleWorld();
-  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => { void openCampaign(); });
+  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => { void openCampaign(); }, () => { void openEditor(); }, () => openMaps());
   menuEl = menu.el;
   titleMenu = menu;
   const next = nextMission(progress.done);
@@ -413,12 +430,12 @@ function showMenuError(menu: HTMLElement, e: unknown) {
   card?.prepend(p);
 }
 
-/** Settings (and saved games) over the title screen. */
+/** Settings (and saved games) over the title screen, or over the editor. */
 function openOptions(page?: 'load') {
   if (gameMenu) return;
   // (the graphics settings show on the world behind, which may still be being shaped)
   void worlds.then(() => {
-    if (gameMenu || state !== 'menu' || !gr) return;
+    if (gameMenu || state === 'play' || !gr) return;
     gameMenu = new GameMenu(uiRoot, { game, gr, audio, inGame: false, page, saves: saveHooks, onClose: () => { gameMenu = null; } });
   });
 }
@@ -461,6 +478,91 @@ async function restart() {
   showMainMenu();
   if (fromMission) void openCampaign();
   await titleWorld();
+}
+
+// ---------------------------------------------------------------- maps of the player's own
+/** The title screen's page of the player's maps: one picked is free play's map from then on. */
+function openMaps() {
+  const menu = titleMenu;
+  if (!menu || menuEl !== menu.el) return;
+  menu.open(mapsPage({
+    current: opts.map?.name,
+    pick: (data) => { chooseMap(data); menu.cur.map = data; menu.cur.players = opts.players; menu.showFree(); },
+    edit: (data) => { void openEditor(data); },
+  }));
+}
+
+/** Free play is on this map from now on (its size, and no more players than it has starts). */
+function chooseMap(data: MapData) {
+  opts.map = data;
+  opts.size = data.size;
+  opts.players = Math.max(1, Math.min(opts.players, data.starts.length));
+  freeOpts = { ...opts };
+  void titleWorld();
+}
+
+/** The map editor over its own world (a game with no players on the map being made). */
+async function openEditor(initial?: MapData) {
+  if (editor) return;
+  leaveRoom();
+  audio.stopVoice();
+  gameMenu?.close();
+  menuEl?.remove();
+  menuEl = null;
+  if (hud) { hud.root.remove(); hud = null; }
+  const ed = new MapEditor(uiRoot, {
+    build: async (data) => {
+      await buildWorld(undefined, data);
+      state = 'edit';
+      G.uFogOn.value = 0;
+      gr.cam.cinematic = false;
+      gr.cam.inputEnabled = true;
+      gr.sky.timeOfDay = 0.45;
+      return { game, gr };
+    },
+    play: async (data) => {
+      ed.remove();
+      editor = null;
+      chooseMap(data);
+      await buildWorld();
+      await play();
+    },
+    back: () => {
+      ed.remove();
+      editor = null;
+      state = 'menu';
+      showMainMenu();
+      void titleWorld();
+    },
+    options: () => openOptions(),
+    initial,
+  });
+  editor = ed;
+  state = 'edit';
+  try {
+    await ed.start();
+  } catch (e) {
+    console.warn('The editor could not open its map:', e);
+    if (editor === ed) { ed.remove(); editor = null; state = 'menu'; showMainMenu(); void titleWorld(); }
+  }
+}
+
+/** `?map=<url>`: free play on a map file fetched from there (a map shared by link). */
+async function mapFromUrl() {
+  const url = params.get('map');
+  if (!url) return;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const data = await decodeMap(new Uint8Array(await res.arrayBuffer()));
+    opts.map = data;
+    opts.size = data.size;
+    opts.players = Math.max(1, Math.min(num('players', data.starts.length), data.starts.length));
+    freeOpts = { ...opts };
+    console.info(`Map "${data.name}" (${data.size}², ${data.starts.length} players) from ${url}`);
+  } catch (e) {
+    console.warn(`Could not fetch the map at ${url}:`, e);
+  }
 }
 
 // ---------------------------------------------------------------- the campaign
@@ -528,7 +630,7 @@ function openLobby() {
 }
 
 /** The game's options as the host has them set on the title screen (at least two kingdoms, for the two people). */
-const hostedOpts = () => ({ size: opts.size, seed: opts.seed, players: Math.max(2, opts.players), aiLevel: opts.ai, islands });
+const hostedOpts = () => ({ size: opts.map ? 160 : opts.size, seed: opts.seed, players: Math.max(2, opts.players), aiLevel: opts.ai, islands });
 
 /** The URL can name the STUN/TURN servers and Nostr relays to use (`?ice=stun:host:3478,turn:user:pass@host:3478&icepolicy=relay&relays=wss://...`), for tests of the network. */
 function roomOptions(): RoomOptions {
@@ -650,6 +752,8 @@ async function startNetGame(s: StartMsg) {
 async function boot() {
   // ?mission=<id> goes straight into a campaign mission (handy while working on one)
   const devMission = params.has('mission') && applyMissionOpts(params.get('mission')!);
+  await mapFromUrl();
+  (window as any).MapBuilder = MapBuilder;
   // a game that was being played when the page went away carries on (unless the URL asks for a new one)
   const resume = wantsResume() && !params.has('play') && !params.has('seed') && !devMission;
   setupGlobalInput();
@@ -658,6 +762,8 @@ async function boot() {
   // heavy runs, and for the simplifier that makes the models' copies for the distance
   worlds = framePace.probe().then(() => { void warmUp(); return lodReady; });
   requestAnimationFrame(loop);
+  // ?editor=1 opens the map editor straight away (on free play's map, if the URL named one)
+  if (params.has('editor')) return openEditor(opts.map);
   if (!resume && params.get('play') !== '1' && !devMission) return title();
   let resumed: SaveData | null = null;
   if (resume) {
@@ -1119,8 +1225,9 @@ function loop() {
       }
     } else {
       game.events.length = 0;
-      // (not while a game waits for its preparations behind the loading screen: they go faster)
-      if (!norender && !hurry) gr.frame(dt, dt * 0.3);
+      // (not while a game waits for its preparations behind the loading screen: they go faster; the editor's light stands still)
+      if (state === 'edit') editor?.update(dt);
+      if (!norender && !hurry) gr.frame(dt, state === 'edit' ? 0 : dt * 0.3);
     }
     // the title screen's world shows once it has been drawn
     if (unseen && !hurry) {

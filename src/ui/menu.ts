@@ -7,6 +7,7 @@ import type { SaveMeta } from '../game/save';
 import { glyph, type GlyphName } from './glyphs';
 import { missionById } from '../game/campaign';
 import { playTime, saveSubtitle, timeAgo } from './saveStore';
+import type { MapData } from '../game/map';
 
 export interface MenuOptions {
   seed: number;
@@ -15,6 +16,8 @@ export interface MenuOptions {
   ai: number;
   /** the campaign mission being played (missions.ts), none in free play */
   mission?: string;
+  /** a map of the player's own (the editor's) in place of the generator's, for free play */
+  map?: MapData;
 }
 
 /** A page of the title screen's card. */
@@ -32,6 +35,7 @@ export interface MenuPage {
 }
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const MAP_NAMES: Record<number, string> = { 128: 'Small map', 160: 'Medium map', 208: 'Large map' };
 /** The last game in one line under Continue: "Domus · 12 min played · saved 5 min ago" (the full line is its tooltip). */
 const continueLine = (m: SaveMeta) =>
@@ -62,7 +66,7 @@ const CONTROLS: [string, string][] = [
   ['Everything else', '<kbd>Esc</kbd> → Controls'],
 ];
 
-export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void, onCampaign?: () => void) {
+export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void, onCampaign?: () => void, onEditor?: () => void, onMaps?: () => void) {
   const el = document.createElement('div');
   el.className = 'menu';
   el.innerHTML = `
@@ -78,6 +82,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
             ${tile('campaign', 'laurel', 'Campaign', '<span class="camp-sub">Fifteen missions, one lesson each</span>', 'Fifteen missions that teach the game one lesson at a time, told by your quaestor')}
             ${tile('free', 'map', 'Free play', 'Your own map against the computer')}
             ${tile('friend', 'friends', 'With a friend', 'Host a game or join one by its code', 'Two players over the internet: one hosts, the other joins with a code')}
+            ${tile('editor', 'brush', 'Map editor', 'Shape a map of your own, or by script', 'Raise mountains, plant woods and place the players on a map of your own, then play it or share it as a file')}
           </div>
           <div class="tm-tools">
             ${tool('help', 'book', 'How to play', 'The first steps and the controls')}
@@ -148,7 +153,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     body.innerHTML = `
       <div class="tm-form">
         <label>Map</label>
-        <div class="seg" data-k="size"><button data-v="128">Small</button><button data-v="160">Medium</button><button data-v="208">Large</button></div>
+        <div class="seg seg-4" data-k="size"><button data-v="128">Small</button><button data-v="160">Medium</button><button data-v="208">Large</button><button data-v="own" class="${cur.map ? 'on' : ''}" title="A map of your own, from the editor or a file">Own…</button></div>
         <label>Rivals</label>
         <div class="seg" data-k="players">${[2, 3, 4].map((v) => `<button data-v="${v}" title="${RIVALS[v - 2]}" aria-label="${RIVALS[v - 2]}">${shields(v - 1)}</button>`).join('')}</div>
         <label>Difficulty</label>
@@ -156,17 +161,22 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
         <label for="seed">World</label>
         <div class="tm-seed"><input type="number" id="seed" min="1" value="${cur.seed}" aria-label="World seed" title="The world's seed: the same number makes the same map"><button id="dice" title="A random world" aria-label="A random world">${glyph('dice', 20)}</button></div>
       </div>
-      <p class="tm-note">The map behind is the one you will play: change a setting and it is shaped anew.</p>
+      <p class="tm-note">${cur.map ? `Playing on <b>${esc(cur.map.name)}</b>, a map of your own with room for ${cur.map.starts.length} player${cur.map.starts.length === 1 ? '' : 's'}. ` : ''}The map behind is the one you will play: change a setting and it is shaped anew.</p>
       <button class="tm-btn primary tm-go" id="start" autofocus>${glyph('play', 18)}Found your colony</button>`;
     body.querySelectorAll<HTMLElement>('.seg').forEach((seg) => {
       const k = seg.dataset.k as 'size' | 'players' | 'ai';
       seg.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
-        b.classList.toggle('on', Number(b.dataset.v) === cur[k]);
+        if (b.dataset.v === 'own') { b.onclick = () => onMaps?.(); return; }
+        b.classList.toggle('on', Number(b.dataset.v) === cur[k] && !(k === 'size' && cur.map));
+        // a map of the player's own has room for so many players
+        if (k === 'players' && cur.map && Number(b.dataset.v) > cur.map.starts.length) { b.disabled = true; b.title = `${cur.map.name} has room for ${cur.map.starts.length} player${cur.map.starts.length === 1 ? '' : 's'}`; }
         b.onclick = () => {
-          if (cur[k] === Number(b.dataset.v)) return;
+          if (cur[k] === Number(b.dataset.v) && !(k === 'size' && cur.map)) return;
           cur[k] = Number(b.dataset.v);
+          if (k === 'size') delete cur.map;
           seg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
           if (k === 'size' || k === 'players') onRegenerate(cur);
+          if (k === 'size') open(freePage());
         };
       });
     });
@@ -198,6 +208,7 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   };
 
   el.querySelector<HTMLButtonElement>('#free')!.onclick = () => open(freePage());
+  el.querySelector<HTMLButtonElement>('#editor')!.onclick = () => onEditor?.();
   el.querySelector<HTMLButtonElement>('#campaign')!.onclick = () => onCampaign?.();
   el.querySelector<HTMLButtonElement>('#help')!.onclick = () => open(helpPage());
   el.querySelector<HTMLButtonElement>('#options')!.onclick = () => onOptions?.();
@@ -237,7 +248,9 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     p.appendChild(b);
     homeCard.appendChild(p);
   };
-  return { el, cur, offerContinue, note, setCampaignSub, open, home };
+  /** The free-play page (again, after a map of the player's own was picked). */
+  const showFree = () => open(freePage());
+  return { el, cur, offerContinue, note, setCampaignSub, open, home, showFree };
 }
 
 export function showLoading(parent: HTMLElement, text: string) {
