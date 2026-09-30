@@ -8,3 +8,4 @@ reference/*/raw/
 reference/*/extracted/
 reference
 .claude/worktrees/
+voice/.verify.json

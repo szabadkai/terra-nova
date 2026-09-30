@@ -34,7 +34,7 @@ const linesOf = (m: Mission, title: string) => {
   // the script's lines, in whoever's voice says them
   for (const tr of m.rules?.script ?? []) for (const act of tr.do) {
     if (act.a !== 'say') continue;
-    add(tr.id, `${act.who === 'varro' ? 'VARRO' : 'The quaestor'}, when the script's "${tr.id}" comes`, act.text ? `${act.title} ${act.text}` : act.title, act.who === 'varro' ? 'varro' : undefined);
+    add(tr.id, `${act.who === 'varro' ? 'VARRO' : 'The quaestor'}, when the script's "${tr.id}" comes`, act.text ? `${act.title}${/[.!?…]$/.test(act.title) ? '' : '.'} ${act.text}` : act.title, act.who === 'varro' ? 'varro' : undefined);
   }
   byMission.push({ title, lines: mine });
 };

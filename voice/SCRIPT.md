@@ -519,7 +519,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `saltus.letter` — *VARRO, when the script's "letter" comes*
 
-  A letter from Nova Ostia To the camp in the valley. The pass is closed by order of the Senate. Those who would use it will pay the toll at the fort, or turn back. — Q. Varro, governor.
+  A letter from Nova Ostia. To the camp in the valley. The pass is closed by order of the Senate. Those who would use it will pay the toll at the fort, or turn back. — Q. Varro, governor.
 
 - `saltus.goat` — *The quaestor, when the script's "goat" comes*
 
@@ -527,7 +527,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `saltus.toll` — *VARRO, when the script's "toll" comes*
 
-  Another letter Your men fight well for men without a governor. The toll has doubled.
+  Another letter. Your men fight well for men without a governor. The toll has doubled.
 
 - `saltus.counter` — *VARRO, when the script's "counter" comes*
 
@@ -565,7 +565,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `silva.lease` — *VARRO, when the script's "lease" comes*
 
-  A notice from Nova Ostia The Senate has leased the forest of Silva to the timber company of Nova Ostia. Anyone found felling in it will be treated as a thief, and anyone found living in it as a squatter. — Q. Varro, governor.
+  A notice from Nova Ostia. The Senate has leased the forest of Silva to the timber company of Nova Ostia. Anyone found felling in it will be treated as a thief, and anyone found living in it as a squatter. — Q. Varro, governor.
 
 - `silva.grove` — *The quaestor, when the script's "grove" comes*
 
@@ -581,7 +581,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `silva.stockade` — *VARRO, when the script's "stockade" comes*
 
-  On the matter of the timber Men who steal the Senate’s timber are hanged at Nova Ostia. I mention it only for your records.
+  On the matter of the timber. Men who steal the Senate’s timber are hanged at Nova Ostia. I mention it only for your records.
 
 ## The Province · Vallis — The Valley
 
@@ -607,7 +607,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `vallis.deed` — *VARRO, when the script's "deed" comes*
 
-  A deed of grant The valley is granted to the veterans’ colony of Nova Ostia. Your settlers may stay where they stand. Where they stand is not to move.
+  A deed of grant. The valley is granted to the veterans’ colony of Nova Ostia. Your settlers may stay where they stand. Where they stand is not to move.
 
 - `vallis.third` — *The quaestor, when the script's "third" comes*
 
@@ -615,7 +615,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `vallis.harvest` — *VARRO, when the script's "harvest" comes*
 
-  The harvest is in And the survey is finished. What is not mine by the survey will be mine by other means.
+  The harvest is in. And the survey is finished. What is not mine by the survey will be mine by other means.
 
 ## The Province · Metalla — The Gold Plateau
 
@@ -641,7 +641,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `aurum.claim` — *VARRO, when the script's "claim" comes*
 
-  On the matter of the plateau The gold of Metalla is the Senate’s, and the Senate has let it to my company. Trespass on the path is theft, whatever the tribes may have told you.
+  On the matter of the plateau. The gold of Metalla is the Senate’s, and the Senate has let it to my company. Trespass on the path is theft, whatever the tribes may have told you.
 
 - `aurum.path` — *The quaestor, when the script's "path" comes*
 
@@ -717,7 +717,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `ara.hymn` — *VARRO, when the script's "hymn" comes*
 
-  From the governor, at Ara The gods of this province have always been on the Senate’s side. I should not like you to find out how.
+  From the governor, at Ara. The gods of this province have always been on the Senate’s side. I should not like you to find out how.
 
 - `ara.convert` — *The quaestor, when the script's "convert" comes*
 
@@ -759,7 +759,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `aestuarium.dues` — *VARRO, when the script's "dues" comes*
 
-  On the dues of the estuary The dues of the estuary are farmed to a company of honest seamen. They keep seamen’s hours and seamen’s accounts, and I cannot answer for either. — Q. Varro, governor.
+  On the dues of the estuary. The dues of the estuary are farmed to a company of honest seamen. They keep seamen’s hours and seamen’s accounts, and I cannot answer for either. — Q. Varro, governor.
 
 - `aestuarium.sails` — *The quaestor, when the script's "sails" comes*
 
@@ -771,7 +771,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `aestuarium.flotilla2` — *VARRO, when the script's "flotilla2" comes*
 
-  A letter from Nova Ostia I am told the collectors of the estuary have lost a ship. I have written to them to be more careful.
+  A letter from Nova Ostia. I am told the collectors of the estuary have lost a ship. I have written to them to be more careful.
 
 - `aestuarium.flotilla3` — *The quaestor, when the script's "flotilla3" comes*
 
@@ -817,7 +817,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `insulae.licence` — *VARRO, when the script's "licence" comes*
 
-  On the islands of the province The islands of Terra Nova are the Senate’s, and the Senate’s fleet keeps them. Settlers found on them without my licence will be treated as pirates, and so, for that matter, will the pirates. — Q. Varro, governor.
+  On the islands of the province. The islands of Terra Nova are the Senate’s, and the Senate’s fleet keeps them. Settlers found on them without my licence will be treated as pirates, and so, for that matter, will the pirates. — Q. Varro, governor.
 
 - `insulae.rival` — *The quaestor, when the script's "rival" comes*
 
@@ -829,11 +829,11 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `insulae.squadron` — *VARRO, when the script's "squadron" comes*
 
-  An unlicensed settlement An unlicensed settlement has been reported on the Senate’s islands. The fleet will attend to it.
+  An unlicensed settlement. An unlicensed settlement has been reported on the Senate’s islands. The fleet will attend to it.
 
 - `insulae.aquila` — *VARRO, when the script's "aquila" comes*
 
-  To the legate Two islands. You are either very brave or very badly advised. The Aquila will explain the difference.
+  To the legate. Two islands. You are either very brave or very badly advised. The Aquila will explain the difference.
 
 - `insulae.towers` — *The quaestor, when the script's "towers" comes*
 
@@ -867,7 +867,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `litus.letter` — *VARRO, when the script's "letter" comes*
 
-  On the pirates of the south coast I am told there are pirates on the south coast. I have never met them. I have, I confess, paid them, but for one season only, and I cannot be blamed if they have taken a liking to the work.
+  On the pirates of the south coast. I am told there are pirates on the south coast. I have never met them. I have, I confess, paid them, but for one season only, and I cannot be blamed if they have taken a liking to the work.
 
 - `litus.corvus` — *The quaestor, when the script's "corvus" comes*
 
@@ -913,7 +913,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `castellum.letter` — *VARRO, when the script's "letter" comes*
 
-  From the hall at Castellum Castellum has never been taken. It was built by men who expected you, and it is held by men who have been told about you.
+  From the hall at Castellum. Castellum has never been taken. It was built by men who expected you, and it is held by men who have been told about you.
 
 - `castellum.wrath` — *The quaestor, when the script's "wrath" comes*
 
@@ -925,7 +925,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `castellum.breach` — *VARRO, when the script's "breach" comes*
 
-  On the matter of one castle You have one castle. I have three, and the hill, and the Senate. My garrison has been told to stop waiting for you.
+  On the matter of one castle. You have one castle. I have three, and the hill, and the Senate. My garrison has been told to stop waiting for you.
 
 - `castellum.hall` — *The quaestor, when the script's "hall" comes*
 
@@ -959,11 +959,11 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `novaostia.letter` — *VARRO, when the script's "letter" comes*
 
-  From the governor’s seat You have come a long way to be recalled. The Senate’s ship is on the sea; I have asked it to take you home.
+  From the governor’s seat. You have come a long way to be recalled. The Senate’s ship is on the sea; I have asked it to take you home.
 
 - `novaostia.truce` — *VARRO, when the script's "truce" comes*
 
-  The heralds are back My colonies have their orders, and so have my legions. Let us see which of us the Senate finds standing.
+  The heralds are back. My colonies have their orders, and so have my legions. Let us see which of us the Senate finds standing.
 
 - `novaostia.sighted` — *The quaestor, when the script's "sighted" comes*
 
@@ -975,11 +975,11 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `novaostia.colony0` — *VARRO, when the script's "colony0" comes*
 
-  A charter withdrawn The northern colony has lost its charter, and its colonists their homes. I shall find the Senate other colonists.
+  A charter withdrawn. The northern colony has lost its charter, and its colonists their homes. I shall find the Senate other colonists.
 
 - `novaostia.colony1` — *VARRO, when the script's "colony1" comes*
 
-  A charter withdrawn The southern colony too. You are very thorough, legate. So is the Senate.
+  A charter withdrawn. The southern colony too. You are very thorough, legate. So is the Senate.
 
 - `novaostia.gates` — *The quaestor, when the script's "gates" comes*
 
@@ -1003,7 +1003,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.castra.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting You may still surrender the capital with honour. After today you will not have the choice, or the capital.
+  A word before the fighting. You may still surrender the capital with honour. After today you will not have the choice, or the capital.
 
 - `defence.castra.last` — *The quaestor, when the script's "last" comes*
 
@@ -1027,7 +1027,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.silva.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Silva and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Silva and your men may keep their swords. Make me take it and they will not.
 
 - `defence.silva.last` — *The quaestor, when the script's "last" comes*
 
@@ -1051,7 +1051,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.saltus.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Saltus and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Saltus and your men may keep their swords. Make me take it and they will not.
 
 - `defence.saltus.last` — *The quaestor, when the script's "last" comes*
 
@@ -1075,7 +1075,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.aestuarium.march` — *VARRO, when the script's "march" comes*
 
-  A word before the shelling Give me Aestuarium and your ships may sail home. Make me take it and they will not sail anywhere.
+  A word before the shelling. Give me Aestuarium and your ships may sail home. Make me take it and they will not sail anywhere.
 
 - `defence.aestuarium.last` — *The quaestor, when the script's "last" comes*
 
@@ -1099,7 +1099,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.vallis.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Vallis and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Vallis and your men may keep their swords. Make me take it and they will not.
 
 - `defence.vallis.last` — *The quaestor, when the script's "last" comes*
 
@@ -1123,7 +1123,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.metalla.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Metalla and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Metalla and your men may keep their swords. Make me take it and they will not.
 
 - `defence.metalla.last` — *The quaestor, when the script's "last" comes*
 
@@ -1147,7 +1147,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.collis.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Collis and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Collis and your men may keep their swords. Make me take it and they will not.
 
 - `defence.collis.last` — *The quaestor, when the script's "last" comes*
 
@@ -1171,7 +1171,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.insulae.march` — *VARRO, when the script's "march" comes*
 
-  A word before the shelling Give me Insulae and your ships may sail home. Make me take it and they will not sail anywhere.
+  A word before the shelling. Give me Insulae and your ships may sail home. Make me take it and they will not sail anywhere.
 
 - `defence.insulae.last` — *The quaestor, when the script's "last" comes*
 
@@ -1195,7 +1195,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.litus.march` — *VARRO, when the script's "march" comes*
 
-  A word before the shelling Give me Litus and your ships may sail home. Make me take it and they will not sail anywhere.
+  A word before the shelling. Give me Litus and your ships may sail home. Make me take it and they will not sail anywhere.
 
 - `defence.litus.last` — *The quaestor, when the script's "last" comes*
 
@@ -1219,7 +1219,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.ara.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Ara and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Ara and your men may keep their swords. Make me take it and they will not.
 
 - `defence.ara.last` — *The quaestor, when the script's "last" comes*
 
@@ -1243,7 +1243,7 @@ edit the missions, not this file. 256 lines, about 8179 words.
 
 - `defence.castellum.march` — *VARRO, when the script's "march" comes*
 
-  A word before the fighting Give me Castellum and your men may keep their swords. Make me take it and they will not.
+  A word before the fighting. Give me Castellum and your men may keep their swords. Make me take it and they will not.
 
 - `defence.castellum.last` — *The quaestor, when the script's "last" comes*
 
