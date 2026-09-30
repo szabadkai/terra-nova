@@ -4,7 +4,7 @@
 // and all of it survives a save. The hares are drawn in their two poses without NaNs.
 // Usage: npx tsx scripts/wildlife.ts [seed]
 import { Game } from '../src/game/game';
-import type { BuildingType } from '../src/game/defs';
+import { BUILDINGS, type BuildingType } from '../src/game/defs';
 import type { Animal, Building } from '../src/game/types';
 import { CELL, DEER_TREES, cellOf, habitat, hareCap } from '../src/game/wildlife';
 import { decodeSave, encodeSave, restore, snapshot } from '../src/game/save';
@@ -141,6 +141,39 @@ let hunterMeat = 0;
   let first = -1;
   run(g, 300, () => { gw.wildT = gw.deerT = 999; if (first < 0 && hut.prodCount > 0) first = hut.prodCount; });
   check(first === 2, `a deer brings two meat (${first})`);
+}
+
+// ---- game can't be shut in a footprint, and a hunter doesn't search the whole landmass for one that is
+{
+  const g = fresh();
+  const w = g.world;
+  for (const a of [...g.animals.values()]) g.animals.delete(a.id);
+  const hq = g.buildings.get(g.players[P].hq)!;
+  const hut = put(g, 'hunter', hq.cx, hq.cz, 12, (a) => Math.hypot(a.x - hq.cx - 6, a.y - hq.cz));
+  // a hare sits where a farm goes up round it
+  let site: { x: number; y: number } | null = null;
+  w.forRadius(hut.cx, hut.cz, 10, (_i, nx, ny) => {
+    const a = g.anchorFor('farm', nx, ny);
+    if (!site && g.canPlace('farm', P, a.x, a.y)) site = a;
+  });
+  const s = site as { x: number; y: number } | null;
+  if (!s) throw new Error('no site for the farm');
+  const fp = g.footprint(BUILDINGS.farm.size, s.x, s.y).filter((i) => w.walkable(i));
+  const inner = fp[fp.length >> 1];
+  const hare = g.addAnimal(inner, 1, 'hare');
+  hare.home = inner;
+  const farm = g.addBuilding('farm', P, s.x, s.y, true);
+  check(hare.node === farm.door && hare.home === farm.door && !w.blocked[hare.node], `a hare inside a new footprint steps out to the door (node ${hare.node}, door ${farm.door})`);
+  // an older save's hare already shut in: the hunter looks elsewhere instead of searching the landmass every half second
+  g.animals.delete(hare.id);
+  const walled = g.footprint(farm.size, farm.x, farm.y).find((i) => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (!w.blocked[w.idx(w.nx(i) + dx, w.ny(i) + dy)]) return false; return true; });
+  if (walled === undefined) throw new Error('no node walled in on every side');
+  const shut = g.addAnimal(walled, 1, 'hare');
+  const gw = g as unknown as { wildT: number; deerT: number };
+  const e0 = g.path.expansions;
+  run(g, 60, () => { gw.wildT = gw.deerT = 999; });
+  check(g.path.expansions - e0 < 20000 && shut.alive, `a hunter ignores a hare shut in a footprint (${g.path.expansions - e0} nodes searched in a minute, "${hut.status}")`);
+  check(g.path.find(hut.door, walled, true) === null && g.path.expansions - e0 < 20000, 'and a path to it fails at once');
 }
 
 // ---- a save keeps the game where it is; old saves (deer only) still load

@@ -54,6 +54,15 @@ export class PathFinder {
       // allow walking into non walkable goal only if it's a building door etc: treat as adj fallback
       return null;
     }
+    // a goal shut in on every side (say, game inside a footprint): nothing to reach, so don't flood the landmass finding that out
+    if (adj && !walk(goal)) {
+      let open = false;
+      for (let d = 0; d < 8 && !open; d++) {
+        const nx = gx + DX8[d], ny = gy + DY8[d];
+        open = nx >= 0 && ny >= 0 && nx < W && ny < H && walk(ny * W + nx);
+      }
+      if (!open) return null;
+    }
 
     const gen = ++this.gen;
     if (gen > 0xfffffff0) {

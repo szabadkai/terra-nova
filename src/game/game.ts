@@ -493,6 +493,7 @@ export class Game {
       b.levelTotal = 0;
       b.state = 'building';
       for (const i of fp) w.blocked[i] = 1;
+      this.evictAnimals(new Set(fp), door);
     } else {
       this.computeLevelWork(b);
       if (b.levelTotal < 0.05) this.finishLeveling(b);
@@ -571,9 +572,24 @@ export class Game {
         this.syncPos(s);
       }
     }
+    this.evictAnimals(fpSet, b.door);
     w.markHeightDirty(b.x - 1, b.y - 1, b.x + b.size + 1, b.y + b.size + 1);
     b.state = 'building';
     b.levelTotal = 0;
+  }
+
+  /** Game standing in a footprint that has just turned solid steps out to the door: it could never hop out,
+   *  and a hunter after it would search the whole landmass for a way in. */
+  private evictAnimals(fp: Set<number>, door: number) {
+    for (const a of this.animals.values()) {
+      if (!a.alive || !(fp.has(a.node) || (a.next >= 0 && fp.has(a.next)))) continue;
+      a.node = door;
+      a.next = -1;
+      a.path = null;
+      a.t = 0;
+      if (fp.has(a.home)) a.home = door;
+      this.syncPos(a);
+    }
   }
 
   /** Player command: place a construction site. */

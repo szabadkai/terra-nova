@@ -273,7 +273,8 @@ function hunter(g: Game, s: Settler, b: Building) {
   const w = g.world;
   let best = null as import('./types').Animal | null, bd = Infinity;
   for (const a of g.animals.values()) {
-    if (!huntable(a) || w.region[a.node] !== w.region[b.door]) continue;
+    // (the landmass alone says nothing of buildings: game shut in a footprint, as in an older save, is out of reach)
+    if (!huntable(a) || w.region[a.node] !== w.region[b.door] || w.blocked[a.node]) continue;
     const d2 = sq(a.x - b.cx) + sq(a.z - b.cz);
     if (d2 > sq(b.def.radius!)) continue;
     // the nearest, but a deer (two meat) is worth a longer walk
