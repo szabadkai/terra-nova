@@ -523,8 +523,11 @@ export class AIController {
     const g = this.g;
     const enemyMil: { x: number; z: number }[] = [];
     for (const b of g.buildings.values()) if (b.owner !== this.p && b.def.military && b.state === 'done') enemyMil.push({ x: b.cx, z: b.cz });
+    // (a campaign mission's forts keep the garrison it gave them, far from the border or not)
+    const kept = g.ms?.forts;
     for (const b of g.buildings.values()) {
       if (b.owner !== this.p || !b.def.military || b.type === 'hq' || b.state !== 'done') continue;
+      if (kept?.includes(b.id)) continue;
       let d = Infinity;
       for (const e of enemyMil) d = Math.min(d, hypot(e.x - b.cx, e.z - b.cz));
       const cap = b.def.military.capacity;

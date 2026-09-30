@@ -13,7 +13,7 @@ const SIGN_LIFE = 480;
 function mountainNodes(g: Game, x: number, z: number, r = PROBE_RADIUS): number[] {
   const w = g.world;
   const out: number[] = [];
-  w.forRadius(x, z, r, (i) => { if (w.isMountain(i) && !w.isWater(i) && !w.building[i]) out.push(i); });
+  w.forRadius(x, z, r, (i) => { if (w.isMountain(i) && !w.isWater(i) && !w.cliff[i] && !w.building[i]) out.push(i); });
   return out;
 }
 

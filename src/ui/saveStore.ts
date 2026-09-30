@@ -2,7 +2,7 @@
 // load list never has to read whole games. The `auto` slot holds the running game: it is written
 // every little while and whenever the page is hidden or closed, so a session outlives a reload.
 import type { SaveData, SaveMeta } from '../game/save';
-import { missionById, missionIndex, numeralOf } from '../game/campaign';
+import { missionById, missionLabel } from '../game/campaign';
 
 export const AUTO = 'auto';
 const DB = 'terra-nova';
@@ -33,7 +33,7 @@ export function timeAgo(t: number) {
 /** "Medium map · 1 h 12 min played · saved 5 min ago" */
 export function saveSubtitle(m: SaveMeta) {
   const mi = m.mission ? missionById(m.mission) : undefined;
-  const mission = mi ? `Mission ${numeralOf(missionIndex(mi.id))} · ${mi.title} · ` : '';
+  const mission = mi ? `${missionLabel(mi)} · ${mi.title} · ` : '';
   return `${mission}${MAP_SIZES[m.size] ?? `${m.size}²`} map · ${playTime(m.time)} played · saved ${timeAgo(m.savedAt)}`;
 }
 

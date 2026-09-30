@@ -23,8 +23,12 @@ import { lodReady } from './render/lod';
 import { framePace } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, timeAgo, warmUp } from './ui/saveStore';
-import { missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
+import { columnOf, missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
 import { markDone, progress, saveProgress } from './ui/campaignStore';
+import { beginProvince, dispatchesSeen, markDispatchesSeen, province, provinceLost, provinceWon, regionOfMission } from './ui/provinceStore';
+import { provincePage } from './ui/province';
+import { warmGeography } from './ui/provinceWarm';
+import { REGION_INFO, startOf, strikeWeight } from './game/province';
 import { campaignPage } from './ui/campaign';
 import { MapEditor, editorGame } from './ui/editor';
 import { mapsPage } from './ui/mapsPage';
@@ -44,7 +48,7 @@ const opts: MenuOptions = {
   players: num('players', 2),
   ai: num('ai', 1),
 };
-/** the free-play settings while a campaign mission's own are in `opts`, to go back to */
+/** the free-play settings while a tutorial mission's own are in `opts`, to go back to */
 let freeOpts: MenuOptions = { ...opts };
 
 const audio = new Audio();
@@ -256,9 +260,8 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
   if (loaded) {
     game = loaded;
     // (the mission too, or "Restart" after loading a mission's save would play its map as free play)
-    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel, mission: game.opts.mission, map: game.opts.map });
-    if (!opts.mission) delete opts.mission;
-    if (!opts.map) delete opts.map;
+    Object.assign(opts, { seed: game.opts.seed, size: game.opts.size, players: game.opts.players, ai: game.ai[0]?.level ?? game.opts.aiLevel, mission: game.opts.mission, map: game.opts.map, carry: game.opts.carry, difficulty: game.opts.difficulty, fortified: game.opts.fortified });
+    for (const k of ['mission', 'map', 'carry', 'difficulty', 'fortified'] as const) if (opts[k] === undefined) delete opts[k];
     islands = game.opts.islands !== false;
   } else if (edit) {
     game = editorGame(Game, edit);
@@ -266,7 +269,7 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
     // (a map of the player's own, in free play alone: with a friend or in a mission the generator's)
     const map = net || opts.mission ? undefined : opts.map;
     if (map) { opts.size = map.size; opts.players = Math.min(opts.players, map.starts.length); }
-    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0, mission: net ? undefined : opts.mission, map });
+    game = new Game({ size: opts.size, seed: opts.seed, players: opts.players, aiLevel: opts.ai, islands, humans: net ? net.seats.length : 1, local: net?.local ?? 0, mission: net ? undefined : opts.mission, map, carry: net ? undefined : opts.carry, difficulty: net ? undefined : opts.difficulty, fortified: net ? undefined : opts.fortified });
   }
   driver = new Lockstep(game, net ? net.seats.map((s) => s.slot).sort((a, b) => a - b) : [game.local], net?.delay ?? 0);
   if (net && room) {
@@ -384,11 +387,16 @@ function showMainMenu() {
     Object.assign(opts, o);
     if (!o.map) delete opts.map;
     void titleWorld();
-  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => { void openCampaign(); }, () => { void openEditor(); }, () => openMaps());
+  }, () => openOptions(), () => openOptions('load'), () => openLobby(), () => { void openCampaign(); }, () => { void openCampaign('province'); }, () => { void openEditor(); }, () => openMaps());
   menuEl = menu.el;
   titleMenu = menu;
+  // (the province's chart takes a fifth of a second to make: made now, off the page's thread)
+  warmGeography();
   const next = nextMission(progress.done);
-  menu.setCampaignSub(next ? `Next: ${numeralOf(missionIndex(next.id))} · ${next.title}` : 'The province is yours');
+  menu.setCampaignSub(next ? `Next: ${numeralOf(missionIndex(next.id))} · ${next.title}` : 'Every lesson learned');
+  menu.setProvinceSub(!province ? 'The war for the province' : province.end === 'won' ? 'Terra Nova is yours' : province.end === 'recalled' ? 'Recalled to Rome' : province.strike ? `Varro marches on ${REGION_INFO[province.strike].name}` : `Season ${numeralOf(province.season - 1)} · ${province.held.length} of 12 held`);
+  // (a player who has learned a lesson is led to the campaign)
+  if (Object.keys(progress.done).some((id) => missionIndex(id) >= 0)) menu.lead('campaign');
   graphicsNote();
   // the last game, if there is one, can be picked up where it was left (a mission already won is not offered again)
   getSummary(AUTO).then((sum) => {
@@ -454,29 +462,30 @@ function openGameMenu(page?: 'graphics') {
   });
 }
 
-/** Play the same map again from the start (the same mission, in the campaign). */
+/** Play the same map again from the start (the same mission, in the tutorial). */
 async function restartMap() {
   audio.stopVoice();
   await buildWorld();
   await play();
 }
 
-/** Back to the title screen (a mission's player to the campaign's page). The game stays in the autosave slot, to be continued from there. */
+/** Back to the title screen (a mission's player to the tutorial's page). The game stays in the autosave slot, to be continued from there. */
 async function restart() {
-  const fromMission = !!opts.mission;
+  // (from a lesson back to the tutorial's page, from a region to the province's)
+  const from = opts.mission ? (missionIndex(opts.mission) >= 0 ? 'tutorial' : 'province') : null;
   autosave();
   setResume(false);
   leaveRoom();
   audio.stopVoice();
   // a mission's settings give way to the free-play ones again
-  if (opts.mission) { Object.assign(opts, freeOpts); delete opts.mission; islands = params.get('islands') !== '0'; }
+  if (opts.mission) { Object.assign(opts, freeOpts); for (const k of ['mission', 'carry', 'difficulty', 'fortified'] as const) delete opts[k]; islands = params.get('islands') !== '0'; }
   opts.seed = Math.floor(Math.random() * 99999) + 1;
   // the title screen at once, a new world shaped behind it
   gameMenu?.close();
   if (hud) { hud.root.remove(); hud = null; }
   state = 'menu';
   showMainMenu();
-  if (fromMission) void openCampaign();
+  if (from) void openCampaign(from);
   await titleWorld();
 }
 
@@ -565,13 +574,24 @@ async function mapFromUrl() {
   }
 }
 
-// ---------------------------------------------------------------- the campaign
+// ---------------------------------------------------------------- the tutorial
 /** The mission's map and rules take the place of the menu's settings. */
 function applyMissionOpts(id: string) {
   const m = missionById(id);
   if (!m) return false;
   if (!opts.mission) freeOpts = { ...opts };
   Object.assign(opts, { seed: m.map.seed, size: m.map.size, players: m.map.players, ai: m.map.aiLevel, mission: id });
+  // a campaign mission takes the run's column and boons, its difficulty, and how often Varro has fortified the region
+  // (a defence: how far the war has gone)
+  const at = regionOfMission(id);
+  for (const k of ['carry', 'difficulty', 'fortified'] as const) delete opts[k];
+  if (at && province) {
+    const start = startOf(province);
+    if (start) opts.carry = start;
+    opts.difficulty = province.difficulty;
+    const f = at.defence ? strikeWeight(province) : province.fortified[at.region] ?? 0;
+    if (f) opts.fortified = f;
+  }
   islands = m.map.islands !== false;
   progress.current = id;
   saveProgress();
@@ -588,14 +608,30 @@ async function startMission(id: string) {
   await play();
 }
 
-/** The campaign's page of the title screen. A mission the autosave holds, still being played, can be continued there. */
-async function openCampaign() {
+/** The tutorial's page of the title screen, or the campaign's. A mission the autosave holds, still being played, can be continued there. */
+async function openCampaign(kind: 'tutorial' | 'province' = 'tutorial') {
   const menu = titleMenu;
   if (!menu || menuEl !== menu.el) return;
   const sum = await getSummary(AUTO).catch(() => null);
   if (menuEl !== menu.el) return;
   const saved = sum?.meta.mission && !sum.meta.won ? { id: sum.meta.mission, line: `${playTime(sum.meta.time)} played · saved ${timeAgo(sum.meta.savedAt)}` } : undefined;
+  if (kind === 'province') {
+    const campaignSave = saved && regionOfMission(saved.id) ? saved : undefined;
+    menu.open(provincePage({
+      state: province,
+      saved: campaignSave,
+      seen: dispatchesSeen(),
+      begin: (d) => { beginProvince(d); markDispatchesSeen(0); void openCampaign('province'); },
+      start: (id) => startMission(id),
+      resume: () => resumeAuto(menu.el),
+      giveUp: () => { provinceLost(); void openCampaign('province'); },
+      read: (n) => markDispatchesSeen(n),
+      say: (id) => { if (!audio.started) audio.start(); void audio.say(id, { interrupt: true }); },
+    }));
+    return;
+  }
   menu.open(campaignPage(progress, {
+    kind,
     saved,
     start: (id) => startMission(id),
     resume: () => resumeAuto(menu.el),
@@ -605,6 +641,8 @@ async function openCampaign() {
 function markMissionDone() {
   if (!game.opts.mission) return;
   markDone(game.opts.mission, game.time);
+  // a region won (or a defence held): its best men and a share of its stores march on, and Varro moves
+  if (regionOfMission(game.opts.mission)) provinceWon(game.opts.mission, columnOf(game));
   autosave();
 }
 
@@ -750,8 +788,9 @@ async function startNetGame(s: StartMsg) {
 }
 
 async function boot() {
-  // ?mission=<id> goes straight into a campaign mission (handy while working on one)
-  const devMission = params.has('mission') && applyMissionOpts(params.get('mission')!);
+  // ?mission=<id> goes straight into a tutorial mission (handy while working on one)
+  // (?region=<id> for one of the campaign's regions, the same way)
+  const devMission = (params.has('mission') || params.has('region')) && applyMissionOpts((params.get('mission') ?? params.get('region'))!);
   await mapFromUrl();
   (window as any).MapBuilder = MapBuilder;
   // a game that was being played when the page went away carries on (unless the URL asks for a new one)
@@ -846,7 +885,12 @@ function startGame(resumed?: Record<string, unknown>) {
     nextMission: () => { const n = nextMission(progress.done); if (n) void startMission(n.id); else void restart(); },
     openMenu: (page) => openGameMenu(page),
   }, uiRoot);
-  gr.onEvent = (e) => { if (e.type === 'missionwon') markMissionDone(); hud?.onEvent(e); };
+  gr.onEvent = (e) => {
+    if (e.type === 'missionwon') markMissionDone();
+    // a defence lost: the region is his again (no second try: the war moves on)
+    if (e.type === 'defeated' && e.owner === game.local && game.opts.mission?.startsWith('defence.')) provinceLost(game.opts.mission);
+    hud?.onEvent(e);
+  };
   (window as any).hud = hud;
   if (view) {
     hud.loadGroups((resumed as { groups?: unknown }).groups);

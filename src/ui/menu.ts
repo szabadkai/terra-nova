@@ -1,11 +1,12 @@
 // The title screen, over a live, slowly orbiting preview of the generated map: one card that turns its
-// pages - the start (continue, the campaign, free play, a game with a friend), free play's settings,
+// pages - the start (continue, the tutorial, free play, a game with a friend), free play's settings,
 // how to play, and pages lent to it (the campaign's missions, campaign.ts). Every page but the start
 // has a way back, and Esc takes it.
 import { PLAYER_COLORS } from '../game/defs';
+import type { Carry } from '../game/campaign';
 import type { SaveMeta } from '../game/save';
 import { glyph, type GlyphName } from './glyphs';
-import { missionById } from '../game/campaign';
+import { missionById, missionIndex } from '../game/campaign';
 import { playTime, saveSubtitle, timeAgo } from './saveStore';
 import type { MapData } from '../game/map';
 
@@ -14,10 +15,14 @@ export interface MenuOptions {
   size: number;
   players: number;
   ai: number;
-  /** the campaign mission being played (missions.ts), none in free play */
+  /** the tutorial mission being played (missions.ts), none in free play */
   mission?: string;
   /** a map of the player's own (the editor's) in place of the generator's, for free play */
   map?: MapData;
+  /** a campaign region: the column marching in from the last one, the campaign's difficulty, Varro's fortifying */
+  carry?: Carry;
+  difficulty?: 0 | 1 | 2;
+  fortified?: number;
 }
 
 /** A page of the title screen's card. */
@@ -26,7 +31,7 @@ export interface MenuPage {
   /** a line under the heading */
   sub?: string;
   body: HTMLElement;
-  /** on the right of the heading (the campaign's progress) */
+  /** on the right of the heading (the tutorial's progress) */
   aside?: HTMLElement;
   /** the wide card, for a page with two columns */
   wide?: boolean;
@@ -66,7 +71,7 @@ const CONTROLS: [string, string][] = [
   ['Everything else', '<kbd>Esc</kbd> → Controls'],
 ];
 
-export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void, onCampaign?: () => void, onEditor?: () => void, onMaps?: () => void) {
+export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => void, onRegenerate: (o: MenuOptions) => void, onOptions?: () => void, onLoad?: () => void, onFriend?: () => void, onCampaign?: () => void, onProvince?: () => void, onEditor?: () => void, onMaps?: () => void) {
   const el = document.createElement('div');
   el.className = 'menu';
   el.innerHTML = `
@@ -79,7 +84,8 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
       <div class="menu-stage">
         <div class="panel menu-card tm-home">
           <div class="tm-tiles">
-            ${tile('campaign', 'laurel', 'Campaign', '<span class="camp-sub">Fifteen missions, one lesson each</span>', 'Fifteen missions that teach the game one lesson at a time, told by your quaestor')}
+            ${tile('province', 'standard', 'Campaign', '<span class="prov-sub">The war for the province</span>', 'The Province: the war for Terra Nova against the Senate’s governor, a region at a time')}
+            ${tile('campaign', 'laurel', 'Tutorial', '<span class="camp-sub">Fifteen short missions, one lesson each</span>', 'Learn the game one lesson at a time, told by your quaestor')}
             ${tile('free', 'map', 'Free play', 'Your own map against the computer')}
             ${tile('friend', 'friends', 'With a friend', 'Host a game or join one by its code', 'Two players over the internet: one hosts, the other joins with a code')}
             ${tile('editor', 'brush', 'Map editor', 'Shape a map of your own, or by script', 'Raise mountains, plant woods and place the players on a map of your own, then play it or share it as a file')}
@@ -210,12 +216,21 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
   el.querySelector<HTMLButtonElement>('#free')!.onclick = () => open(freePage());
   el.querySelector<HTMLButtonElement>('#editor')!.onclick = () => onEditor?.();
   el.querySelector<HTMLButtonElement>('#campaign')!.onclick = () => onCampaign?.();
+  el.querySelector<HTMLButtonElement>('#province')!.onclick = () => onProvince?.();
   el.querySelector<HTMLButtonElement>('#help')!.onclick = () => open(helpPage());
   el.querySelector<HTMLButtonElement>('#options')!.onclick = () => onOptions?.();
   el.querySelector<HTMLButtonElement>('#load')!.onclick = () => onLoad?.();
   el.querySelector<HTMLButtonElement>('#friend')!.onclick = () => { opts.ai = cur.ai; onFriend?.(); };
-  // with no game to continue, the campaign leads (see offerContinue)
-  el.querySelector('#campaign')!.classList.add('hero');
+  // with no game to continue, the tutorial leads until a lesson is learned, then the campaign (see lead, offerContinue)
+  let leader = '#campaign';
+  el.querySelector(leader)!.classList.add('hero');
+  /** Which tile leads when there is no game to continue. */
+  const lead = (which: 'tutorial' | 'campaign') => {
+    const was = el.querySelector(leader)!.classList.contains('hero');
+    el.querySelector(leader)!.classList.remove('hero');
+    leader = which === 'tutorial' ? '#campaign' : '#province';
+    if (was) el.querySelector(leader)!.classList.add('hero');
+  };
 
   /** Put the last game at the top of the card as the main action. */
   const offerContinue = (meta: SaveMeta, go: () => void) => {
@@ -223,15 +238,15 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     const b = document.createElement('button');
     b.className = 'tm-tile hero continue';
     b.innerHTML = `<span class="tm-medal${meta.thumb ? ' thumb' : ''}">${meta.thumb ? '<img alt="">' : glyph('play', 20)}</span>` +
-      `<span class="tm-t"><b>${meta.mission ? 'Continue the campaign' : 'Continue your reign'}</b><small></small></span>${glyph('play', 18, 'gl tm-chev')}`;
+      `<span class="tm-t"><b>${meta.mission ? (missionIndex(meta.mission) >= 0 ? 'Continue the tutorial' : 'Continue the campaign') : 'Continue your reign'}</b><small></small></span>${glyph('play', 18, 'gl tm-chev')}`;
     if (meta.thumb) b.querySelector('img')!.src = meta.thumb;
     b.querySelector('small')!.textContent = continueLine(meta);
     b.title = saveSubtitle(meta);
     b.onclick = () => { b.disabled = true; go(); };
     homeCard.querySelector('.tm-tiles')!.prepend(b);
-    el.querySelector('#campaign')!.classList.remove('hero');
+    el.querySelector(leader)!.classList.remove('hero');
   };
-  /** The line under the Campaign tile: what comes next. */
+  /** The line under the Tutorial tile: what comes next. */
   const setCampaignSub = (text: string) => {
     const s = el.querySelector<HTMLElement>('#campaign .camp-sub');
     if (s) s.textContent = text;
@@ -248,9 +263,14 @@ export function showMenu(parent: HTMLElement, opts: MenuOptions, onStart: () => 
     p.appendChild(b);
     homeCard.appendChild(p);
   };
+  /** The line under the Campaign tile. */
+  const setProvinceSub = (text: string) => {
+    const s = el.querySelector<HTMLElement>('#province .prov-sub');
+    if (s) s.textContent = text;
+  };
   /** The free-play page (again, after a map of the player's own was picked). */
   const showFree = () => open(freePage());
-  return { el, cur, offerContinue, note, setCampaignSub, open, home, showFree };
+  return { el, cur, offerContinue, note, setCampaignSub, setProvinceSub, lead, open, home, showFree };
 }
 
 export function showLoading(parent: HTMLElement, text: string) {

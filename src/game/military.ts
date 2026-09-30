@@ -59,11 +59,15 @@ export function recomputeTerritory(g: Game) {
   }
   w.ownerDirty = true;
   g.ownerVersion++;
-  // buildings on foreign land burn down
+  // buildings on foreign land burn down (a holy place goes over to whoever holds the land, or stands on nobody's)
   for (const b of g.buildings.values()) {
     if (b.state === 'burning') continue;
     if (b.def.military && b.occupied) continue;
     const c = w.idx(Math.round(b.cx), Math.round(b.cz));
+    if (b.sacred && w.owner[c] !== b.owner) {
+      if (w.owner[c] >= 0) changeHands(g, b, w.owner[c]);
+      continue;
+    }
     if (w.owner[c] !== b.owner) {
       g.message(b.owner, `${b.def.name} was lost to the enemy!`, b.cx, b.cz, 'bad', b.id);
       g.destroyBuilding(b, true);
@@ -546,6 +550,78 @@ function thinkDefend(g: Game, s: Settler): boolean {
   if (d > 16) { s.sstate = 'return'; return false; }
   plan(s, [besideFoe(g, s, t)]);
   return false;
+}
+
+/**
+ * A stronghold changes hands without a fight (a scripted rebellion or defection): its people go as a
+ * capture would send them, its goods stay behind for nobody, and `men` of the new owner's man it.
+ * Returns the new garrison.
+ */
+export function turnCoat(g: Game, b: Building, owner: number, men: { sword: number; bow: number; level?: number }): Settler[] {
+  if (!b.def.military || b.type === 'hq' || b.owner === owner) return [];
+  const prev = b.owner;
+  // (its own men walk back to their headquarters, not stand at a door that is no longer theirs)
+  const hq = g.buildings.get(g.players[prev]?.hq ?? 0);
+  for (const o of g.settlers.values()) {
+    if (o.owner === prev && (o.home === b.id || o.inside === b.id)) {
+      if (o.inside === b.id) exit(g, o);
+      abortPlan(g, o);
+      o.home = isSoldier(o) && hq && hq.owner === prev ? hq.id : 0;
+      if (isSoldier(o)) o.sstate = 'return';
+    }
+  }
+  b.owner = owner;
+  b.priority = false;
+  b.damage = 0;
+  b.garrison = [];
+  b.soldiersIncoming = 0;
+  b.desiredSoldiers = b.def.military!.capacity;
+  b.stock = Object.fromEntries(Object.keys(b.stock).map((k) => [k, 0])) as any;
+  b.incoming = Object.fromEntries(Object.keys(b.incoming).map((k) => [k, 0])) as any;
+  b.outgoing = Object.fromEntries(Object.keys(b.outgoing).map((k) => [k, 0])) as any;
+  const out: Settler[] = [];
+  const add = (job: 'swordsman' | 'bowman', n: number) => {
+    for (let k = 0; k < n; k++) {
+      const s = g.addSettler(owner, job, b.door);
+      s.hidden = true;
+      s.inside = b.id;
+      s.sstate = 'garrison';
+      s.home = b.id;
+      if (men.level) s.level = men.level;
+      b.garrison.push(s.id);
+      out.push(s);
+    }
+  };
+  add('swordsman', men.sword);
+  add('bowman', men.bow);
+  b.occupied = b.garrison.length > 0;
+  for (const o of g.settlers.values()) if (o.targetB === b.id && o.owner === owner) { o.targetB = 0; o.sstate = 'return'; }
+  g.message(prev, `Your ${b.def.name} has gone over to the enemy!`, b.cx, b.cz, 'bad', b.id);
+  g.emit({ type: 'turncoat', b: b.id, owner, x: b.cx, z: b.cz, n: prev });
+  g.territoryDirty = true;
+  return out;
+}
+
+/** A building other than a stronghold goes over to `owner` as it stands: the old owner's people in it go home, its goods stay for nobody. */
+export function changeHands(g: Game, b: Building, owner: number) {
+  const prev = b.owner;
+  for (const o of g.settlers.values()) {
+    if (o.owner === prev && (o.home === b.id || o.inside === b.id || b.worker === o.id)) {
+      if (o.inside === b.id) exit(g, o);
+      abortPlan(g, o);
+      o.home = 0;
+    }
+  }
+  b.owner = owner;
+  b.worker = 0;
+  b.workerIncoming = 0;
+  b.priority = false;
+  b.stock = Object.fromEntries(Object.keys(b.stock).map((k) => [k, 0])) as any;
+  b.incoming = Object.fromEntries(Object.keys(b.incoming).map((k) => [k, 0])) as any;
+  b.outgoing = Object.fromEntries(Object.keys(b.outgoing).map((k) => [k, 0])) as any;
+  g.message(prev, `The ${b.def.name} has gone over to the enemy`, b.cx, b.cz, 'bad', b.id);
+  g.message(owner, `The ${b.def.name} is ours`, b.cx, b.cz, 'good', b.id);
+  g.emit({ type: 'turncoat', b: b.id, owner, x: b.cx, z: b.cz, n: prev });
 }
 
 function capture(g: Game, b: Building, s: Settler) {

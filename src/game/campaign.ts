@@ -2,14 +2,19 @@
 // keeps for it, and the helpers a mission's setup uses to raise a camp, plant a rebel fort or send a
 // raid. Pure data and rules, no DOM; the missions themselves are in missions.ts. Everything here runs
 // inside the game (the constructor and the step), so it is deterministic and travels in saves.
-import { BUILDINGS, MINE_ORE, ORE_COAL, ORE_IRON, T_DIRT, T_FOREST, T_GRASS, T_MEADOW, emptyStock, type BuildingType, type Good, type Job } from './defs';
+import { BUILDINGS, MINE_ORE, ORE_COAL, ORE_IRON, T_DIRT, T_FOREST, T_GRASS, T_MEADOW, TOOLS, emptyStock, type BuildingType, type Good, type Job } from './defs';
 import type { Game } from './game';
 import type { Building, GameEvent, Settler, Ship, ShipKind } from './types';
+import type { Pt } from './mapgen';
+import { SPELLS, castError, castSpell, type SpellId } from './faith';
+import { launchAttack, turnCoat } from './military';
+import { afloat, bombardSpot, orderShipAttack, orderShipBombard, orderShipMove, seaOf } from './naval';
 import { atan2, cos, hypot, sin, sq } from '../core/fmath';
 import { orderAttack } from './orders';
-import { findDock, nearestNavigable } from './sea';
+import { SHIP_NAMES, WARSHIP_NAMES, findDock, nearestNavigable } from './sea';
 import { shipFields } from './naval';
 import { MISSIONS } from './missions';
+import { REGIONS, defenceMission } from './regions';
 
 /** Interface tools a mission can hold back (buildings are held back by `unlocks`). */
 export type Tool = 'geologist' | 'pioneer' | 'spells' | 'warships';
@@ -61,7 +66,12 @@ export interface RivalRule {
   name?: string;
   /** dormant only: its carriers, builders and diggers are sent away at the start, so the far camp stands quiet */
   noPeople?: boolean;
+  /** one of the province's peoples: once the campaign has made peace with it (`Carry.peace`), its raids and fleets stay home */
+  people?: People;
 }
+
+/** The province's peoples besides Varro, who can be won over for the rest of the campaign (Collis, Litus). */
+export type People = 'tribes' | 'pirates';
 
 export interface Raid {
   /** game seconds - after the start, or after the event named in `after` was first counted */
@@ -70,11 +80,62 @@ export interface Raid {
   after?: string;
   /** the rival the raiders belong to, default 1 */
   rival?: number;
-  /** edge: on free land 28-36 from the target on the far side from the player's headquarters; rival: at the rival's headquarters */
-  from: 'edge' | 'rival';
-  men: { sword: number; bow: number; hp?: number };
-  /** nearest-tower: the player's manned stronghold (not the headquarters) nearest the rival, else the headquarters */
-  target: 'nearest-tower' | 'hq';
+  /** edge: on free land 28-36 from the target on the far side from the player's headquarters; rival: at the rival's headquarters; a spot: there (a designed map's) */
+  from: 'edge' | 'rival' | Pt;
+  /** level: veterans (+25% a level, the gold helm) */
+  men: { sword: number; bow: number; hp?: number; level?: number };
+  /** nearest-tower: the player's manned stronghold (not the headquarters) nearest the rival, else the headquarters; or the scripted pick */
+  target: 'nearest-tower' | 'hq' | ((g: Game) => Building | undefined);
+}
+
+/**
+ * What a scripted fleet does, and keeps doing whenever it runs out of things to do: `shell` the
+ * player's coast, then his ships; `hunt` his ships, then his coast; `prey` on his ships only, back to
+ * where it appeared between kills (pirates, who want cargo, not ruins); `guard` where it is.
+ */
+export type FleetOrder = 'hunt' | 'shell' | 'prey' | 'guard';
+
+/** Who speaks a scripted line: the quaestor (your side) or Varro (his letters). */
+export type Speaker = 'quaestor' | 'varro';
+
+/** One thing a trigger does. */
+export type Action =
+  /** a line on screen with its speaker's seal, and its recording (`<mission>.<trigger>`) */
+  | { a: 'say'; who: Speaker; title: string; text?: string }
+  /** a band appears and marches (Raid without its clock); `band` names it, so a goal can ask whether it is broken */
+  | { a: 'raid'; band?: string; raid: Omit<Raid, 't' | 'after'> }
+  /** a rival sends men from its own garrisons at one of the player's strongholds */
+  | { a: 'attack'; rival?: number; men: number; target: (g: Game) => Building | undefined }
+  /** more men into one of the mission's forts (ms.forts[k]), if it is still the rival's */
+  | { a: 'reinforce'; fort: number; men: { sword: number; bow: number; level?: number } }
+  /** a rival's mind changes: a builder turns to war, or a dormant camp's garrisons wake */
+  | { a: 'mode'; rival?: number; mode: 'ai' | 'builder' }
+  /** the fog lifts round a spot */
+  | { a: 'reveal'; at: Pt; r: number }
+  /** a rival's priests cast a spell there (its mana topped up to pay for it) */
+  | { a: 'cast'; rival?: number; spell: SpellId; at: (g: Game) => { x: number; z: number } | null }
+  /** warships of a rival's appear near a spot on the sea (their band named `band`, else the trigger's id) and keep at their `order` (default shell); `hp` hardens them, `name` christens the first */
+  | { a: 'fleet'; rival?: number; n: number; near: Pt; band?: string; order?: FleetOrder; hp?: number; name?: string }
+  /** strongholds go over to another side, manned by it (a rebellion; buildings on land that turns foreign then burn) */
+  | { a: 'flip'; to: number; pick: (g: Game) => Building[]; men: { sword: number; bow: number; level?: number } }
+  /** soldiers join the player at the headquarters (allies won over) */
+  | { a: 'join'; men: { sword: number; bow: number; level?: number } }
+  /** goods into a player's headquarters */
+  | { a: 'goods'; owner?: number; goods: Partial<Record<Good, number>> }
+  /** anything else, in code */
+  | { a: 'do'; run: (g: Game) => void };
+
+/**
+ * A turn of events in a mission, fired once when every condition given holds (checked every two
+ * seconds): game seconds `t` (from the start, or from the first time the tally key `after` was
+ * counted), a tally reached, a predicate.
+ */
+export interface Trigger {
+  id: string;
+  when: { t?: number; after?: string; tally?: [string, number]; test?: (g: Game) => boolean };
+  do: Action[];
+  /** a rival's doing: at peace with its people, the trigger passes over (its bands and fleets counted as sent, and none left) */
+  by?: number;
 }
 
 export interface MissionRules {
@@ -84,6 +145,10 @@ export interface MissionRules {
   truce?: number;
   /** computer rivals never yield: they are fought to the last stronghold */
   noYield?: boolean;
+  /** the mission's script: turns of events as the game goes (the director) */
+  script?: Trigger[];
+  /** a mission can be lost as well as won: why, once it is (checked every two seconds), or null */
+  fail?: (g: Game) => string | null;
   /** strongholds: every rival stronghold shows through the fog from the start; all: the whole map */
   reveal?: 'none' | 'strongholds' | 'all';
   raids?: Raid[];
@@ -97,7 +162,12 @@ export interface Mission {
   briefing: string[];
   debrief: string;
   hook: string;
-  map: { size: number; seed: number; players: number; aiLevel: number; islands?: boolean };
+  /** `recipe`: a designed map (recipes.ts) instead of the seed's own; `size` must be the recipe's */
+  map: { size: number; seed: number; players: number; aiLevel: number; islands?: boolean; recipe?: string };
+  /** the line over the title in the briefing and the objectives (default "Mission IV", the tutorial's numeral) */
+  kicker?: string;
+  /** every building and tool granted from the start (the campaign's regions) */
+  open?: boolean;
   /** buildings this mission grants; what earlier missions granted stays */
   unlocks: BuildingType[];
   tools?: Tool[];
@@ -127,6 +197,18 @@ export interface MissionState {
   tally: Record<string, number>;
   /** the game time each of those was first counted */
   at: Record<string, number>;
+  /** the soldiers the raids sent, by id (the living ones are the raids not yet broken) */
+  raiders?: number[];
+  /** the script's triggers that have fired, by id */
+  fired?: string[];
+  /** the men of each named band a trigger sent (raids, fleets' ships), by id */
+  bands?: Record<string, number[]>;
+  /** how many ships the script's fleets have launched (for their names) */
+  fleetN?: number;
+  /** the fleets that keep at their order: band name -> order and where it appeared (a guarding fleet is not listed) */
+  fleets?: Record<string, { order: Exclude<FleetOrder, 'guard'>; at: Pt }>;
+  /** why the mission was lost, once it is */
+  lost?: string;
 }
 
 export const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'];
@@ -134,7 +216,11 @@ export function numeralOf(i: number) { return ROMAN[i] ?? String(i + 1); }
 
 // ------------------------------------------------------------------ lookups
 export function missionById(id: string): Mission | undefined {
-  return MISSIONS.find((m) => m.id === id);
+  return MISSIONS.find((m) => m.id === id) ?? REGIONS.find((m) => m.id === id) ?? (id.startsWith('defence.') ? defenceMission(id) : undefined);
+}
+/** The line over a mission's title: "Mission IV" in the tutorial, the region's own in the campaign. */
+export function missionLabel(m: Mission): string {
+  return m.kicker ?? `Mission ${numeralOf(missionIndex(m.id))}`;
 }
 export function missionIndex(id: string): number {
   return MISSIONS.findIndex((m) => m.id === id);
@@ -149,6 +235,7 @@ const toolCache = new Map<string, Set<Tool>>();
 /** Every building granted by this mission and the ones before it. */
 export function allowedTypes(m: Mission): ReadonlySet<BuildingType> {
   let set = allowedCache.get(m.id);
+  if (!set && m.open) allowedCache.set(m.id, set = new Set(Object.keys(BUILDINGS) as BuildingType[]));
   if (!set) {
     set = new Set<BuildingType>();
     for (const x of MISSIONS) {
@@ -161,6 +248,7 @@ export function allowedTypes(m: Mission): ReadonlySet<BuildingType> {
 }
 export function allowedTools(m: Mission): ReadonlySet<Tool> {
   let set = toolCache.get(m.id);
+  if (!set && m.open) toolCache.set(m.id, set = new Set<Tool>(['geologist', 'pioneer', 'spells', 'warships']));
   if (!set) {
     set = new Set<Tool>();
     for (const x of MISSIONS) {
@@ -204,6 +292,83 @@ export function beginMission(g: Game) {
     w.exploredDirty = true;
   }
   m.setup?.(g);
+  if (g.opts.carry) applyCarry(g, g.opts.carry);
+  hardenRivals(g);
+}
+
+/** The campaign's difficulty and Varro's fortifying, on a region's rivals: their minds a level up or down, more men in their forts. */
+function hardenRivals(g: Game) {
+  const d = g.opts.difficulty, f = g.opts.fortified ?? 0;
+  if (d !== undefined) for (const a of g.ai) { const rule = rivalRule(g.mission, a.p); if (rule?.level !== undefined) a.level = Math.max(0, Math.min(2, rule.level + d - 1)); }
+  if (!f) return;
+  for (const id of g.ms?.forts ?? []) {
+    const b = g.buildings.get(id);
+    if (!b || !b.def.military) continue;
+    const room = b.def.military.capacity - b.garrison.length;
+    const sword = Math.min(room, f), bow = Math.min(room - sword, Math.floor(f / 2));
+    if (sword + bow > 0) garrison(g, b, { sword, bow });
+  }
+}
+
+/** How much bigger a region's raids are for the campaign's difficulty and Varro's fortifying (1 in the tutorial). */
+export function raidScale(g: Game) {
+  const d = g.opts.difficulty;
+  return (d === undefined ? 1 : [0.7, 1, 1.35][d]) * (1 + 0.25 * (g.opts.fortified ?? 0));
+}
+
+// ------------------------------------------------------------------ the column: what marches on between regions
+/** What marches on from a won region into the next (CAMPAIGN.md): plain data, carried in the next game's opts. */
+export interface Carry {
+  /** the best of the soldiers who came through, each a level higher for it (to 3) */
+  veterans: { job: 'swordsman' | 'bowman'; level: number }[];
+  /** the wagons: a capped share of what was in store */
+  goods: Partial<Record<Good, number>>;
+  /** ships that sail with it (the boons of the sea regions), waiting off the new coast if it has one */
+  ships?: { trade?: number; war?: number };
+  /** the peoples won over (Collis, Litus): their raids and fleets no longer come */
+  peace?: People[];
+}
+/** How many soldiers march on: what the headquarters holds. */
+export const COLUMN_MEN = 12;
+export const TOP_LEVEL = 3;
+/** The most of each good the wagons take. */
+export const WAGONS: Partial<Record<Good, number>> = {
+  board: 30, stone: 30, log: 20, coal: 12, iron: 12, gold: 12, sword: 12, bow: 12, bread: 10, fish: 10, meat: 10,
+  ...Object.fromEntries(TOOLS.map((t) => [t, 4])),
+};
+
+/** The column a won game sends on: its soldiers alive, the best first, each raised a level; and the wagons. Reads the game only. */
+export function columnOf(g: Game): Carry {
+  const men = [...g.settlers.values()]
+    .filter((s) => s.owner === g.local && !s.dead && (s.job === 'swordsman' || s.job === 'bowman'))
+    .sort((a, b) => b.level - a.level || b.hp / b.maxHp - a.hp / a.maxHp || a.id - b.id)
+    .slice(0, COLUMN_MEN);
+  const have = g.totalStock(g.local);
+  const goods: Partial<Record<Good, number>> = {};
+  for (const [k, cap] of Object.entries(WAGONS)) { const n = Math.min(cap ?? 0, have[k as Good] ?? 0); if (n > 0) goods[k as Good] = n; }
+  return { veterans: men.map((s) => ({ job: s.job as 'swordsman' | 'bowman', level: Math.min(TOP_LEVEL, s.level + 1) })), goods };
+}
+
+/** The column joins the start: veterans take the places of the headquarters' recruits (and fill it), the wagons unload. */
+export function applyCarry(g: Game, c: Carry) {
+  const hq = hqOf(g);
+  const cap = hq.def.military!.capacity;
+  for (const v of [...c.veterans].sort((a, b) => b.level - a.level)) {
+    const rookie = hq.garrison.map((id) => g.settlers.get(id)!).find((s) => s && s.job === v.job && s.level === 0);
+    if (rookie) { rookie.level = v.level; continue; }
+    if (hq.garrison.length >= cap) continue;
+    garrison(g, hq, { sword: v.job === 'swordsman' ? 1 : 0, bow: v.job === 'bowman' ? 1 : 0 });
+    const s = g.settlers.get(hq.garrison[hq.garrison.length - 1]);
+    if (s) s.level = v.level;
+  }
+  hq.desiredSoldiers = cap;
+  for (const [k, n] of Object.entries(c.goods)) hq.stock[k as Good] += n ?? 0;
+  // (an inland region has no sea for them: they wait for the next coast)
+  for (const kind of ['trade', 'war'] as const) {
+    for (let k = 0; k < (c.ships?.[kind] ?? 0); k++) {
+      try { ship(g, { kind, owner: g.local, x: hq.cx, z: hq.cz, r: 26, own: true }); } catch { break; }
+    }
+  }
 }
 
 /** Every event of the local player's doing goes on the tally the goals read. */
@@ -212,7 +377,7 @@ export function tallyEvent(g: Game, e: GameEvent) {
   if (!ms) return;
   const bump = (k: string) => { if (!ms.tally[k]) ms.at[k] = g.time; ms.tally[k] = (ms.tally[k] ?? 0) + 1; };
   // a ship going down is counted by the ship, whoever sank it; a raid is the rival's doing but the player's concern
-  if (e.type === 'sinking' && e.s) bump(`sinking:${e.s}`);
+  if (e.type === 'sinking' && e.s) { bump(`sinking:${e.s}`); bump(`sunk:${e.owner}`); }
   if (e.type === 'raid') bump('raid');
   // whose doing: the event's owner, else the owner of the building it names
   let owner = e.owner;
@@ -237,18 +402,197 @@ export function missionStep(g: Game) {
       const since = r.after ? ms.at[r.after] : 0;
       if (since === undefined || g.time < since + r.t) break;
       ms.raid++;
-      fireRaid(g, r);
+      ms.raiders = [...(ms.raiders ?? []), ...fireRaid(g, r).map((s) => s.id)];
     }
   }
+  for (const tr of rules?.script ?? []) {
+    if (ms.fired?.includes(tr.id) || !triggerDue(g, tr)) continue;
+    (ms.fired ??= []).push(tr.id);
+    if (tr.by !== undefined && atPeace(g, tr.by)) {
+      for (const act of tr.do) if (act.a === 'fleet' || (act.a === 'raid' && act.band)) { const name = act.a === 'fleet' ? act.band ?? tr.id : act.band!; (ms.bands ??= {})[name] ??= []; }
+      continue;
+    }
+    // (a spell its priests cannot cast yet - no priest in the temple - waits for the next check)
+    for (const act of tr.do) if (runAction(g, m, tr, act) === false) { ms.fired = ms.fired!.filter((id) => id !== tr.id); break; }
+  }
+  if (ms.fleets) fleetStep(g);
   if (rules?.truce && !ms.truceOver && g.time >= rules.truce) {
     ms.truceOver = true;
     g.emit({ type: 'truceover', owner: g.local });
     g.message(g.local, 'The truce is over: the enemy may march at any time', undefined, undefined, 'bad');
   }
-  if (!ms.won && m.goals.every((goal) => goal.optional || goal.done(g))) {
+  if (!ms.won && !ms.lost && rules?.fail) {
+    const why = rules.fail(g);
+    if (why) { ms.lost = why; g.emit({ type: 'missionlost', owner: g.local, text: why }); }
+  }
+  if (!ms.won && !ms.lost && m.goals.every((goal) => goal.optional || goal.done(g))) {
     ms.won = true;
     g.emit({ type: 'missionwon', owner: g.local });
   }
+}
+
+function triggerDue(g: Game, tr: Trigger): boolean {
+  const ms = g.ms!, w = tr.when;
+  if (w.after !== undefined && ms.at[w.after] === undefined) return false;
+  if (w.t !== undefined && g.time < (w.after !== undefined ? ms.at[w.after] : 0) + w.t) return false;
+  if (w.tally && (ms.tally[w.tally[0]] ?? 0) < w.tally[1]) return false;
+  if (w.test && !w.test(g)) return false;
+  return true;
+}
+
+/** Does what a trigger says; false when it cannot be done yet (the trigger is then tried again). */
+function runAction(g: Game, m: Mission, tr: Trigger, act: Action): boolean | void {
+  const ms = g.ms!;
+  const band = (name: string | undefined, ids: number[]) => { if (name) (ms.bands ??= {})[name] = [...(ms.bands?.[name] ?? []), ...ids]; };
+  switch (act.a) {
+    case 'say':
+      g.emit({ type: 'say', owner: g.local, kind: act.who, text: act.title, detail: act.text, voice: `${m.id}.${tr.id}` });
+      break;
+    case 'raid':
+      band(act.band, fireRaid(g, { ...act.raid, t: 0 }).map((s) => s.id));
+      break;
+    case 'attack': {
+      const t = act.target(g);
+      if (t) launchAttack(g, act.rival ?? 1, t, act.men);
+      break;
+    }
+    case 'reinforce': {
+      const b = g.buildings.get(ms.forts[act.fort] ?? 0);
+      if (b && b.owner !== g.local && b.state === 'done') {
+        const before = b.garrison.length, room = b.def.military!.capacity - before;
+        const sword = Math.min(room, act.men.sword), bow = Math.min(room - sword, act.men.bow);
+        if (sword + bow <= 0) break;
+        garrison(g, b, { sword, bow });
+        if (act.men.level) for (const id of b.garrison.slice(before)) { const s = g.settlers.get(id); if (s) s.level = act.men.level; }
+      }
+      break;
+    }
+    case 'mode':
+      for (const a of g.ai) if (a.p === (act.rival ?? 1)) a.mode = act.mode;
+      break;
+    case 'reveal':
+      revealAround(g, act.at[0], act.at[1], act.r);
+      break;
+    case 'cast': {
+      const at = act.at(g), who = act.rival ?? 1;
+      if (!at) break;
+      const p = g.players[who];
+      if (!p?.alive) break;
+      const mana = p.mana, cd = p.spellCd;
+      if (p.mana < SPELLS[act.spell].cost) p.mana = SPELLS[act.spell].cost;
+      p.spellCd = 0;
+      if (castError(g, who, act.spell, at.x, at.z) !== null) { p.mana = mana; p.spellCd = cd; return false; }
+      castSpell(g, who, act.spell, at.x, at.z);
+      break;
+    }
+    case 'fleet': {
+      const who = act.rival ?? 1, ids: number[] = [], name = act.band ?? tr.id, order = act.order ?? 'shell';
+      if (!g.players[who]?.alive) break;
+      const k = raidScale(g), n = k === 1 ? act.n : Math.max(1, Math.round(act.n * k));
+      for (let j = 0; j < n; j++) {
+        try {
+          const sh = ship(g, { kind: 'war', owner: who, x: act.near[0] + j * 2.5, z: act.near[1], r: 12, name: j === 0 && act.name ? act.name : FLEET_SHIPS[(ms.fleetN = (ms.fleetN ?? 0) + 1) % FLEET_SHIPS.length] });
+          if (act.hp) sh.hp = sh.maxHp = act.hp;
+          ids.push(sh.id);
+        } catch { break; }
+      }
+      band(name, ids);
+      if (order !== 'guard' && ids.length) {
+        const sh = g.ships.get(ids[0])!;
+        (ms.fleets ??= {})[name] = { order, at: [sh.x, sh.z] };
+        fleetOrders(g, name);
+      }
+      if (ids.length) {
+        const sh = g.ships.get(ids[0])!;
+        g.emit({ type: 'fleet', owner: who, x: sh.x, z: sh.z, s: sh.id, n: ids.length, kind: order });
+      }
+      break;
+    }
+    case 'flip':
+      for (const b of act.pick(g)) turnCoat(g, b, act.to, act.men);
+      break;
+    case 'join': {
+      const hq = hqOf(g), before = hq.garrison.length;
+      garrison(g, hq, act.men);
+      if (act.men.level) for (const id of hq.garrison.slice(before)) { const s = g.settlers.get(id); if (s) s.level = act.men.level; }
+      hq.desiredSoldiers = hq.def.military!.capacity;
+      break;
+    }
+    case 'goods': {
+      const st = hqOf(g, act.owner ?? g.local).stock;
+      for (const [k, v] of Object.entries(act.goods)) st[k as Good] += v ?? 0;
+      break;
+    }
+    case 'do':
+      act.run(g);
+      break;
+  }
+}
+
+/** The player's stronghold on the coast nearest a ship that its stones can reach, for a fleet to bombard. */
+function coastalStronghold(g: Game, from: Ship): Building | undefined {
+  let best: Building | undefined, bd = Infinity;
+  for (const b of g.buildings.values()) {
+    if (b.owner !== g.local || !b.def.military || b.state !== 'done') continue;
+    const d = sq(b.cx - from.x) + sq(b.cz - from.z);
+    if (d >= bd || !bombardSpot(g, from, b)) continue;
+    bd = d;
+    best = b;
+  }
+  return best;
+}
+/** A player's ship afloat nearest a spot (on one sea, if given), for a hunting fleet. */
+export function nearestShipOf(g: Game, owner: number, x: number, z: number, sea = 0): Ship | undefined {
+  let best: Ship | undefined, bd = Infinity;
+  for (const sh of g.ships.values()) {
+    if (sh.owner !== owner || !afloat(sh) || (sea && seaOf(g, sh) !== sea)) continue;
+    const d = sq(sh.x - x) + sq(sh.z - z);
+    if (d < bd) { bd = d; best = sh; }
+  }
+  return best;
+}
+
+/** A fleet's ships that stand idle (on guard with nothing in sight) take up its order again: the player's ships, or his coast. */
+function fleetOrders(g: Game, name: string) {
+  const f = g.ms?.fleets?.[name];
+  if (!f) return;
+  for (const id of g.ms!.bands?.[name] ?? []) {
+    const sh = g.ships.get(id);
+    if (!sh || !afloat(sh) || sh.state !== 'guard' || sh.target) continue;
+    const prey = () => { const t = nearestShipOf(g, g.local, sh.x, sh.z, seaOf(g, sh)); return !!t && orderShipAttack(g, sh.owner, [sh.id], t) > 0; };
+    const coast = () => { const b = coastalStronghold(g, sh); return !!b && orderShipBombard(g, sh.owner, [sh.id], b) > 0; };
+    if (f.order === 'hunt') { if (!prey()) coast(); }
+    else if (f.order === 'shell') { if (!coast()) prey(); }
+    else if (!prey() && !sh.route && hypot(sh.x - f.at[0], sh.z - f.at[1]) > 4) orderShipMove(g, sh.owner, [sh.id], f.at[0], f.at[1]);
+  }
+}
+
+/** Once a step: every fleet that keeps at its order; a fleet with no ship afloat is struck off. */
+function fleetStep(g: Game) {
+  const ms = g.ms!;
+  for (const name of Object.keys(ms.fleets ?? {})) {
+    if (fleetLeft(g, name).afloat === 0) { delete ms.fleets![name]; continue; }
+    fleetOrders(g, name);
+  }
+}
+/** The ships of a named band still afloat (and whether it has sailed at all). */
+export function fleetLeft(g: Game, name: string): { sent: boolean; afloat: number } {
+  const ids = g.ms?.bands?.[name];
+  if (!ids) return { sent: false, afloat: 0 };
+  return { sent: true, afloat: ids.filter((id) => { const sh = g.ships.get(id); return !!sh && sh.hp > 0 && sh.state !== 'sinking'; }).length };
+}
+
+/** The men of a named band still alive (and whether it has marched at all). */
+export function bandLeft(g: Game, name: string): { sent: boolean; alive: number } {
+  const ids = g.ms?.bands?.[name];
+  if (!ids) return { sent: false, alive: 0 };
+  return { sent: true, alive: ids.filter((id) => { const s = g.settlers.get(id); return !!s && !s.dead; }).length };
+}
+
+/** Whether the campaign has made peace with a rival's people (it holds their region): their raids and fleets stay home. */
+export function atPeace(g: Game, rival: number): boolean {
+  const people = rivalRule(g.mission, rival)?.people;
+  return !!people && !!g.opts.carry?.peace?.includes(people);
 }
 
 /** Whether a computer rival is truced: no attack, no bombardment yet. */
@@ -258,6 +602,15 @@ export function truced(g: Game) {
 }
 
 export function allRivalsDefeated(g: Game) { return g.players.every((p) => p.id === g.local || !p.alive); }
+/** Every raid has marched and not one of its men is left alive (in the field or in a tower he took). */
+export function raidsBroken(g: Game) {
+  const n = g.mission?.rules?.raids?.length ?? 0;
+  return !!g.ms && g.ms.raid >= n && (g.ms.raiders ?? []).every((id) => { const s = g.settlers.get(id); return !s || s.dead; });
+}
+/** Raiders of this mission still alive. */
+export function raidersLeft(g: Game) {
+  return (g.ms?.raiders ?? []).filter((id) => { const s = g.settlers.get(id); return !!s && !s.dead; }).length;
+}
 
 // ------------------------------------------------------------------ setup helpers
 /** The placeable anchor for `type` nearest (x, z), within rMax. `unclaimed` = on nobody's land (a rival's fort). */
@@ -396,7 +749,19 @@ export function fort(g: Game, o: FortOpts): Building {
   throw new Error(`campaign: no room for a ${o.type} of player ${o.owner} at ${o.near.dist.join('-')} from the headquarters`);
 }
 
+/** A rival's manned stronghold on free land at a designed spot (a campaign region's fort), within rMax of it. */
+export function fortAt(g: Game, type: FortOpts['type'], owner: number, x: number, z: number, rMax: number, men: FortOpts['garrison']): Building {
+  const a = placeNear(g, owner, type, x, z, rMax, true);
+  if (!a) throw new Error(`campaign: no room for a ${type} of player ${owner} near ${x},${z}`);
+  const b = g.addBuilding(type, owner, a.x, a.y, true);
+  garrison(g, b, men);
+  g.ms?.forts.push(b.id);
+  return b;
+}
+
 const REBEL_SHIPS = ['Corvus', 'Aquila', 'Ursa', 'Draco', 'Lupa'];
+/** A scripted fleet's ships, unless the script names one (the Corvus and the Aquila are the story's own). */
+const FLEET_SHIPS = ['Murena', 'Scylla', 'Vipera', 'Tigris', 'Harpyia', 'Nox', 'Praedo', 'Hydra', 'Lamia', 'Charybdis', 'Mustela', 'Scorpio'];
 
 /** The navigable water nearest a spot within `r`, -1 if none (any sea, or the one given). */
 export function seaNear(g: Game, x: number, z: number, r = 30, sea = 0): number {
@@ -412,14 +777,19 @@ export function seaNear(g: Game, x: number, z: number, r = 30, sea = 0): number 
   return best;
 }
 
-/** A rival's ship at sea near a spot: a trade ship waits there, a warship stands guard. */
-export function ship(g: Game, o: { kind: ShipKind; owner: number; x: number; z: number; r?: number }): Ship {
+/**
+ * A ship at sea near a spot: a trade ship waits there, a warship stands guard. A rival's goes on the
+ * mission's list (`ms.ships`) under a rebel's name; the player's own (`own`, the column's) under one
+ * of his yard's.
+ */
+export function ship(g: Game, o: { kind: ShipKind; owner: number; x: number; z: number; r?: number; name?: string; own?: boolean }): Ship {
   const w = g.world;
   const i = seaNear(g, o.x, o.z, o.r ?? 30);
   if (i < 0) throw new Error(`campaign: no sea near ${o.x.toFixed(0)},${o.z.toFixed(0)} for a ship`);
   const x = w.nx(i), z = w.ny(i);
+  const names = o.kind === 'war' ? WARSHIP_NAMES : SHIP_NAMES;
   const sh: Ship = {
-    id: g.id(), owner: o.owner, name: REBEL_SHIPS[g.ships.size % REBEL_SHIPS.length],
+    id: g.id(), owner: o.owner, name: o.name ?? (o.own ? names[(g.ships.size * 7 + 3) % names.length] : REBEL_SHIPS[g.ships.size % REBEL_SHIPS.length]),
     x, z, heading: 0, speed: 0,
     route: null, routeS: 0, routeLen: 0, state: o.kind === 'war' ? 'guard' : 'idle', at: 0, from: 0, to: 0, timer: 0,
     cargo: emptyStock(), lots: [], passengers: [], expedition: 0, berth: 0, born: g.time, wait: 0,
@@ -427,7 +797,7 @@ export function ship(g: Game, o: { kind: ShipKind; owner: number; x: number; z: 
   };
   if (o.kind === 'war') { sh.postX = x; sh.postZ = z; }
   g.ships.set(sh.id, sh);
-  g.ms?.ships.push(sh.id);
+  if (!o.own) g.ms?.ships.push(sh.id);
   return sh;
 }
 
@@ -461,14 +831,22 @@ function edgeSpot(g: Game, target: Building, dMin: number, dMax: number): number
   return spots[0]?.i ?? hqOf(g, 1).door;
 }
 
+/** A walkable node near a spot (a designed map's). */
+function spotNear(g: Game, x: number, z: number): number {
+  const w = g.world;
+  let best = -1, bd = Infinity;
+  w.forRadius(x, z, 8, (i, _x, _y, d2) => { if (d2 < bd && w.walkable(i)) { bd = d2; best = i; } });
+  return best >= 0 ? best : hqOf(g, 1).door;
+}
+
 /** A band of a rival's soldiers appears and marches on the player. */
 export function fireRaid(g: Game, r: Raid): Settler[] {
   const w = g.world;
   const rival = r.rival ?? 1;
-  if (!g.players[rival]?.alive) return [];
+  if (!g.players[rival]?.alive || atPeace(g, rival)) return [];
   const rhq = hqOf(g, rival);
-  const target = r.target === 'hq' ? hqOf(g) : nearestTower(g, rhq.cx, rhq.cz);
-  const at = r.from === 'rival' ? rhq.door : edgeSpot(g, target, 28, 36);
+  const target = typeof r.target === 'function' ? r.target(g) ?? nearestTower(g, rhq.cx, rhq.cz) : r.target === 'hq' ? hqOf(g) : nearestTower(g, rhq.cx, rhq.cz);
+  const at = Array.isArray(r.from) ? spotNear(g, r.from[0], r.from[1]) : r.from === 'rival' ? rhq.door : edgeSpot(g, target, 28, 36);
   const men: Settler[] = [];
   const add = (job: Job, n: number) => {
     for (let k = 0; k < n; k++) {
@@ -478,11 +856,13 @@ export function fireRaid(g: Game, r: Raid): Settler[] {
       const s = g.addSettler(rival, job, men.length ? node : at);
       g.syncPos(s);
       if (r.men.hp) s.hp = s.maxHp = r.men.hp;
+      if (r.men.level) s.level = r.men.level;
       men.push(s);
     }
   };
-  add('swordsman', r.men.sword);
-  add('bowman', r.men.bow);
+  const k = raidScale(g);
+  add('swordsman', k === 1 ? r.men.sword : Math.max(1, Math.round(r.men.sword * k)));
+  add('bowman', k === 1 ? r.men.bow : Math.round(r.men.bow * k));
   orderAttack(g, rival, men.map((s) => s.id), target);
   g.emit({ type: 'raid', owner: rival, x: w.nx(at), z: w.ny(at), b: target.id });
   return men;

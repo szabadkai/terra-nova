@@ -1,5 +1,5 @@
 // Guided objectives: the free-play "Chronicle", a light chain that teaches the economy, and the panel
-// that shows it — or a campaign mission's goals (missions.ts), which come with a "Show me".
+// that shows it — or a tutorial mission's goals (missions.ts), which come with a "Show me".
 import { BuildingType } from '../game/defs';
 import type { Game } from '../game/game';
 import type { FocusSpec, Goal } from '../game/campaign';

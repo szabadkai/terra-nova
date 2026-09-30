@@ -9,6 +9,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const VOICE = '9Po0MT5ARCjcSMymzKvp'; // Gaius Sestius
+// the other speakers (voice/speakers.json): their ElevenLabs voice from the environment, their lines skipped until it is set
+const VOICES: Record<string, string | undefined> = { varro: process.env.VARRO_VOICE };
 const MODEL = 'eleven_v3';
 const FORMAT = 'mp3_44100_128';
 const SETTINGS = { stability: 0.5 }; // v3: 0 creative, 0.5 natural, 1 robust
@@ -23,7 +25,11 @@ const outDir = oi >= 0 ? args[oi + 1] : 'public/voice';
 const force = args.includes('--force');
 const only = args.filter((a, i) => !a.startsWith('--') && (oi < 0 || (i !== oi + 1)));
 const lines: Record<string, string> = JSON.parse(readFileSync('voice/lines.json', 'utf8'));
-const want = Object.keys(lines).filter((id) => !only.length || only.some((o) => id === o || id.startsWith(`${o}.`)));
+const speakers: Record<string, string> = existsSync('voice/speakers.json') ? JSON.parse(readFileSync('voice/speakers.json', 'utf8')) : {};
+const voiceOf = (id: string) => (speakers[id] ? VOICES[speakers[id]] : VOICE);
+const unvoiced = Object.keys(lines).filter((id) => !voiceOf(id));
+if (unvoiced.length) console.log(`skipping ${unvoiced.length} line(s) with no voice set (${[...new Set(unvoiced.map((id) => speakers[id]))].map((w) => `${w.toUpperCase()}_VOICE`).join(', ')}): ${unvoiced.join(', ')}`);
+const want = Object.keys(lines).filter((id) => voiceOf(id) && (!only.length || only.some((o) => id === o || id.startsWith(`${o}.`))));
 const todo = want.filter((id) => force || !existsSync(`${outDir}/${id}.mp3`));
 console.log(`${todo.length} of ${want.length} lines to synthesise into ${outDir} (${todo.reduce((n, id) => n + lines[id].length, 0)} characters)`);
 mkdirSync(outDir, { recursive: true });
@@ -32,7 +38,7 @@ const spoken = (text: string) => `${STYLE} ${text.split(/\n\n+/).join('\n\n[paus
 
 async function synth(id: string): Promise<void> {
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE}?output_format=${FORMAT}`, {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceOf(id)}?output_format=${FORMAT}`, {
       method: 'POST',
       headers: { 'xi-api-key': key!, 'content-type': 'application/json', accept: 'audio/mpeg' },
       body: JSON.stringify({ text: spoken(lines[id]), model_id: MODEL, voice_settings: SETTINGS }),

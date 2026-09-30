@@ -6,6 +6,8 @@ import {
 } from './defs';
 import { generateMap } from './mapgen';
 import { applyMap, type MapData } from './map';
+import { recipeById } from './recipes';
+import type { Carry } from './campaign';
 import { PathFinder } from './path';
 import { populateWild, updateWild, wander } from './wildlife';
 import type { Animal, Building, Expedition, Field, GameEvent, Projectile, SeaOrder, Settler, Ship, Sign, Stone, TradeOrder, Tree } from './types';
@@ -62,6 +64,11 @@ export interface GameOptions {
   mission?: string;
   /** a map of the players' own (map.ts) in place of the generator's: its size wins, and `players` may not exceed its starts */
   map?: MapData;
+  /** a campaign region: the column that marched in from the last one (veterans and wagons, campaign.ts), added to the start */
+  carry?: Carry;
+  /** a campaign region: the campaign's difficulty (0 easy .. 2 hard; Normal as written), and how often Varro has fortified it (more men in his forts, bigger raids) */
+  difficulty?: 0 | 1 | 2;
+  fortified?: number;
 }
 
 export const OUT_CAP = 8;
@@ -173,7 +180,8 @@ export class Game {
       this.isles = laid.isles;
       this.deerTarget = laid.deer;
     } else {
-      const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands });
+      // (a campaign region's map is designed: its recipe steps into the generator's phases)
+      const gen = generateMap(this.world, { size: opts.size, seed: opts.seed, players: opts.players, islands: opts.islands, recipe: recipeById(this.mission?.map.recipe) });
       this.starts = gen.starts;
       this.isles = gen.isles;
       for (const t of gen.trees) this.addTree(t.node, t.species, t.growth);
@@ -408,6 +416,7 @@ export class Game {
         const i = w.idx(xx, yy);
         if (unclaimed ? w.owner[i] >= 0 : w.owner[i] !== owner) return 'Outside your territory';
         if (w.isWater(i)) return 'Cannot build on water';
+        if (w.cliff[i]) return 'Sheer rock';
         if (w.building[i] || w.reserve[i]) return 'Occupied';
         if (w.stone[i]) return 'Rocks in the way';
         if (w.tree[i]) return 'Trees in the way';

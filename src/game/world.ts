@@ -32,6 +32,7 @@ export class World {
   shoreDist: Uint8Array; // water nodes: steps to the nearest land (capped)
   prospected: Uint8Array; // bit p set once player p's geologists have probed near the node
   claim: Int8Array; // player whose pioneers staked out the node, -1 none (military borders override it)
+  cliff: Uint8Array; // 1 on sheer rock (a designed map's walls, mapgen.ts): nobody walks or builds there; all 0 in free play
   oreDirty = true;
   // dirty regions for renderer
   heightDirty: { x0: number; y0: number; x1: number; y1: number } | null = null;
@@ -64,6 +65,7 @@ export class World {
     this.shoreDist = new Uint8Array(N);
     this.prospected = new Uint8Array(N);
     this.claim = new Int8Array(N).fill(-1);
+    this.cliff = new Uint8Array(N);
   }
 
   /** Does player p know what ore lies at node i? */
@@ -83,7 +85,7 @@ export class World {
 
   /**
    * Label landmasses and water bodies. Land uses 4-connectivity, matching the pathfinder,
-   * which never cuts a corner between two water nodes.
+   * which never cuts a corner between two water nodes. Sheer rock parts landmasses as water does.
    */
   computeRegions() {
     const { W, H, N } = this;
@@ -113,7 +115,7 @@ export class World {
       return n;
     };
     for (let i = 0; i < N; i++) {
-      if (!this.region[i] && !this.isWater(i)) this.regionSize.push(flood(i, this.regionSize.length, this.region, (j) => !this.isWater(j), false));
+      if (!this.region[i] && !this.isWater(i) && !this.cliff[i]) this.regionSize.push(flood(i, this.regionSize.length, this.region, (j) => !this.isWater(j) && !this.cliff[j], false));
       if (!this.sea[i] && this.deep(i)) this.seaSize.push(flood(i, this.seaSize.length, this.sea, (j) => this.deep(j), true));
     }
     // distance from land for water, so ships keep off the beaches
@@ -170,7 +172,7 @@ export class World {
     return t === T_ROCK || t === T_SNOW;
   }
   walkable(i: number) {
-    return !this.isWater(i) && this.blocked[i] === 0;
+    return !this.isWater(i) && this.blocked[i] === 0 && this.cliff[i] === 0;
   }
 
   heightAt(x: number, z: number): number {

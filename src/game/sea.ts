@@ -21,11 +21,11 @@ const SHIP_SPEED = 2.7; // nodes per second at full sail
 const WARSHIP_SPEED = 3.1; // sail and oars
 /** Ship models are drawn at this scale; deck positions of passengers and cargo follow it. */
 export const SHIP_SCALE = 1.25;
-const SHIP_NAMES = [
+export const SHIP_NAMES = [
   'Seagull', 'Fortuna', 'Albatross', 'Wavecrest', 'Northwind', 'Mermaid', 'Swift', 'Morning Star', 'Pelican', 'Tern',
   'Sea Rose', 'Bold Heart', 'Kingfisher', 'Dolphin', 'Gale', 'Osprey', 'Harvest Moon', 'Cormorant', 'Silver Fin', 'Brave Oak',
 ];
-const WARSHIP_NAMES = [
+export const WARSHIP_NAMES = [
   'Lion', 'Thunderer', 'Vengeance', 'Griffin', 'Iron Wolf', 'Defiance', 'Warden', 'Tempest', 'Dragon', 'Valiant',
   'Resolute', 'Hammer', 'Sea Hawk', 'Invincible', 'Black Boar', 'Trident', 'Stormbringer', 'Bulwark',
 ];
@@ -496,7 +496,7 @@ function unloadStep(g: Game, sh: Ship, dt: number) {
   sh.at = hb.id;
   sh.from = 0;
   sh.to = 0;
-  g.emit({ type: 'unloaded', x: sh.x, z: sh.z, owner: sh.owner, s: sh.id });
+  g.emit({ type: 'unloaded', x: sh.x, z: sh.z, owner: sh.owner, s: sh.id, b: hb.id });
 }
 
 // ------------------------------------------------------------------ shipyard

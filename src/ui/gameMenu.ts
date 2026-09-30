@@ -8,7 +8,7 @@ import { framePace, type FrameCap } from '../render/framePace';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import type { Objectives } from './objectives';
-import { missionIndex, numeralOf } from '../game/campaign';
+import { missionLabel } from '../game/campaign';
 import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, defaultRender, detectGraphics, prefs, savePrefs } from './prefs';
 import { LEVELS, LEVEL_NAMES, levelText } from '../render/hardware';
 import type { WheelMode } from '../render/camera';
@@ -278,7 +278,7 @@ export class GameMenu {
     const kv = (k: string, v: string) => c.appendChild(h('div', 'kv', `<span>${k}</span><b>${v}</b>`));
     c.appendChild(h('h3', '', 'This game'));
     const m = g.mission;
-    if (m) kv('Mission', `${numeralOf(missionIndex(m.id))} · ${m.title}`);
+    if (m) kv('Mission', `${missionLabel(m)} · ${m.title}`);
     kv('Map', `${MAP_SIZES[g.opts.size] ?? `${g.opts.size}²`} · seed ${g.opts.seed}`);
     if (g.players.length > 1) kv('Rivals', `${g.players.length - 1} · ${AI_LEVELS[level] ?? 'Normal'}`);
     kv('Time played', clock(g.time));
@@ -502,7 +502,7 @@ export class GameMenu {
     c.appendChild(this.toggle('Play music', a.soundtrack ? 'The soundtrack in order; N skips to the next track' : 'A generative lute over a drone', () => prefs.musicOn, (v) => { prefs.musicOn = v; apply(); }));
     c.appendChild(this.slider('Music volume', '', 0, 1, 0.01, () => prefs.music, (v) => { prefs.music = v; apply(); }, pct));
     c.appendChild(h('h3', '', 'Narration'));
-    c.appendChild(this.slider('The quaestor', 'His briefings and tips in the campaign, when their recordings are there', 0, 1, 0.01, () => prefs.voice, (v) => { prefs.voice = v; apply(); }, pct, () => { void a.say('quaestor.noted.1', { interrupt: true }); }));
+    c.appendChild(this.slider('The quaestor', 'His briefings and tips in the tutorial, when their recordings are there', 0, 1, 0.01, () => prefs.voice, (v) => { prefs.voice = v; apply(); }, pct, () => { void a.say('quaestor.noted.1', { interrupt: true }); }));
     this.resetButton(c, 'Reset sound to defaults', () => {
       const d = defaultPrefs();
       Object.assign(prefs, { soundOn: d.soundOn, volume: d.volume, sfx: d.sfx, ambience: d.ambience, musicOn: d.musicOn, music: d.music, voice: d.voice });

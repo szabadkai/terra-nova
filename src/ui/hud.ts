@@ -32,8 +32,8 @@ import { FLOW_WINDOW, flowHistory, flowReport, trend } from '../game/flow';
 import { gameNear } from '../game/wildlife';
 import { Minimap } from './minimap';
 import { OBJECTIVES, Objectives } from './objectives';
-import { missionIndex, numeralOf, type FocusSpec, type Tool } from '../game/campaign';
-import { QUAESTOR_ICON, briefingOverlay, debriefOverlay, lockNote, toolLockNote } from './campaign';
+import { missionLabel, type FocusSpec, type Tool } from '../game/campaign';
+import { QUAESTOR_ICON, VARRO_ICON, briefingOverlay, debriefOverlay, lockNote, toolLockNote } from './campaign';
 import { prefs, savePrefs } from './prefs';
 import { AUTO_STEPS, framePace } from '../render/framePace';
 import { LowFpsWatch, lowFpsAdvice } from '../render/hardware';
@@ -95,9 +95,9 @@ export interface HudHooks {
   /** whether this player sets the game's pace (alone, or the host of a game with a friend) */
   isHost(): boolean;
   restart(): void;
-  /** the same map again from the start (a mission again, in the campaign) */
+  /** the same map again from the start (a mission again, in the tutorial) */
   restartMap(): void;
-  /** the campaign's next mission */
+  /** the tutorial's next mission */
   nextMission(): void;
   /** the Esc menu, on the Graphics page when asked */
   openMenu(page?: 'graphics'): void;
@@ -145,9 +145,9 @@ export class HUD {
   private watch: StallWatch;
   /** the good the Statistics tab charts */
   private chartGood: Good = 'board';
-  /** campaign: the card (or tab) "Show me" is pointing at, until it is picked */
+  /** tutorial: the card (or tab) "Show me" is pointing at, until it is picked */
   private teach: BuildingType | Tool | null = null;
-  /** campaign: the quaestor's tips already given in this mission (saved with the view) */
+  /** tutorial: the quaestor's tips already given in this mission (saved with the view) */
   private seenTips = new Set<string>();
   /** a briefing or debrief is up: the game waits, and keys go to it */
   modal: HTMLElement | null = null;
@@ -175,7 +175,7 @@ export class HUD {
         if (!goal.optional) void this.audio.say(`quaestor.noted.${1 + (hash(goal.id) % 4)}`);
       } else this.message(`✔ Objective complete: ${goal.text}`, undefined, undefined, 'good');
       this.audio.play('built');
-    }, (f) => this.focus(f), m ? `Mission ${numeralOf(missionIndex(m.id))}` : 'Chronicle');
+    }, (f) => this.focus(f), m ? missionLabel(m) : 'Chronicle');
     this.objectives.onToggle = () => this.refreshTop();
     this.msgs = h('div', 'msgs');
     rcol.appendChild(this.msgs);
@@ -1804,7 +1804,7 @@ export class HUD {
     const b = a.b;
     let action: { label: string; run: () => void } | undefined;
     const g = this.game;
-    // (a campaign mission offers only what the Senate has granted so far)
+    // (a tutorial mission offers only what the Senate has granted so far)
     if (a.kind === 'exhausted' && g.canUseTool(g.local, 'geologist')) action = { label: '⛏ Send a geologist', run: () => { this.gr.cam.jumpTo(b.cx, b.cz + 2); this.startProspecting(true); } };
     else if (a.kind === 'settlers' && g.canBuildType(g.local, 'residence_s')) action = { label: `⚒ Build a ${BUILDINGS.residence_s.name}`, run: () => this.startPlacing('residence_s') };
     else if (a.build && BUILDINGS[a.build].buildable !== false && g.canBuildType(g.local, a.build)) { const t = a.build; action = { label: `⚒ Build ${BUILDINGS[t].name}`, run: () => this.startPlacing(t) }; }
@@ -1885,9 +1885,16 @@ export class HUD {
     }
     if (e.type === 'msg' && e.text) this.message(e.text, e.x, e.z, e.kind, e.b);
     if (e.type === 'missionwon') this.missionWon();
+    if (e.type === 'missionlost') this.missionLost(e.text ?? 'The mission is lost.');
     if (e.type !== 'cmd' && e.type !== 'msg') this.tipFor(e);
     // the quaestor's word on a scripted turn of events
     if (this.game.mission?.voice?.[e.type]) void this.audio.say(`${this.game.mission.id}.${e.type}`, { interrupt: true });
+    // a line from the mission's script: the quaestor's, or one of Varro's letters, under its speaker's seal
+    if (e.type === 'say' && e.text) {
+      const varro = e.kind === 'varro';
+      this.toast({ title: e.text, detail: e.detail, icon: varro ? VARRO_ICON : QUAESTOR_ICON, kind: varro ? 'bad' : undefined, key: `say-${e.kind}`, ttl: 16 });
+      if (e.voice) void this.audio.say(e.voice, { interrupt: true });
+    }
     if (e.type === 'defeated' && e.text) this.message(e.text, undefined, undefined, e.owner === this.game.local ? 'bad' : 'good');
     // one's own fall is the end (the game may go on for the others); a win comes with the game's end
     if (e.type === 'defeated' && e.owner === this.game.local) this.gameOver(false);
@@ -1932,14 +1939,16 @@ export class HUD {
     let produced = 0;
     for (const gd of GOODS) produced += p.produced[gd];
     const mission = g.mission;
-    if (mission && !won) void this.audio.say('campaign.defeat', { interrupt: true });
+    // (a defence lost is lost: the region is Varro's again and the war goes on, with no second try)
+    const defence = !!mission && mission.id.startsWith('defence.');
+    if (mission && !won && !defence) void this.audio.say('campaign.defeat', { interrupt: true });
     ov.innerHTML = `<div class="panel dialog">
-      <h1>${won ? 'Victory!' : mission ? 'The colony has fallen' : 'Defeat'}</h1>
-      <p>${won ? 'All rival kingdoms have fallen. Your settlers celebrate across the land.' : mission ? 'The Senate will want a report. I will write that the province was well begun and the legate learned quickly. Try again; the coast is still there.' : 'Your last stronghold has fallen.'}</p>
+      <h1>${won ? 'Victory!' : defence ? `${mission!.title} is lost` : mission ? 'The colony has fallen' : 'Defeat'}</h1>
+      <p>${won ? 'All rival kingdoms have fallen. Your settlers celebrate across the land.' : defence ? 'His legion holds the headquarters, and the region is his again. We will have to take it back, and he will have fortified it.' : mission ? 'The Senate will want a report. I will write that the province was well begun and the legate learned quickly. Try again; the coast is still there.' : 'Your last stronghold has fallen.'}</p>
       <div class="kv"><span>Time played</span><b>${mm} min</b></div>
       <div class="kv"><span>Goods produced</span><b>${produced}</b></div>
       <div class="kv"><span>Population</span><b>${g.population(g.local).total}</b></div>
-      <div class="row"><button class="wide" data-act="cont">Keep watching</button>${mission && !won ? '<button class="wide primary" data-act="retry">Try the mission again</button><button class="wide" data-act="menu">Campaign</button>' : '<button class="wide primary" data-act="menu">Main menu</button>'}</div>
+      <div class="row"><button class="wide" data-act="cont">Keep watching</button>${defence ? '<button class="wide primary" data-act="menu">The Province</button>' : mission && !won ? `<button class="wide primary" data-act="retry">Try the mission again</button><button class="wide" data-act="menu">${mission.kicker ? 'The Province' : 'Tutorial'}</button>` : '<button class="wide primary" data-act="menu">Main menu</button>'}</div>
     </div>`;
     this.root.appendChild(ov);
     ov.querySelector<HTMLElement>('[data-act=cont]')!.onclick = () => ov.remove();
@@ -1949,7 +1958,7 @@ export class HUD {
     this.audio.play(won ? 'fanfare' : 'death');
   }
 
-  // ------------------------------------------------------------ campaign
+  // ------------------------------------------------------------ tutorial
   /** The briefing before a mission: the game waits until Begin. */
   showBriefing(onBegin: () => void) {
     const m = this.game.mission;
@@ -1957,6 +1966,7 @@ export class HUD {
     const line = `${m.id}.brief`;
     const speak = () => { void this.audio.say(line, { interrupt: true }).then((ok) => { this.briefRetry = ok ? null : line; }); };
     const ov = briefingOverlay(m, {
+      carry: this.game.opts.carry,
       onBegin: () => {
         this.modal = null;
         // the browser may have held the narration back until this very click
@@ -1968,6 +1978,22 @@ export class HUD {
     this.modal = ov;
     this.root.appendChild(ov);
     speak();
+  }
+
+  /** The mission is lost (its rules say how): why, and the ways on. */
+  private missionLost(why: string) {
+    const m = this.game.mission;
+    if (!m || this.root.querySelector('.overlay.lost')) return;
+    const ov = h('div', 'overlay lost');
+    ov.innerHTML = `<div class="panel dialog brief"><div class="num">${missionLabel(m)} · ${m.title}</div><h1>Mission failed</h1><p></p>
+      <div class="row"><button class="tm-btn" data-act="cont">Keep watching</button><button class="tm-btn" data-act="menu">${m.kicker ? 'The Province' : 'Tutorial'}</button><button class="tm-btn primary" data-act="retry">Try again</button></div></div>`;
+    ov.querySelector('p')!.textContent = why;
+    this.root.appendChild(ov);
+    ov.querySelector<HTMLElement>('[data-act=cont]')!.onclick = () => ov.remove();
+    ov.querySelector<HTMLElement>('[data-act=menu]')!.onclick = () => this.hooks.restart();
+    const retry = ov.querySelector<HTMLElement>('[data-act=retry]')!;
+    retry.onclick = () => { retry.setAttribute('disabled', ''); this.hooks.restartMap(); };
+    this.audio.play('death');
   }
 
   /** The mission is won: the quaestor's word and the way on. */
@@ -2024,7 +2050,8 @@ export class HUD {
   private tipFor(e: GameEvent) {
     const m = this.game.mission;
     if (!m?.tips) return;
-    if (e.owner !== undefined && e.owner !== this.game.local) return;
+    // (a raid, a sinking or a fleet is another side's doing but the player's concern, as the mission's tally counts them)
+    if (e.owner !== undefined && e.owner !== this.game.local && e.type !== 'raid' && e.type !== 'sinking' && e.type !== 'fleet') return;
     for (const t of m.tips) {
       if (t.on !== e.type || this.seenTips.has(t.id) || (t.when && !t.when(this.game, e))) continue;
       this.seenTips.add(t.id);

@@ -179,6 +179,8 @@ export interface Building {
   shipKind: ShipKind;
   /** harbour: ships keep this landmass supplied from, and bring what it lacks from, the other harbours by themselves */
   seaAuto: boolean;
+  /** a campaign's holy place (a great temple on a sacred hill): on land that turns foreign it changes hands with the land instead of burning */
+  sacred?: boolean;
 }
 
 export interface Animal {
@@ -329,4 +331,7 @@ export interface GameEvent {
   ok?: boolean;
   n?: number;
   ids?: number[];
+  /** a scripted line (`say`): the words under its title, and the recording to play (public/voice/<voice>.mp3) */
+  detail?: string;
+  voice?: string;
 }
