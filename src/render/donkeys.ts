@@ -24,6 +24,7 @@ function inst(geo: THREE.BufferGeometry, mat: THREE.Material, n: number) {
 export class DonkeysRenderer {
   group = new THREE.Group();
   visibleList: { s: Settler; x: number; y: number; z: number }[] = [];
+  private visiblePool: { s: Settler; x: number; y: number; z: number }[] = [];
   private body: THREE.InstancedMesh;
   private necks: THREE.InstancedMesh;
   private uppers: THREE.InstancedMesh;
@@ -37,6 +38,8 @@ export class DonkeysRenderer {
   private base = new THREE.Matrix4();
   private m = new THREE.Matrix4();
   private r = new THREE.Matrix4();
+  private partRotation = new THREE.Matrix4();
+  private goodCounts = new Uint16Array(GOODS.length);
   private q = new THREE.Quaternion();
   private e = new THREE.Euler();
   private v = new THREE.Vector3();
@@ -63,9 +66,10 @@ export class DonkeysRenderer {
     this.projM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projM);
     this.visibleList.length = 0;
-    const counts = new Map<Good, number>();
+    const counts = this.goodCounts;
+    counts.fill(0);
     let nb = 0, nl = 0, np = 0;
-    const r2 = new THREE.Matrix4();
+    const r2 = this.partRotation;
     for (const s of g.settlers.values()) {
       if (s.job !== 'donkey' || s.hidden) continue;
       if (nb >= 200) break;
@@ -73,7 +77,10 @@ export class DonkeysRenderer {
       this.sphere.center.set(s.x, y0 + 0.4, s.z);
       if (!this.frustum.intersectsSphere(this.sphere)) continue;
       if (!w.explored[w.idx(Math.round(s.x), Math.round(s.z))] && s.owner !== g.local) continue;
-      this.visibleList.push({ s, x: s.x, y: y0, z: s.z });
+      const vi = this.visibleList.length;
+      const visible = this.visiblePool[vi] ?? (this.visiblePool[vi] = { s, x: 0, y: 0, z: 0 });
+      visible.s = s; visible.x = s.x; visible.y = y0; visible.z = s.z;
+      this.visibleList.push(visible);
       const moving = s.next >= 0;
       let ph = this.phase.get(s.id) ?? s.seed * 10;
       if (moving) ph += dt * Math.PI * 2 * 1.15 / Math.max(0.3, s.stepDur);
@@ -111,7 +118,8 @@ export class DonkeysRenderer {
         for (const [gd, side] of [[s.carrying, -1], [s.pack, 1]] as const) {
           if (!gd) continue;
           const mesh = this.goods.get(gd)!;
-          const k = counts.get(gd) ?? 0;
+          const gi = GOODS.indexOf(gd);
+          const k = counts[gi];
           if (k >= 200) continue;
           // loads ride high on either side of the pack saddle
           const long = gd === 'log' || gd === 'board';
@@ -119,14 +127,14 @@ export class DonkeysRenderer {
           if (long) this.m.multiply(this.r.makeRotationFromEuler(this.e.set(0, Math.PI / 2, side * 0.22)));
           else this.m.multiply(this.r.makeRotationFromEuler(this.e.set(0, side * 1.2, side * 0.25))).multiply(this.r.makeScale(1.15, 1.15, 1.15));
           mesh.setMatrixAt(k, this.m);
-          counts.set(gd, k + 1);
+          counts[gi] = k + 1;
         }
       }
     }
     for (const m of [this.body, this.necks]) commitInstances(m, nb);
     for (const m of [this.uppers, this.lowers]) commitInstances(m, nl);
     commitInstances(this.packs, np);
-    for (const [gd, mesh] of this.goods) commitInstances(mesh, counts.get(gd) ?? 0);
+    for (let i = 0; i < GOODS.length; i++) commitInstances(this.goods.get(GOODS[i])!, counts[i]);
     if (this.phase.size > 400) for (const id of this.phase.keys()) if (!g.settlers.has(id)) this.phase.delete(id);
   }
 }

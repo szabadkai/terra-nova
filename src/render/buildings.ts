@@ -136,12 +136,27 @@ export class BuildingsRenderer {
 
   private dispose(v: BView) {
     if (v.batched) this.batches.remove(v.batched);
+    this.removeSitePart(v, 'scaffold');
+    this.removeSitePart(v, 'stakes');
     this.group.remove(v.group);
     v.sea?.group.traverse((o) => { if (o.parent?.userData.own) (o as THREE.Mesh).geometry?.dispose(); });
     if (v.clipMats) for (const m of v.clipMats.values()) m.dispose();
     v.clipDepth?.dispose();
     if (v.burnMats) for (const bm of v.burnMats.values()) bm.m.dispose();
     this.views.delete(v.id);
+  }
+
+  /** Site geometry belongs to this building; its materials belong to the shared library. */
+  private removeSitePart(v: BView, key: 'scaffold' | 'stakes') {
+    const part = v[key];
+    if (!part) return;
+    v.group.remove(part);
+    const geometries = new Set<THREE.BufferGeometry>();
+    part.traverse((o) => {
+      if (o instanceof THREE.Mesh) geometries.add(o.geometry);
+    });
+    for (const geometry of geometries) geometry.dispose();
+    v[key] = null;
   }
 
   private setClip(v: BView, on: boolean) {
@@ -282,7 +297,7 @@ export class BuildingsRenderer {
           if (!v.stakes) v.stakes = this.makeStakes(b, v);
           if (v.scaffold) v.scaffold.visible = false;
         } else {
-          if (v.stakes) { v.group.remove(v.stakes); v.stakes = null; }
+          this.removeSitePart(v, 'stakes');
           if (!v.scaffold) v.scaffold = this.makeScaffold(b, v);
           v.scaffold.visible = true;
         }
@@ -297,8 +312,8 @@ export class BuildingsRenderer {
         this.piles.pile('stone', Math.min(12, rem.stone), sx, w.heightAt(sx, sz), sz);
       } else {
         if (v.clipMats) this.setClip(v, false);
-        if (v.scaffold) { v.group.remove(v.scaffold); v.scaffold = null; }
-        if (v.stakes) { v.group.remove(v.stakes); v.stakes = null; }
+        this.removeSitePart(v, 'scaffold');
+        this.removeSitePart(v, 'stakes');
       }
       // a finished building is drawn in the batches; burning, it takes its own meshes back to char them
       const batch = this.batching && b.state === 'done';

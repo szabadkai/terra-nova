@@ -54,6 +54,18 @@ export class PathFinder {
       // allow walking into non walkable goal only if it's a building door etc: treat as adj fallback
       return null;
     }
+    // An adjacent walk may target a cell covered by a building. With no legal
+    // endpoint, searching the entire island only proves what these nine cells already tell
+    // us. Use the same footprint-escape rule as the search; custom walkers keep their own
+    // evaluation order. Check afresh each time so removing the obstruction works at once.
+    if (adj && !walkFn && !walk(goal)) {
+      let open = false;
+      for (let d = 0; d < 8; d++) {
+        const x = gx + DX8[d], y = gy + DY8[d];
+        if (x >= 0 && y >= 0 && x < W && y < H && walk(y * W + x)) { open = true; break; }
+      }
+      if (!open) return null;
+    }
 
     const gen = ++this.gen;
     if (gen > 0xfffffff0) {

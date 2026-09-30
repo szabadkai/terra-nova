@@ -6,9 +6,8 @@
 // playing, the most that happens is one message when the frame rate stays low. Render and prefs
 // only: nothing here touches the game.
 //
-// The levels are steps on a ladder of settings ("rungs", RUNGS): High and Ultra each come with
-// ambient occlusion and without it, and the detection gives up the occlusion of a level before it
-// gives up the level, since it is the costliest single effect.
+// The levels are steps on a ladder of settings ("rungs", RUNGS). Ambient occlusion is reserved for
+// Ultra by default; High is the cool-laptop target and leaves the effect as an explicit choice.
 //
 // A low machine (one the ladder takes down to Low) aims at LOW_FPS (30) frames a second instead of
 // 60: Low is judged against that budget and the frame cap is set to match, so the card idles half
@@ -30,11 +29,13 @@ export const LEVELS: Quality[] = ['low', 'medium', 'high', 'ultra'];
 export const PRESETS: Record<Quality, Pick<RenderSettings, 'quality' | 'resolution' | 'bloom' | 'dof' | 'ao' | 'grass' | 'reflections'>> = {
   low: { quality: 'low', resolution: '70', bloom: false, dof: false, ao: false, grass: false, reflections: false },
   medium: { quality: 'medium', resolution: '85', bloom: false, dof: false, ao: false, grass: true, reflections: true },
-  high: { quality: 'high', resolution: 'auto', bloom: false, dof: false, ao: true, grass: true, reflections: true },
+  high: { quality: 'high', resolution: 'auto', bloom: false, dof: false, ao: false, grass: true, reflections: true },
   ultra: { quality: 'ultra', resolution: 'auto', bloom: false, dof: false, ao: true, grass: true, reflections: true },
 };
 /** the most device pixels per CSS pixel quiet mode draws (a 2x laptop screen is four times the pixels of 1x) */
 export const QUIET_PR = 1.25;
+/** Quiet Auto starts one small resolution step below full to leave deliberate GPU headroom. */
+export const QUIET_SCALE = 0.92;
 /** the share of the frame budget a portable machine is fitted to: the card idles the rest of each frame */
 export const QUIET_SHARE = 0.5;
 /** frames a second a low machine aims at (a level above Low aims at 60) */
@@ -213,7 +214,8 @@ export function gpuPower(name: string): GpuGuess {
 /** Million pixels a level draws on this screen (in quiet mode, at most QUIET_PR device pixels per CSS pixel). */
 export function pixelsAt(level: Quality, s: Pick<Signals, 'width' | 'height' | 'dpr'>, quiet = false) {
   const pr = Math.min(s.dpr, PR_CAP[level], quiet ? QUIET_PR : Infinity);
-  return (s.width * pr * RES[level]) * (s.height * pr * RES[level]) / 1e6;
+  const scale = RES[level] * (quiet && (level === 'high' || level === 'ultra') ? QUIET_SCALE : 1);
+  return (s.width * pr * scale) * (s.height * pr * scale) / 1e6;
 }
 
 /** ms a frame of a new game's world takes at `level` (with or without its occlusion) on a GPU of `power` (1 = the reference). */

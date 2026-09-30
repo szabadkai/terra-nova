@@ -865,6 +865,11 @@ export class AnimalsRenderer {
 // ------------------------------------------------------------------ arrows
 export class ProjectilesRenderer {
   mesh: THREE.InstancedMesh;
+  private from = new THREE.Vector3();
+  private to = new THREE.Vector3();
+  private pos = new THREE.Vector3();
+  private next = new THREE.Vector3();
+  private flip = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI);
   constructor(private game: Game) {
     const shaft = new THREE.CylinderGeometry(0.008, 0.008, 0.4, 4);
     shaft.rotateX(Math.PI / 2);
@@ -899,7 +904,7 @@ export class ProjectilesRenderer {
   update() {
     const g = this.game;
     let n = 0, ns = 0;
-    const from = new THREE.Vector3(), to = new THREE.Vector3(), pos = new THREE.Vector3(), nxt = new THREE.Vector3();
+    const from = this.from, to = this.to, pos = this.pos, nxt = this.next;
     for (const p of g.projectiles) {
       if (p.kind === 'stone') {
         if (ns >= 64) continue;
@@ -912,20 +917,16 @@ export class ProjectilesRenderer {
         continue;
       }
       if (n >= 400) continue;
-      const k = p.t / p.dur;
-      const arc = (t: number, out: THREE.Vector3) => {
-        const d = Math.hypot(p.tx - p.sx, p.tz - p.sz);
-        out.set(p.sx + (p.tx - p.sx) * t, p.sy + (p.ty - p.sy) * t + Math.sin(t * Math.PI) * d * 0.18, p.sz + (p.tz - p.sz) * t);
-        return out;
-      };
-      arc(k, pos);
-      arc(Math.min(1, k + 0.02), nxt);
+      const k = p.t / p.dur, k2 = Math.min(1, k + 0.02);
+      const dx = p.tx - p.sx, dz = p.tz - p.sz, d = Math.hypot(dx, dz);
+      pos.set(p.sx + dx * k, p.sy + (p.ty - p.sy) * k + Math.sin(k * Math.PI) * d * 0.18, p.sz + dz * k);
+      nxt.set(p.sx + dx * k2, p.sy + (p.ty - p.sy) * k2 + Math.sin(k2 * Math.PI) * d * 0.18, p.sz + dz * k2);
       from.copy(pos);
       to.copy(nxt);
       tmpM.lookAt(from, to, UP);
       tmpQ.setFromRotationMatrix(tmpM);
       // lookAt on matrix points -z towards target; arrow geometry points +z
-      tmpQ.multiply(new THREE.Quaternion().setFromAxisAngle(UP, Math.PI));
+      tmpQ.multiply(this.flip);
       tmpM.compose(pos, tmpQ, tmpV.set(1, 1, 1));
       this.mesh.setMatrixAt(n++, tmpM);
     }

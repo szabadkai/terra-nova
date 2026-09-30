@@ -5,7 +5,7 @@
 // nothing left for the automatic resolution to give.
 // Nothing here touches the game.
 // Usage: npx tsx scripts/hardware.ts
-import { LEVELS, LOW_FPS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SHARE, RUNGS, confirmLevel, fpsFor, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
+import { LEVELS, LOW_FPS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SCALE, QUIET_SHARE, RUNGS, confirmLevel, fpsFor, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
 import type { Quality } from '../src/render/renderer';
 
 let fails = 0;
@@ -56,8 +56,8 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
     { name: 'gaming PC, RX 6800 XT at 1440p', s: sig({ gpu: 'ANGLE (AMD, AMD Radeon RX 6800 XT Direct3D11 vs_5_0 ps_5_0, D3D11)', width: 2560, height: 1440, cores: 16 }), level: 'ultra', ao: true },
     { name: 'GTX 1060 on a 4K screen', s: sig({ gpu: 'NVIDIA GeForce GTX 1060 6GB/PCIe/SSE2', width: 3840, height: 2160 }), level: 'low' },
     { name: 'RTX 3060 at 1080p', s: sig({ gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)' }), level: 'ultra', ao: true },
-    { name: 'Mac with Safari (GPU hidden)', s: sig({ gpu: 'Apple GPU', width: 1512, height: 982, dpr: 2, memory: 0 }), level: 'high', ao: true },
-    { name: 'M1 Pro laptop at 2x', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'high', ao: true },
+    { name: 'Mac with Safari (GPU hidden)', s: sig({ gpu: 'Apple GPU', width: 1512, height: 982, dpr: 2, memory: 0 }), level: 'high', ao: false },
+    { name: 'M1 Pro laptop at 2x', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'high', ao: false },
     { name: 'M5 Pro laptop at 2x', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'ultra', ao: true },
     { name: 'M3 laptop at 2x (holds High, not its occlusion)', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3, Unspecified Version)', width: 1440, height: 900, dpr: 2 }), level: 'high' },
     { name: 'M3 Pro laptop at 2x (holds Ultra, not its occlusion)', s: sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Pro, Unspecified Version)', width: 1512, height: 982, dpr: 2 }), level: 'ultra' },
@@ -78,11 +78,11 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   const desk = sig({ gpu: m5, width: 1512, height: 982, dpr: 2 });
   const gl = guessLevel(lap, BUDGET), gd = guessLevel(desk, BUDGET);
   check(gl.quiet && !gd.quiet, 'a portable machine is guessed in quiet mode, the same screen on a desk is not');
-  check(Math.abs(pixelsAt('ultra', lap, true) / pixelsAt('ultra', lap) - (QUIET_PR / 2) ** 2) < 1e-9, `quiet mode draws (${QUIET_PR}/2)² of the pixels of a 2x screen on Ultra`);
+  check(Math.abs(pixelsAt('ultra', lap, true) / pixelsAt('ultra', lap) - (QUIET_PR * QUIET_SCALE / 2) ** 2) < 1e-9, `quiet mode caps device pixels and starts Auto at ${QUIET_SCALE * 100}%`);
   check(frameMs('ultra', lap, 1, true, true) < frameMs('ultra', lap, 1, true) * 0.6, 'and its frame costs well under two thirds as much');
   const weak = sig({ gpu: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)', width: 1470, height: 956, dpr: 2 });
   const gw = guessLevel({ ...weak, portable: true }, BUDGET), gwd = guessLevel(weak, BUDGET);
-  check(RUNGS.findIndex((r) => r.level === gw.level && r.ao === gw.ao) >= RUNGS.findIndex((r) => r.level === gwd.level && r.ao === gwd.ao), `an M1 Air lands no higher in quiet mode (${levelText(gw.level, gw.ao)}) than as a desktop (${levelText(gwd.level, gwd.ao)}): half the budget, a quarter fewer pixels`);
+  check(RUNGS.findIndex((r) => r.level === gw.level && r.ao === gw.ao) >= RUNGS.findIndex((r) => r.level === gwd.level && r.ao === gwd.ao), `an M1 Air lands no higher in quiet mode (${levelText(gw.level, gw.ao)}) than as a desktop (${levelText(gwd.level, gwd.ao)}): half the budget, fewer pixels`);
   check(portable({ gpu: '', width: 1920, height: 1080, dpr: 1, touch: false }, { charging: false, level: 0.8 }), 'a battery that is discharging says portable');
   check(portable({ gpu: '', width: 1920, height: 1080, dpr: 1, touch: false }, { charging: true, level: 0.6 }), 'a battery that is charging and not full says portable');
   check(!portable({ gpu: 'NVIDIA GeForce RTX 3080', width: 1920, height: 1080, dpr: 1, touch: false }, { charging: true, level: 1 }), "a full, charging battery is what a desktop reports: not portable on its own");
@@ -98,7 +98,7 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   // what each level switches
   check(!PRESETS.low.bloom && !PRESETS.low.dof && !PRESETS.low.ao && PRESETS.low.resolution !== 'auto', 'Low: bloom, AO and tilt-shift off, a fixed lower resolution');
   check(!PRESETS.medium.bloom && !PRESETS.medium.dof && !PRESETS.medium.ao && PRESETS.medium.resolution !== 'auto', 'Medium: bloom, AO and tilt-shift off, a fixed lower resolution');
-  check(!PRESETS.high.bloom && !PRESETS.high.dof && PRESETS.high.ao && PRESETS.high.resolution === 'auto', 'High: AO on, bloom and tilt-shift off (the fans notice them), automatic resolution');
+  check(!PRESETS.high.bloom && !PRESETS.high.dof && !PRESETS.high.ao && PRESETS.high.resolution === 'auto', 'High: AO, bloom and tilt-shift off for laptop headroom, automatic resolution');
   check(!PRESETS.ultra.bloom && !PRESETS.ultra.dof && PRESETS.ultra.ao && PRESETS.ultra.resolution === 'auto', 'Ultra: AO on, bloom and tilt-shift off, automatic resolution');
   check(LEVELS.every((q) => !PRESETS[q].bloom && !PRESETS[q].dof), 'bloom and the tilt-shift blur are off at every level: on is the player\'s choice');
   check(!PRESETS.low.grass, 'Low: no grass');
@@ -115,10 +115,10 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
     }
   }
   check(frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1, true) > frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1), 'the cost can be asked of any level');
-  check(frameMs('high', { width: 1920, height: 1080, dpr: 1 }, 1) === frameMs('high', { width: 1920, height: 1080, dpr: 1 }, 1, true), "a level's own occlusion is the default");
+  check(frameMs('high', { width: 1920, height: 1080, dpr: 1 }, 1) === frameMs('high', { width: 1920, height: 1080, dpr: 1 }, 1, false), "High's default has no occlusion");
   check(frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1) === frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1, false), 'Medium has none');
-  check(RUNGS.map((r) => `${r.level[0]}${r.ao ? '+' : ''}`).join(' ') === 'u+ u h+ h m l', `the ladder, best first: ${RUNGS.map((r) => `${r.level}${r.ao ? ' + AO' : ''}`).join(', ')}`);
-  check(levelText('high', true) === 'High' && levelText('high', false) === 'High without ambient occlusion' && levelText('medium', false) === 'Medium', 'the level is named with what was left off');
+  check(RUNGS.map((r) => `${r.level[0]}${r.ao ? '+' : ''}`).join(' ') === 'u+ u h m l', `the ladder, best first: ${RUNGS.map((r) => `${r.level}${r.ao ? ' + AO' : ''}`).join(', ')}`);
+  check(levelText('ultra', true) === 'Ultra' && levelText('ultra', false) === 'Ultra without ambient occlusion' && levelText('high', false) === 'High', 'the level is named with what was left off');
   check(levelText('low', false) === `Low at ${LOW_FPS} frames a second` && fpsFor('low') === LOW_FPS && fpsFor('medium') === 60, `Low aims at ${LOW_FPS} frames a second and says so; the other levels at 60`);
 }
 
@@ -154,19 +154,19 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   check(d.level === 'ultra' && !d.ao && d.timed.length === 2, `over budget with the occlusion, not without: the level stays and the occlusion goes (${d.level} ${d.ao ? 'with' : 'without'} AO: ${tried(d)})`);
   d = confirmLevel(known, ms({ ultra: 22, high: 19, medium: 14, low: 9 }, 8), BUDGET);
   check(d.level === 'medium' && !d.ao, `steps down to the first step that holds (${d.level}: ${tried(d)})`);
-  check(d.timed.map(([q, , ao]) => `${q}${ao ? '+' : ''}`).join(' ') === 'ultra+ ultra high+ high medium', 'in the order of the ladder: the occlusion of a level before the level');
+  check(d.timed.map(([q, , ao]) => `${q}${ao ? '+' : ''}`).join(' ') === 'ultra+ ultra high medium', 'in the order of the ladder: Ultra loses occlusion before the level');
   d = confirmLevel(known, () => 80, BUDGET);
-  check(d.level === 'medium' && d.timed.length === 5, `a known GPU goes at most two levels below its guess, however slow the moment (${d.level}: ${tried(d)})`);
+  check(d.level === 'medium' && d.timed.length === 4, `a known GPU goes at most two levels below its guess, however slow the moment (${d.level}: ${tried(d)})`);
   const high = guessLevel(sig({ gpu: 'Apple M3', width: 1440, height: 900, dpr: 2 }), BUDGET);
   check(high.level === 'high' && !high.ao, 'a machine that holds High but not its occlusion starts without it');
   d = confirmLevel(high, ms({ ultra: 30, high: 12, medium: 8, low: 5 }, 9), BUDGET);
   check(d.level === 'high' && !d.ao && d.timed.length === 1, `and is timed without it (${tried(d)})`);
   const unknown = guessLevel(sig({ gpu: 'Apple GPU', memory: 0 }), BUDGET);
-  check(unknown.level === 'high' && unknown.ao, 'an unknown GPU starts at High with its occlusion');
+  check(unknown.level === 'high' && !unknown.ao, 'an unknown GPU starts at cool-laptop High without occlusion');
   d = confirmLevel(unknown, ms({ ultra: 30, high: 12, medium: 8, low: 5 }, 9), BUDGET);
-  check(d.level === 'high' && !d.ao && d.timed.length === 2, `an unknown GPU that only just holds High loses the occlusion first (${d.level} ${d.ao ? 'with' : 'without'} AO: ${tried(d)})`);
+  check(d.level === 'high' && !d.ao && d.timed.length === 1, `an unknown GPU that holds High keeps it without an AO trial (${d.level} ${d.ao ? 'with' : 'without'} AO: ${tried(d)})`);
   d = confirmLevel(unknown, () => 80, BUDGET);
-  check(d.level === 'low' && d.resolution === '50' && d.timed.length === 4, `an unknown GPU goes all the way to Low, and to half resolution when even that is far too slow (${d.level} ${d.resolution}: ${tried(d)})`);
+  check(d.level === 'low' && d.resolution === '50' && d.timed.length === 3, `an unknown GPU goes all the way to Low, and to half resolution when even that is far too slow (${d.level} ${d.resolution}: ${tried(d)})`);
   d = confirmLevel(unknown, (q) => (q === 'low' ? 18 : 40), BUDGET);
   check(d.level === 'low' && !d.resolution, `Low only just over the budget keeps its resolution (${d.resolution ?? 'kept'})`);
   const med = guessLevel(sig({ gpu: 'Apple M1', width: 1440, height: 900, dpr: 2 }), BUDGET);

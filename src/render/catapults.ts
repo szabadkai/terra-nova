@@ -30,6 +30,7 @@ const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math
 export class CatapultsRenderer {
   group = new THREE.Group();
   visibleList: { s: Settler; x: number; y: number; z: number }[] = [];
+  private visiblePool: { s: Settler; x: number; y: number; z: number }[] = [];
   private frame: THREE.InstancedMesh;
   private wheels: THREE.InstancedMesh;
   private arms: THREE.InstancedMesh;
@@ -44,6 +45,7 @@ export class CatapultsRenderer {
   private base = new THREE.Matrix4();
   private m = new THREE.Matrix4();
   private r = new THREE.Matrix4();
+  private partRotation = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private e = new THREE.Euler();
   private v = new THREE.Vector3();
@@ -82,7 +84,10 @@ export class CatapultsRenderer {
       this.sphere.center.set(s.x, y0 + 0.6, s.z);
       if (!this.frustum.intersectsSphere(this.sphere)) continue;
       if (!w.explored[w.idx(Math.round(s.x), Math.round(s.z))] && s.owner !== g.local) continue;
-      this.visibleList.push({ s, x: s.x, y: y0, z: s.z });
+      const vi = this.visibleList.length;
+      const visible = this.visiblePool[vi] ?? (this.visiblePool[vi] = { s, x: 0, y: 0, z: 0 });
+      visible.s = s; visible.x = s.x; visible.y = y0; visible.z = s.z;
+      this.visibleList.push(visible);
       const moving = s.next >= 0 && !s.dead;
       let roll = this.roll.get(s.id) ?? 0;
       if (moving) roll += (dt / Math.max(0.3, s.stepDur)) / WHEEL_R;
@@ -100,7 +105,7 @@ export class CatapultsRenderer {
       this.frame.setMatrixAt(n, this.base);
       // wheels
       for (const [wx, wz] of [[-0.36, -0.38], [0.36, -0.38], [-0.36, 0.38], [0.36, 0.38]]) {
-        this.m.copy(this.base).multiply(this.r.makeTranslation(wx, 0.22, wz)).multiply(new THREE.Matrix4().makeRotationX(roll));
+        this.m.copy(this.base).multiply(this.r.makeTranslation(wx, 0.22, wz)).multiply(this.partRotation.makeRotationX(roll));
         this.wheels.setMatrixAt(nw++, this.m);
       }
       // arm: snaps forward on the shot, then is wound back over the reload
@@ -112,7 +117,7 @@ export class CatapultsRenderer {
         else if (k < 1.0) ang = FIRED + Math.sin((k - 0.16) * 26) * Math.exp(-(k - 0.16) * 7) * 0.16;
         else ang = FIRED + (REST - FIRED) * smooth(1.0, Math.max(1.5, CATAPULT_RELOAD - 1.2), k);
       }
-      this.m.copy(this.base).multiply(this.r.makeTranslation(0, 0.45, 0.12)).multiply(new THREE.Matrix4().makeRotationX(ang));
+      this.m.copy(this.base).multiply(this.r.makeTranslation(0, 0.45, 0.12)).multiply(this.partRotation.makeRotationX(ang));
       this.arms.setMatrixAt(n, this.m);
       // the stone waits in the cup once the arm is back
       const loaded = !s.dead && (at === undefined || time - at > CATAPULT_RELOAD - 1.2);

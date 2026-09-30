@@ -47,6 +47,7 @@ export const MAX_WAKES = 8;
 const ARM_COCKED = -1.35, ARM_THROWN = 0.62;
 
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(0, 0, 0, 'YZX'), tmpV = new THREE.Vector3(), ONE = new THREE.Vector3(1, 1, 1);
+const CIVIL_FIRE_SPOTS = [new THREE.Vector3(0.05, 0.3, -0.2), new THREE.Vector3(-0.08, 0.3, 0.45)];
 
 export class ShipsRenderer {
   group = new THREE.Group();
@@ -259,7 +260,7 @@ export class ShipsRenderer {
       v.smokeT -= dt;
       if ((health < 0.75 || sinking) && camD < 70 && v.smokeT <= 0) {
         v.smokeT = sinking ? 0.06 : health < 0.4 ? 0.09 : 0.35;
-        const spots = v.war ? v.war.parts.fires : [new THREE.Vector3(0.05, 0.3, -0.2), new THREE.Vector3(-0.08, 0.3, 0.45)];
+        const spots = v.war ? v.war.parts.fires : CIVIL_FIRE_SPOTS;
         const sp = spots[Math.floor(Math.random() * spots.length)];
         const lx = sp.x * SHIP_SCALE, lz = sp.z * SHIP_SCALE;
         const px = sh.x + lx * fz + lz * fx, pz = sh.z - lx * fx + lz * fz;
