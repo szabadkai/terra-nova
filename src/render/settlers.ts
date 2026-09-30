@@ -355,6 +355,7 @@ export class SettlersRenderer {
   group = new THREE.Group();
   cap = 3000;
   visibleList: { s: Settler; x: number; y: number; z: number }[] = [];
+  private visiblePool: { s: Settler; x: number; y: number; z: number }[] = [];
   private legs: Batch;
   private torsos: Batch;
   private arms: Batch;
@@ -470,7 +471,12 @@ export class SettlersRenderer {
       if (!V.frustum.intersectsSphere(this.sphere)) continue;
       if (!w.explored[w.idx(Math.round(sx), Math.round(sz))] && s.owner !== g.local) continue;
       count++;
-      if (!shot) this.visibleList.push({ s, x: s.x, y: y0, z: s.z });
+      if (!shot) {
+        const i = this.visibleList.length;
+        const v = this.visiblePool[i] ?? (this.visiblePool[i] = { s, x: 0, y: 0, z: 0 });
+        v.s = s; v.x = s.x; v.y = y0; v.z = s.z;
+        this.visibleList.push(v);
+      }
       // the whole settler takes one level, so his parts always match
       const lv = V.px(sx, y0 + 0.5, sz) * FAR_ERR * SCALE < LOD_PIXELS ? 1 : 0;
       const L = this.look(s);

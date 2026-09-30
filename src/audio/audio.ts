@@ -80,7 +80,7 @@ export class Audio {
   /** index into TRACKS of the track loaded now */
   private trackIdx = -1;
   private trackOk = false;
-  /** the browser refused play() without a gesture: retry on the next one */
+  /** playback did not start, or the browser interrupted it: retry on the next gesture */
   private trackBlocked = false;
   private trackTimer = 0;
   private noiseBuf!: AudioBuffer;
@@ -184,7 +184,12 @@ export class Audio {
     el.preload = 'auto';
     this.trackGain = ctx.createGain();
     ctx.createMediaElementSource(el).connect(this.trackGain).connect(this.musicGain);
-    el.onplaying = () => { this.trackOk = true; };
+    el.onplaying = () => { this.trackOk = true; this.trackBlocked = false; };
+    // iOS can pause media when Safari is backgrounded or its audio session is interrupted without
+    // rejecting play(). Remember that pause so the next gesture can restore the soundtrack.
+    el.onpause = () => {
+      if (this.musicOn && !el.ended) this.trackBlocked = true;
+    };
     // a short breath of ambience between tracks
     el.onended = () => { this.trackTimer = window.setTimeout(() => this.nextTrack(), 4000 + Math.random() * 8000); };
     el.onerror = () => {
@@ -217,13 +222,18 @@ export class Audio {
     const tr = TRACKS[this.trackIdx];
     this.trackGain.gain.value = trackLevel(tr);
     el.src = MUSIC_DIR + tr.file;
+    el.load();
     if (this.musicOn) this.playTrack();
   }
 
   private playTrack() {
+    const el = this.track;
+    if (!el) return;
     this.trackBlocked = false;
-    this.track?.play().catch((e: DOMException) => {
-      if (e.name === 'NotAllowedError') this.trackBlocked = true;
+    el.play().catch(() => {
+      // Safari may reject with AbortError as its audio session changes, not only NotAllowedError.
+      // Keep every transient failure retryable; a genuinely bad file is handled by `onerror`.
+      if (this.track === el && this.musicOn && el.paused && !el.ended) this.trackBlocked = true;
     });
   }
 
@@ -356,10 +366,21 @@ export class Audio {
     if (!on) setTimeout(() => { if (!this.musicOn) el.pause(); }, 300);
     else if (el.paused && !el.ended && el.src) this.playTrack();
   }
-  /** a user gesture: wake a suspended context and any music the browser held back */
+  /** Wake an interrupted context and restore any music Safari paused or held back. */
   unlock() {
-    if (this.ctx?.state === 'suspended') void this.ctx.resume();
-    if (this.trackBlocked && this.musicOn) this.playTrack();
+    const retry = () => {
+      const el = this.track;
+      if (this.musicOn && el?.src && !el.ended && (this.trackBlocked || el.paused)) this.playTrack();
+    };
+    const ctx = this.ctx;
+    if (ctx && ctx.state !== 'running') {
+      // WebKit also exposes an `interrupted` state on iOS. The broad check catches that without
+      // relying on its non-standard type. Retry now to spend the gesture on the media element, and
+      // again after resume because WebKit can resolve it a tick later.
+      const resumed = ctx.resume();
+      retry();
+      void resumed.then(retry, () => { /* the next gesture will try again */ });
+    } else retry();
   }
   /** whether music is the recorded soundtrack (false once it failed and the lute took over) */
   get soundtrack() {

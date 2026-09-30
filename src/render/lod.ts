@@ -129,6 +129,9 @@ export class LodView {
    * renderers whose own data has not changed either can draw last frame's instances again */
   viewVersion = 0;
   shadowVersion = 0;
+  /** the shadow frustum is set this frame (false on a frame that keeps last frame's shadow map: then
+   * nothing is only a shadow caster, and instances sorted now would have none of those) */
+  shadowOn = false;
   private m = new THREE.Matrix4();
   private s = new THREE.Sphere();
   private lastView = new Float32Array(33);
@@ -146,7 +149,11 @@ export class LodView {
       sun.shadow.updateMatrices(sun);
       this.shadow.copy(sun.shadow.getFrustum());
       if (changed(this.lastShadow, sun.shadow.matrix.elements, 0)) this.shadowVersion++;
-    } else this.shadow.planes.forEach((p) => p.set(new THREE.Vector3(0, 1, 0), -1e9));
+      this.shadowOn = true;
+    } else {
+      this.shadow.planes.forEach((p) => p.set(new THREE.Vector3(0, 1, 0), -1e9));
+      this.shadowOn = false;
+    }
   }
 
   /** Pixels per world unit at a point. */
@@ -186,17 +193,22 @@ export class InstanceKeep {
   private key = NaN;
   private view = -1;
   private shadow = -1;
+  private shadowOn = false;
   private age = 0;
   constructor(private every = 30) {}
   still(key: number): boolean {
     const V = lodView;
-    if (key === this.key && V.viewVersion === this.view && (V.shadowVersion === this.shadow || this.age < this.every) && V.enabled) {
+    // (a frame without the shadow pass needs no shadow casters; instances sorted on one have none of
+    // them, so the next frame that draws the shadow map sorts them again)
+    const shadowOk = !V.shadowOn || (this.shadowOn && (V.shadowVersion === this.shadow || this.age < this.every));
+    if (key === this.key && V.viewVersion === this.view && shadowOk && V.enabled) {
       this.age++;
       return true;
     }
     this.key = key;
     this.view = V.viewVersion;
     this.shadow = V.shadowVersion;
+    this.shadowOn = V.shadowOn;
     this.age = 0;
     return false;
   }

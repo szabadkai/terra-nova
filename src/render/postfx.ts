@@ -7,6 +7,7 @@
 // (Each pass of a composer chain rewrote a full-screen multisampled target; at 3440x1440 that
 // alone cost more than the whole bloom.)
 import * as THREE from 'three';
+import { perf } from './perf';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { GTAOShader, generateMagicSquareNoise } from 'three/examples/jsm/shaders/GTAOShader.js';
@@ -794,7 +795,9 @@ export class PostFX {
   render(time: number, zoom01: number, night: number, rain = 0, rainSlant = 0) {
     const r = this.renderer;
     r.setRenderTarget(this.sceneRT);
+    const sceneGpu = perf.beginGpu(r.getContext(), 'scene+shadow');
     r.render(this.scene, this.camera);
+    perf.endGpu(sceneGpu);
     const src = this.sceneRT;
     const u = this.final.uniforms;
     const ao = this.settings.ao && this.sceneRT.depthTexture ? this.ao : null;
@@ -803,7 +806,9 @@ export class PostFX {
       const view = _view.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
       if (this.aoHalfRate && this.aoValid && !this.aoHeld && view.equals(this.aoView)) this.aoHeld = true;
       else {
+        const aoGpu = perf.beginGpu(r.getContext(), 'ao');
         ao.render(r, this.sceneRT.depthTexture!, this.camera);
+        perf.endGpu(aoGpu);
         this.aoView.copy(view);
         this.aoValid = true;
         this.aoHeld = false;
@@ -880,7 +885,9 @@ export class PostFX {
     u.uFlash.value *= 0.9;
     r.setRenderTarget(null);
     this.quad.material = this.final;
+    const finalGpu = perf.beginGpu(r.getContext(), 'final');
     this.quad.render(r);
+    perf.endGpu(finalGpu);
   }
 
   private pass(m: THREE.Material, rt: THREE.WebGLRenderTarget) {
