@@ -8,6 +8,8 @@
 // they are. Moving parts, flags (their cloth bends in the vertex shader) and sites stay on their own.
 import * as THREE from 'three';
 import { ScreenLod } from './lod';
+import { getMaterial } from './materials';
+import { ownDepth } from './instancing';
 
 interface Slot {
   /** the model the instance is a piece of (a ScreenLod level, or the building itself) */
@@ -43,6 +45,7 @@ class Batch extends THREE.BatchedMesh {
     super(64, 1 << 15, 0, material);
     this.castShadow = castShadow;
     this.receiveShadow = true;
+    ownDepth(this);
     // culled per instance below (three's check of the whole batch would need its bounds kept up to date)
     this.frustumCulled = false;
   }
@@ -169,7 +172,9 @@ export class BuildingBatches {
         const key = `${mat.uuid}|${mesh.castShadow ? 1 : 0}`;
         let batch = this.batches.get(key);
         if (!batch) {
-          batch = new Batch(mat, mesh.castShadow);
+          // (the library's twin for batches: the building's own meshes that stay out, its moving
+          // parts, use the plain one)
+          batch = new Batch(getMaterial(mesh.userData.matKey, 'batch'), mesh.castShadow);
           batch.userData.matKey = mesh.userData.matKey;
           this.batches.set(key, batch);
           this.group.add(batch);

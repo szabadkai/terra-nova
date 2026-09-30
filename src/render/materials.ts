@@ -93,15 +93,20 @@ function patchOpts(key: string, clip: boolean) {
   return { clip, wind: WIND_MATS.has(key) ? ('flag' as const) : ('none' as const), flag: FLAGS[key], key: `bld_${key}`, snow, grime };
 }
 
-export function getMaterial(key: string): THREE.Material {
-  let m = base.get(key);
+/**
+ * The library's material for `key`. A material drawn by more than one kind of object (plain meshes,
+ * instanced ones, the buildings' batches) makes three look its program up again at every switch
+ * between them, so each kind has a twin of its own (`kind`): the same shader, a separate material.
+ */
+export function getMaterial(key: string, kind: '' | 'batch' | 'inst' = ''): THREE.Material {
+  let m = base.get(kind + key);
   if (!m) {
     const f = factories[key] ?? factories.plaster;
     m = f();
     patchMaterial(m, patchOpts(key, false));
     // flags cast the shadow of the cloth as it is blowing (ModelBuilder picks this up)
     if (FLAGS[key]) m.userData.depth = patchedDepthMaterial({ wind: 'flag', flag: FLAGS[key], key: `bld_${key}` });
-    base.set(key, m);
+    base.set(kind + key, m);
   }
   return m;
 }
@@ -124,6 +129,8 @@ export function getBurnMaterial(key: string): THREE.MeshStandardMaterial {
 
 /** Night window glow intensity for all window materials. */
 export function setWindowGlow(v: number) {
-  const m = base.get('window') as THREE.MeshStandardMaterial | undefined;
-  if (m) m.emissiveIntensity = v;
+  for (const kind of ['', 'batch', 'inst']) {
+    const m = base.get(kind + 'window') as THREE.MeshStandardMaterial | undefined;
+    if (m) m.emissiveIntensity = v;
+  }
 }

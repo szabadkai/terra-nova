@@ -16,6 +16,7 @@ export function uploadFirst(attr: THREE.BufferAttribute | null | undefined, n: n
  * any extra per-instance attributes). An empty mesh is hidden, so no pass sets up its program at all.
  */
 export function commitInstances(mesh: THREE.InstancedMesh, n: number, ...extra: (THREE.BufferAttribute | null | undefined)[]) {
+  if (!mesh.customDepthMaterial) ownDepth(mesh);
   mesh.count = n;
   mesh.visible = n > 0;
   uploadFirst(mesh.instanceMatrix, n);
@@ -33,4 +34,22 @@ export function withInstanceColor<T extends THREE.InstancedMesh>(mesh: T): T {
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
   }
   return mesh;
+}
+
+const depthMats = new Map<string, THREE.MeshDepthMaterial>();
+
+/**
+ * Give an instanced or batched mesh with no depth material of its own one shared by its kind. three
+ * draws every such object into the shadow map with a single depth material, whose program it has to
+ * look up again each time the pass goes from an instanced mesh to a plain one, or from one with
+ * per-instance colours to one without: some twenty times a frame. (Only these change the program:
+ * three copies the object's map, alpha test and side onto whichever depth material it draws with.)
+ */
+export function ownDepth(mesh: THREE.Mesh | THREE.InstancedMesh | THREE.BatchedMesh) {
+  if (mesh.customDepthMaterial) return;
+  const o = mesh as THREE.Mesh & { isInstancedMesh?: boolean; isBatchedMesh?: boolean; instanceColor?: unknown; _colorsTexture?: unknown };
+  const key = (o.isBatchedMesh ? 'b' : o.isInstancedMesh ? 'i' : 'm') + (o.instanceColor || o._colorsTexture ? 'c' : '');
+  let d = depthMats.get(key);
+  if (!d) { d = new THREE.MeshDepthMaterial(); depthMats.set(key, d); }
+  mesh.customDepthMaterial = d;
 }

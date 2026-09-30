@@ -37,7 +37,7 @@ import { Birds } from './birds';
 import { Demolition } from './demolition';
 import { PriorityMarker } from './priority';
 import { LanternsRenderer } from './lanterns';
-import { commitInstances, withInstanceColor } from './instancing';
+import { commitInstances, ownDepth, withInstanceColor } from './instancing';
 import { ScreenLod, lodSetPass, lodView } from './lod';
 import { framePace, type FrameCap } from './framePace';
 import { QUIET_PR } from './hardware';
@@ -288,8 +288,17 @@ export class GameRenderer {
       this.cam.jumpTo(hq.cx, hq.cz + 4, true);
       this.cam.zoomTo(30, true);
     }
+    this.giveDepths();
     this.applyQuality();
     window.addEventListener('resize', this.onResize);
+  }
+
+  /** Every instanced and batched mesh in the scene without a depth material of its own gets its kind's (ownDepth). */
+  private giveDepths() {
+    this.scene.traverse((o) => {
+      const m = o as THREE.InstancedMesh;
+      if ((m.isInstancedMesh || (o as THREE.BatchedMesh).isBatchedMesh) && !m.customDepthMaterial) ownDepth(m);
+    });
   }
 
   private onResize = () => this.resize();
@@ -386,6 +395,7 @@ export class GameRenderer {
       for (const o of trees.children) (o as THREE.InstancedMesh).dispose();
     }
     // the view as it is over the one with every sample in it, before the page shows it (behind the title screen)
+    this.giveDepths();
     if (!this.disposed) this.frame(0, 0);
   }
 

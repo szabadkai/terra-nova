@@ -431,8 +431,9 @@ uniform float uGrime;`);
     }
     const snowAmt = o.snow ?? 0;
     if (snowAmt > 0) {
-      fs = fs.replace('#include <lights_physical_fragment>', `{
-    // snow settles on upward-facing surfaces while it snows and melts away afterwards
+      fs = fs.replace('#include <lights_physical_fragment>', `if (uSnow > 0.0) {
+    // snow settles on upward-facing surfaces while it snows and melts away afterwards (none at all,
+    // and none of its lookups, once the last of it has gone)
     #ifndef FLAT_SHADED
       vec3 wnS = normalize((vec4(normalize(vNormal), 0.0) * viewMatrix).xyz);
     #else

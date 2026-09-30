@@ -5,7 +5,7 @@
 // camera here, since the big instanced meshes cover the whole map and three cannot cull them.
 import * as THREE from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
-import { uploadFirst } from './instancing';
+import { ownDepth, uploadFirst } from './instancing';
 
 /** Resolves once the simplifier's WebAssembly is compiled; await it before building models. */
 export const lodReady: Promise<void> = MeshoptSimplifier.ready;
@@ -246,6 +246,7 @@ export class LodPair {
       m.frustumCulled = false;
       m.receiveShadow = o.receiveShadow ?? true;
       if (o.depth) m.customDepthMaterial = o.depth;
+      else ownDepth(m);
       return m;
     };
     this.near = mk(nearGeo, false);

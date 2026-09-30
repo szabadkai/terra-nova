@@ -147,6 +147,9 @@ export class TreesRenderer {
       fragEmissive: leafEmissive(0.1, 0.35),
     });
     const depth = patchedDepthMaterial({ wind: 'tree' });
+    // (the same for the parts with per-instance colours: one depth material drawn by both kinds would
+    // have its program looked up again at every switch between them in the shadow pass)
+    const depthC = patchedDepthMaterial({ wind: 'tree' });
     const leafTex = leafTexture(0);
     const needleTex = leafTexture(1);
     const twigTex = twigTexture();
@@ -224,9 +227,9 @@ export class TreesRenderer {
     geos.forEach((g, sp) => {
       const sm = DECIDUOUS[sp] ? seasonal(sp) : null;
       this.trunks.push(pair(g.trunk, far(g.trunk), barkMat, depth, 0));
-      const crown = pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depth, 1);
+      const crown = pair(g.crown, far(g.crown), sm ? sm.crown : this.leafMat, sm ? sm.crownDepth : depthC, 1);
       this.crowns.push(crown);
-      if (sm) this.leafMats.push({ pair: crown, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depth });
+      if (sm) this.leafMats.push({ pair: crown, thin: sm.crown, thinDepth: sm.crownDepth, full: sm.crownFull, fullDepth: depthC });
       if (g.cards) {
         const cf = g.cardsFar ?? g.cards;
         const cards = g.needles ? pair(g.cards, cf, needleMat, needleDepth, 1) : pair(g.cards, cf, sm!.card, sm!.cardDepth, 1);

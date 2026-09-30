@@ -94,7 +94,7 @@ export class ShipsRenderer {
       if (war) {
         const wp = parts as WarshipParts;
         g.add(wp.turret.build((k) => getMaterial(k)), wp.arm.build((k) => getMaterial(k)), new THREE.Mesh(this.stoneGeo, getMaterial('rock')));
-        g.add(new THREE.InstancedMesh(wp.oarGeo, getMaterial('timber'), wp.oars.length));
+        g.add(new THREE.InstancedMesh(wp.oarGeo, getMaterial('timber', 'inst'), wp.oars.length));
       }
       out.add(g);
     }
@@ -132,7 +132,7 @@ export class ShipsRenderer {
       stone.position.copy(wp.cupPos);
       stone.castShadow = true;
       arm.add(stone);
-      const oars = new THREE.InstancedMesh(wp.oarGeo, getMaterial('timber'), wp.oars.length);
+      const oars = new THREE.InstancedMesh(wp.oarGeo, getMaterial('timber', 'inst'), wp.oars.length);
       oars.castShadow = true;
       oars.receiveShadow = true;
       oars.frustumCulled = false;
