@@ -472,8 +472,8 @@ export class GameMenu {
     // (the screen as the detection counts it: the window where that is larger)
     const scr = `${Math.max(screen.width, innerWidth)}×${Math.max(screen.height, innerHeight)}${devicePixelRatio > 1 ? ` at ${Math.round(devicePixelRatio * 100) / 100}×` : ''}`;
     const desc = hw.level
-      ? `${esc(hw.gpu)}, a ${scr} screen: <span class="hw-level">${levelText(hw.level, hw.ao)}</span>${hw.quiet ? ' in quiet mode (it runs on a battery)' : ''}${hw.ms ? `, timed at about ${Math.round(hw.ms)} ms a frame for a grown town` : ''}. Detecting again sets the detail level, the resolution and the effects.`
-      : 'Reads the graphics card and the screen, then times a few frames at each level. Sets the detail level, the resolution and the effects.';
+      ? `${esc(hw.gpu)}, a ${scr} screen: <span class="hw-level">${levelText(hw.level, hw.ao)}</span>${hw.quiet ? ' in quiet mode (it runs on a battery)' : ''}${hw.ms ? `, timed at about ${Math.round(hw.ms)} ms a frame for a grown town` : ''}. Detecting again sets the detail level, the resolution and the effects (and a frame cap of about 30 on a low machine).`
+      : 'Reads the graphics card and the screen, then times a few frames at each level. Sets the detail level, the resolution and the effects (and a frame cap of about 30 on a low machine).';
     const b = h('button', 'gm-detect', hw.level ? 'Detect again' : 'Detect') as HTMLButtonElement;
     b.onclick = () => {
       this.o.audio.play('ui');

@@ -118,6 +118,9 @@ export function detectGraphics(gr: GameRenderer, game: Game, timed = true): Dete
   const d = detect(gr, base, timed && document.visibilityState === 'visible', grown);
   prefs.render = { ...base, ...PRESETS[d.level], ao: d.ao, quiet: d.quiet };
   if (d.resolution) prefs.render.resolution = d.resolution;
+  // a low machine aims at 30 frames a second; a machine that has stopped being one goes back to 60 (any other cap is the player's)
+  if (d.fps === 30) prefs.render.frameCap = '30';
+  else if (prefs.render.frameCap === '30') prefs.render.frameCap = '60';
   const ms = d.timed.find(([q, , ao]) => q === d.level && ao === d.ao)?.[1] ?? 0;
   prefs.hw = { level: d.level, ao: d.ao, quiet: d.quiet, res: prefs.render.resolution, gpu: d.guess.gpu.label, ms: Math.round(ms * 10) / 10, told: prefs.hw.told };
   savePrefs();

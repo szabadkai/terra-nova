@@ -10,6 +10,11 @@
 // ambient occlusion and without it, and the detection gives up the occlusion of a level before it
 // gives up the level, since it is the costliest single effect.
 //
+// A low machine (one the ladder takes down to Low) aims at LOW_FPS (30) frames a second instead of
+// 60: Low is judged against that budget and the frame cap is set to match, so the card idles half
+// of every frame rather than straining for 60, and Low drops to half resolution only when it misses
+// even that.
+//
 // A machine that runs on a battery (a laptop, a tablet, a phone: `Signals.portable`) is fitted for
 // quiet rather than for the last frame: quiet mode (RenderSettings.quiet, which caps the device
 // pixels drawn at QUIET_PR and rests the frames while nothing is touched) and half the frame budget,
@@ -32,6 +37,13 @@ export const PRESETS: Record<Quality, Pick<RenderSettings, 'quality' | 'resoluti
 export const QUIET_PR = 1.25;
 /** the share of the frame budget a portable machine is fitted to: the card idles the rest of each frame */
 export const QUIET_SHARE = 0.5;
+/** frames a second a low machine aims at (a level above Low aims at 60) */
+export const LOW_FPS = 30;
+
+/** frames a second the detection aims at on a level */
+export const fpsFor = (level: Quality) => (level === 'low' ? LOW_FPS : 60);
+/** the budget a level is judged against: Low's is for LOW_FPS */
+const budgetFor = (level: Quality, budget: number) => budget * (60 / fpsFor(level));
 export const LEVEL_NAMES: Record<Quality, string> = { low: 'Low', medium: 'Medium', high: 'High', ultra: 'Ultra' };
 
 /** A level with or without the ambient occlusion its preset carries: one step of the ladder. */
@@ -39,9 +51,9 @@ export interface Rung { level: Quality; ao: boolean }
 /** Everything the detection can land on, best first: a level with its occlusion, then without. */
 export const RUNGS: Rung[] = [...LEVELS].reverse().flatMap((level): Rung[] => PRESETS[level].ao ? [{ level, ao: true }, { level, ao: false }] : [{ level, ao: false }]);
 
-/** A level's name, and what the detection had to leave off ("High without ambient occlusion"). */
+/** A level's name, and what the detection had to leave off ("High without ambient occlusion"); Low says its frame rate. */
 export function levelText(level: Quality, ao: boolean) {
-  return LEVEL_NAMES[level] + (PRESETS[level].ao && !ao ? ' without ambient occlusion' : '');
+  return LEVEL_NAMES[level] + (PRESETS[level].ao && !ao ? ' without ambient occlusion' : '') + (fpsFor(level) !== 60 ? ` at ${fpsFor(level)} frames a second` : '');
 }
 
 /** the most device pixels per CSS pixel each level draws (as `GameRenderer.applyQuality` sets it) */
@@ -240,13 +252,15 @@ export function guessLevel(s: Signals, budget = budgetMs()): Guess {
   if (gpu.software) lower('low', 'no graphics card (software drawing)');
   const top = LEVELS.indexOf(cap);
   // an unknown GPU starts as high as the device allows (but not Ultra): the timing decides
-  const start = !gpu.power ? RUNGS.find((r) => LEVELS.indexOf(r.level) <= Math.min(top, LEVELS.indexOf('high'))) : RUNGS.find((r) => LEVELS.indexOf(r.level) <= top && frameMs(r.level, s, gpu.power, r.ao, quiet) * LATE <= budget);
+  const start = !gpu.power ? RUNGS.find((r) => LEVELS.indexOf(r.level) <= Math.min(top, LEVELS.indexOf('high'))) : RUNGS.find((r) => LEVELS.indexOf(r.level) <= top && frameMs(r.level, s, gpu.power, r.ao, quiet) * LATE <= budgetFor(r.level, budget));
   const { level, ao } = start ?? RUNGS[RUNGS.length - 1];
   return { level, ao, quiet, gpu, cap, capWhy };
 }
 
 export interface Detected {
   level: Quality;
+  /** frames a second the level aims at (fpsFor): the frame cap to set */
+  fps: number;
   /** the level's ambient occlusion is on (false where the machine can't hold it, or the level has none) */
   ao: boolean;
   /** quiet mode: a portable machine (the guess's `quiet`) */
@@ -278,9 +292,10 @@ export function confirmLevel(guess: Guess, timeAt: (q: Quality, ao: boolean) => 
     const { level, ao } = RUNGS[i];
     const ms = timeAt(level, ao);
     timed.push([level, ms, ao]);
-    if (ms <= budget) return { level, ao, quiet, guess, timed };
+    const b = budgetFor(level, budget);
+    if (ms <= b) return { level, fps: fpsFor(level), ao, quiet, guess, timed };
     const next = RUNGS[i + 1];
-    if (!next || LEVELS.indexOf(next.level) < floor) return { level, ao, quiet, resolution: level === 'low' && ms > budget * 1.3 ? '50' : undefined, guess, timed };
+    if (!next || LEVELS.indexOf(next.level) < floor) return { level, fps: fpsFor(level), ao, quiet, resolution: level === 'low' && ms > b * 1.3 ? '50' : undefined, guess, timed };
     i++;
   }
 }
@@ -349,13 +364,13 @@ export function detect(gr: GameRenderer, base: RenderSettings, timed = true, gro
   const quiet = guess.quiet;
   // (the levels are timed as quiet mode would draw them)
   base = { ...base, quiet };
-  if (!timed) return { level: guess.level, ao: guess.ao, quiet, guess, timed: [] };
+  if (!timed) return { level: guess.level, fps: fpsFor(guess.level), ao: guess.ao, quiet, guess, timed: [] };
   // the canvas may be smaller than the screen it will fill
   const el = gr.renderer.domElement;
   const canvas = { width: el.clientWidth || innerWidth, height: el.clientHeight || innerHeight, dpr: sig.dpr };
   const late = LATE + (1 - LATE) * Math.min(1, Math.max(0, grown));
   return confirmLevel(guess, (q, ao) => {
-    const ms = timeLevel(gr, q, ao, base, budget);
+    const ms = timeLevel(gr, q, ao, base, budgetFor(q, budget));
     return ms * late * (frameMs(q, sig, 1, ao, quiet) / frameMs(q, canvas, 1, ao, quiet));
   }, budget);
 }

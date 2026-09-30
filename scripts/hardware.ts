@@ -5,7 +5,7 @@
 // nothing left for the automatic resolution to give.
 // Nothing here touches the game.
 // Usage: npx tsx scripts/hardware.ts
-import { LEVELS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SHARE, RUNGS, confirmLevel, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
+import { LEVELS, LOW_FPS, LowFpsWatch, PRESETS, QUIET_PR, QUIET_SHARE, RUNGS, confirmLevel, fpsFor, frameMs, gpuLabel, gpuPower, guessLevel, levelText, lowFpsAdvice, pixelsAt, portable, type Signals } from '../src/render/hardware';
 import type { Quality } from '../src/render/renderer';
 
 let fails = 0;
@@ -119,6 +119,26 @@ const sig = (o: Partial<Signals>): Signals => ({ gpu: '', width: 1920, height: 1
   check(frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1) === frameMs('medium', { width: 1920, height: 1080, dpr: 1 }, 1, false), 'Medium has none');
   check(RUNGS.map((r) => `${r.level[0]}${r.ao ? '+' : ''}`).join(' ') === 'u+ u h+ h m l', `the ladder, best first: ${RUNGS.map((r) => `${r.level}${r.ao ? ' + AO' : ''}`).join(', ')}`);
   check(levelText('high', true) === 'High' && levelText('high', false) === 'High without ambient occlusion' && levelText('medium', false) === 'Medium', 'the level is named with what was left off');
+  check(levelText('low', false) === `Low at ${LOW_FPS} frames a second` && fpsFor('low') === LOW_FPS && fpsFor('medium') === 60, `Low aims at ${LOW_FPS} frames a second and says so; the other levels at 60`);
+}
+
+// --- a low machine aims at 30
+{
+  const known = guessLevel(sig({ gpu: 'Intel Iris Xe Graphics' }), BUDGET);
+  check(known.level === 'low', `an Iris Xe at 1080p is guessed Low (${levelText(known.level, known.ao)})`);
+  const ms = (t: Record<Quality, number>) => (q: Quality) => t[q];
+  let d = confirmLevel(known, ms({ ultra: 60, high: 50, medium: 40, low: 22 }), BUDGET);
+  check(d.level === 'low' && d.fps === LOW_FPS && !d.resolution, `Low at 22 ms misses 60 fps but holds ${LOW_FPS}: Low at full Low resolution, cap ${LOW_FPS} (got ${levelText(d.level, d.ao)}${d.resolution ? ` at ${d.resolution}%` : ''})`);
+  d = confirmLevel(known, ms({ ultra: 60, high: 50, medium: 40, low: 40 }), BUDGET);
+  check(d.level === 'low' && d.fps === LOW_FPS && !d.resolution, 'Low at 40 ms misses 30 fps by under a third: still full Low resolution');
+  d = confirmLevel(known, ms({ ultra: 60, high: 50, medium: 40, low: 50 }), BUDGET);
+  check(d.level === 'low' && d.resolution === '50', 'Low at 50 ms misses even 30 fps by a third: half resolution');
+  const mid = guessLevel(sig({ gpu: 'NVIDIA GeForce GTX 1060' }), BUDGET);
+  d = confirmLevel(mid, ms({ ultra: 30, high: 25, medium: 14, low: 8 }), BUDGET);
+  check(d.level === 'medium' && d.fps === 60, 'a machine that holds Medium aims at 60');
+  // the guess reaches Low through the 30 fps budget too: a GPU that would take 25 ms on Low gets Low, not a phone's half resolution
+  const weak = guessLevel(sig({ gpu: 'Intel UHD Graphics 620', width: 2560, height: 1440 }), BUDGET);
+  check(weak.level === 'low' && frameMs('low', sig({ width: 2560, height: 1440 }), gpuPower('Intel UHD Graphics 620').power) > BUDGET, `a UHD 620 at 1440p (${frameMs('low', sig({ width: 2560, height: 1440 }), gpuPower('Intel UHD Graphics 620').power).toFixed(0)} ms on Low) is guessed Low`);
 }
 
 // --- the timed sample
