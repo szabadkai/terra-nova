@@ -9,6 +9,7 @@ import { RTSCamera } from './camera';
 import { Sky } from './sky';
 import { fitShadow } from './shadowFit';
 import { TerrainRenderer } from './terrain';
+import { DetailUsers } from './terrainDetail';
 import { WaterRenderer } from './water';
 import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
 import { SettlersRenderer } from './settlers';
@@ -185,6 +186,8 @@ export class GameRenderer {
   private pickRay = new THREE.Raycaster();
   private pickNdcVector = new THREE.Vector2();
   private staticUpdateT = 0;
+  /** the ground's and the stones' close-up detail layers: not at Low */
+  private detail: DetailUsers;
   /** what casts no shadow at Low (hidden while its shadow map is drawn), and whether each was visible */
   private lowShadowSkip: THREE.Object3D[] = [];
   private lowShadowWas: boolean[] = [];
@@ -246,6 +249,7 @@ export class GameRenderer {
     this.scene.add(this.trees.group);
     this.stones = new StonesRenderer(game);
     this.scene.add(this.stones.group);
+    this.detail = new DetailUsers([this.terrain.mesh.material as THREE.Material, this.stones.mat], [this.terrain.uniforms, this.stones.detail]);
     this.fields = new FieldsRenderer(game);
     this.scene.add(this.fields.mesh);
     this.vines = new VinesRenderer(game);
@@ -467,6 +471,7 @@ export class GameRenderer {
     const pr = s.quality === 'low' ? 1 : s.quality === 'medium' ? Math.min(dpr, 1.25) : s.quality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
     this.renderer.setPixelRatio(pr);
     this.grass.enabled = s.grass && s.quality !== 'low';
+    this.detail.set(s.quality !== 'low');
     this.fx.settings.bloom = s.bloom;
     this.fx.settings.dof = s.dof;
     this.fx.settings.grade = s.grade;
@@ -1152,6 +1157,7 @@ export class GameRenderer {
     this.particles.setAmbient(ambient);
     this.rain.setAmbient(ambient);
 
+    this.detail.frame();
     this.terrain.update(dt);
     this.trails.update(this.renderer, gameDt, this.cam.target.x, this.cam.target.z, this.cam.viewSize, this.cam.dist);
     this.borders.update();

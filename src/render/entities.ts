@@ -8,7 +8,6 @@ import { WATER_LEVEL } from '../game/world';
 import { hash2 } from '../core/rng';
 import { DEER_HEAD, DEER_HIPS, DEER_KNEE, DEER_NECK, buildDeerGeos, buildGoodGeos, buildHareGeos, buildGrassTuft, buildRockGeos, buildTreeGeos, buildVineGeos, buildWheatGeo } from './models';
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
-import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
 import { InstanceKeep, LOD_PIXELS, LodPair, lodView, simplify } from './lod';
 import { commitInstances, uploadFirst, withInstanceColor } from './instancing';
@@ -389,7 +388,11 @@ const ROCK_MAP = /* glsl */ `
     tw /= tw.x + tw.y + tw.z;
     float camDist = length(vViewPosition);
     float farFade = 1.0 - smoothstep(30.0, 90.0, camDist);
+#ifdef DETAIL_LOW
+    float detK = 0.0;
+#else
     float detK = 1.0 - smoothstep(24.0, 66.0, camDist);
+#endif
     vec2 ro = vec2(vRockR, fract(vRockR * 7.31));
     vec4 r1 = rockN(vWPos, tw, 0.17, vec2(0.63, 0.41) + ro);
     vec4 r2 = rockN(vWPos, tw, 0.61, vec2(0.11, 0.87) + ro);
@@ -401,6 +404,11 @@ const ROCK_MAP = /* glsl */ `
     float crack = (1.0 - smoothstep(0.0, 0.1, r2.b)) * step(0.55, r2.a) * 0.6 * farFade;
     c *= 1.0 - crack * 0.35;
     c *= 0.9 + 0.2 * r3.r * farFade * (1.0 - detK);
+#ifdef DETAIL_LOW
+    vec4 ra = vec4(0.4, 0.4, 0.4, 0.5);
+    float rc = 1.0, rr = 0.5;
+    sDetG = vec3(0.0);
+#else
     // close-up detail: the mountain's rock layer, a little denser to suit boulders
     vec3 q = vWPos * 0.45;
     vec4 ax = texture(tDetail, vec3(q.zy, 4.0)), ay = texture(tDetail, vec3(q.xz, 4.0)), az = texture(tDetail, vec3(q.xy, 4.0));
@@ -412,6 +420,7 @@ const ROCK_MAP = /* glsl */ `
           + (vec3(my.r, 0.0, my.g) * 2.0 - vec3(1.0, 0.0, 1.0)) * tw.y
           + (vec3(mz.r, mz.g, 0.0) * 2.0 - vec3(1.0, 1.0, 0.0)) * tw.z;
     sDetG *= 1.05 * detK;
+#endif
     // patchy moss and lichen on the tops
     float mossN = r2.g * 0.45 + r3.r * 0.15 + r4.r * 0.2 + mix(0.5, ra.a, detK) * 0.3 + (vRockR - 0.5) * 0.25;
     float moss = smoothstep(0.65, 0.69, mossN) * smoothstep(0.45, 0.9, wn.y);
@@ -436,14 +445,16 @@ export class StonesRenderer {
   private n = 0;
   private mats = new Float32Array(0);
   private info = new Float32Array(0); // x, y, z, radius, variant
+  /** the detail arrays (DetailUsers fills them) and the material that reads them */
+  readonly detail = { tDetail: { value: null as THREE.Texture | null }, tDetailN: { value: null as THREE.Texture | null } };
+  readonly mat: THREE.MeshStandardMaterial;
   constructor(private game: Game) {
-    const detail = getTerrainDetail();
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+    const mat = (this.mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 }));
     patchMaterial(mat, {
       key: 'stones',
       snow: 1,
       grime: 0.5,
-      uniforms: { tDetail: { value: detail.albedo }, tDetailN: { value: detail.normal } },
+      uniforms: this.detail,
       vertexHead: 'varying vec3 vWNormal;\nvarying float vRockR;',
       vertexBegin: `vWNormal = normalize((vec4(transformedNormal, 0.0) * viewMatrix).xyz);
   #ifdef USE_INSTANCING

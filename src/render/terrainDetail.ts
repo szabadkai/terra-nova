@@ -80,3 +80,32 @@ export function getTerrainDetail(immediate = false) {
   }).catch(fallback);
   return c;
 }
+
+/**
+ * The materials that read the detail arrays (the ground's, the stones'). Low compiles them without
+ * (DETAIL_LOW: their close-up detail was a sixth of a Low frame on a GPU short of fill), and the
+ * arrays are only built once a frame is drawn with them, so a machine that plays at Low never paints
+ * nor uploads them.
+ */
+export class DetailUsers {
+  private on = true;
+  private built = false;
+  constructor(private mats: THREE.Material[], private uniforms: Record<string, THREE.IUniform>[]) {}
+  /** with the detail layers (every level but Low) or without */
+  set(on: boolean) {
+    if (on === this.on) return;
+    this.on = on;
+    for (const m of this.mats) {
+      const d = ((m as THREE.Material & { defines?: Record<string, string> }).defines ??= {});
+      if (on) delete d.DETAIL_LOW; else d.DETAIL_LOW = '';
+      m.needsUpdate = true;
+    }
+  }
+  /** before a frame: the arrays, the first time a frame draws them */
+  frame() {
+    if (!this.on || this.built) return;
+    this.built = true;
+    const d = getTerrainDetail();
+    for (const u of this.uniforms) { u.tDetail.value = d.albedo; u.tDetailN.value = d.normal; }
+  }
+}

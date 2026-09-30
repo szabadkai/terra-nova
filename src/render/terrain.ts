@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import type { Game } from '../game/game';
 import { WATER_LEVEL } from '../game/world';
 import { G, patchMaterial } from './shaderPatch';
-import { getTerrainDetail } from './terrainDetail';
 
 function dataTex(W: number, H: number, linear = true): THREE.DataTexture {
   const t = new THREE.DataTexture(new Uint8Array(W * H * 4), W, H, THREE.RGBAFormat);
@@ -160,7 +159,12 @@ const TERRAIN_MAP = /* glsl */ `
   // range): anything further behind can never show, so only the (at most three) layers that can
   // still win get their detail looked up and their colour worked out, however far the blurred
   // splat weights reach.
+#ifdef DETAIL_LOW
+  // (Low: no close-up detail layers; the middle distance's look carries on to the closest zoom)
+  float detK = 0.0;
+#else
   float detK = 1.0 - smoothstep(24.0, 66.0, camDist);
+#endif
   float dhK = detK * (1.0 - smoothstep(10.0, 30.0, camDist) * 0.6);
   float v[8];
   float mx = 0.0;
@@ -586,7 +590,6 @@ export class TerrainRenderer {
     G.tHeight.value = this.heightTex;
     G.tFog.value = this.misc;
     G.uMapSize.value.set(W, H);
-    const detail = getTerrainDetail();
 
     this.uniforms = {
       tSplatA: { value: this.splatA },
@@ -604,8 +607,9 @@ export class TerrainRenderer {
       uSpellCol: { value: new THREE.Color(1, 0.8, 0.3) },
       uBorderOn: { value: 1 },
       uSunI: { value: 1 },
-      tDetail: { value: detail.albedo },
-      tDetailN: { value: detail.normal },
+      // (filled in by DetailUsers the first time a frame draws them: Low never does)
+      tDetail: { value: null },
+      tDetailN: { value: null },
       tTrail: G.tTrail,
     };
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
