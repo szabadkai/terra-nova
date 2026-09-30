@@ -11,6 +11,30 @@ export function uploadFirst(attr: THREE.BufferAttribute | null | undefined, n: n
   attr.needsUpdate = true;
 }
 
+/** what went up last time, per attribute, for uploadChanged */
+const sent = new WeakMap<THREE.BufferAttribute, { data: Float32Array; len: number }>();
+
+/**
+ * Like uploadFirst, for an attribute that mostly holds what it held last frame (per-instance colours):
+ * the first n items go up only if they differ from what was sent last time.
+ */
+export function uploadChanged(attr: THREE.BufferAttribute | null | undefined, n: number) {
+  if (!attr || n <= 0) return;
+  const len = Math.min(attr.array.length, n * attr.itemSize);
+  const a = attr.array as Float32Array;
+  let s = sent.get(attr);
+  if (s && s.len === len) {
+    const d = s.data;
+    let i = 0;
+    while (i < len && d[i] === a[i]) i++;
+    if (i === len) return;
+  }
+  if (!s || s.data.length < len) { s = { data: new Float32Array(a.length), len: 0 }; sent.set(attr, s); }
+  s.data.set(a.subarray(0, len));
+  s.len = len;
+  uploadFirst(attr, n);
+}
+
 /**
  * Set an instanced mesh's count and upload the instances written this time (matrices, colours and
  * any extra per-instance attributes). An empty mesh is hidden, so no pass sets up its program at all.

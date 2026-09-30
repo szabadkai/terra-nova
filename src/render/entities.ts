@@ -10,7 +10,7 @@ import { DEER_HEAD, DEER_HIPS, DEER_KNEE, DEER_NECK, buildDeerGeos, buildGoodGeo
 import { G, patchMaterial, patchedDepthMaterial } from './shaderPatch';
 import { getTerrainDetail } from './terrainDetail';
 import { leafTexture, twigTexture } from './textures';
-import { LOD_PIXELS, LodPair, lodView, simplify } from './lod';
+import { InstanceKeep, LOD_PIXELS, LodPair, lodView, simplify } from './lod';
 import { commitInstances, uploadFirst, withInstanceColor } from './instancing';
 
 const tmpM = new THREE.Matrix4();
@@ -112,6 +112,10 @@ float cardAlpha(float st) {
 const TREE_FAR_ERR = 0.03;
 
 export class TreesRenderer {
+  /** the instances stay as they are while nothing that places them moved (lod.ts InstanceKeep) */
+  private keep = new InstanceKeep();
+  /** a tree is on its way down this frame */
+  private moving = false;
   group = new THREE.Group();
   private trunks: LodPair[] = [];
   private crowns: LodPair[] = [];
@@ -297,6 +301,8 @@ export class TreesRenderer {
       let st = this.fallStart.get(t.id);
       if (st === undefined) { st = time; this.fallStart.set(t.id, st); }
       const k = Math.min(1, (time - st) / 1.5);
+      // (still on its way down: the instances have to follow it)
+      if (k < 1) this.moving = true;
       const ang = k * k * (Math.PI / 2 - 0.08);
       const axis = tmpV.set(Math.cos(t.fallDir), 0, -Math.sin(t.fallDir)).normalize();
       tmpQ.premultiply(tmpQ2.setFromAxisAngle(axis, ang));
@@ -309,6 +315,7 @@ export class TreesRenderer {
 
   update(time: number) {
     const g = this.game;
+    this.moving = false;
     if (g.treesVersion !== this.version) {
       this.version = g.treesVersion;
       this.rebuild(time);
@@ -331,6 +338,8 @@ export class TreesRenderer {
         m.customDepthMaterial = full ? c.fullDepth : c.thinDepth;
       }
     }
+    // (nothing moved since the last frame's instances: they are drawn again as they are)
+    if (!this.moving && this.keep.still(this.version * 4 + (bare ? 2 : 0) + (full ? 1 : 0))) return;
     const V = lodView;
     const sp = this.spheres, M = this.mats;
     for (let i = 0; i < this.n; i++) {
@@ -415,6 +424,7 @@ const ROCK_MAP = /* glsl */ `
 const ROCK_FAR_ERR = 0.02;
 
 export class StonesRenderer {
+  private keep = new InstanceKeep();
   group = new THREE.Group();
   private pairs: LodPair[] = [];
   private version = -1;
@@ -471,6 +481,7 @@ export class StonesRenderer {
       }
       this.n = i;
     }
+    if (this.keep.still(this.version)) return;
     const V = lodView, f = this.info;
     for (let i = 0; i < this.n; i++) {
       const x = f[i * 5], y = f[i * 5 + 1], z = f[i * 5 + 2], r = f[i * 5 + 3];
@@ -950,11 +961,27 @@ export class PilesRenderer {
     }
   }
   private counts = new Map<Good, number>();
+  // this frame's piles as they were asked for (good, n, x, y, z, turn), and last frame's: the stacks
+  // are laid out and sent again only when the list is not the same
+  private asked: number[] = [];
+  private had: number[] = [];
   begin() {
-    this.counts.clear();
+    this.asked.length = 0;
   }
   /** Stack n items of good gd around (x, y, z). */
   pile(gd: Good, n: number, x: number, y: number, z: number, ry = 0) {
+    if (n <= 0) return;
+    this.asked.push(GOODS.indexOf(gd), n, x, y, z, ry);
+  }
+  end() {
+    const a = this.asked, h = this.had;
+    if (a.length === h.length && a.every((v, i) => v === h[i])) return;
+    this.had = a.slice();
+    this.counts.clear();
+    for (let i = 0; i < a.length; i += 6) this.stack(GOODS[a[i]], a[i + 1], a[i + 2], a[i + 3], a[i + 4], a[i + 5]);
+    for (const [gd, m] of this.meshes) commitInstances(m, this.counts.get(gd) ?? 0);
+  }
+  private stack(gd: Good, n: number, x: number, y: number, z: number, ry: number) {
     const m = this.meshes.get(gd)!;
     let c = this.counts.get(gd) ?? 0;
     const flat = gd === 'board' || gd === 'log' || gd === 'iron' || gd === 'gold';
@@ -980,9 +1007,6 @@ export class PilesRenderer {
       m.setMatrixAt(c++, tmpM);
     }
     this.counts.set(gd, c);
-  }
-  end() {
-    for (const [gd, m] of this.meshes) commitInstances(m, this.counts.get(gd) ?? 0);
   }
 }
 

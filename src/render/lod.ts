@@ -5,7 +5,7 @@
 // camera here, since the big instanced meshes cover the whole map and three cannot cull them.
 import * as THREE from 'three';
 import { MeshoptSimplifier } from 'three/examples/jsm/libs/meshopt_simplifier.module.js';
-import { ownDepth, uploadFirst } from './instancing';
+import { ownDepth, uploadChanged, uploadFirst } from './instancing';
 
 /** Resolves once the simplifier's WebAssembly is compiled; await it before building models. */
 export const lodReady: Promise<void> = MeshoptSimplifier.ready;
@@ -125,19 +125,27 @@ export class LodView {
   readonly eye = new THREE.Vector3();
   readonly frustum = new THREE.Frustum();
   readonly shadow = new THREE.Frustum();
+  /** bumped whenever the view (its matrices or pixel scale) or the shadow camera moves: instanced
+   * renderers whose own data has not changed either can draw last frame's instances again */
+  viewVersion = 0;
+  shadowVersion = 0;
   private m = new THREE.Matrix4();
   private s = new THREE.Sphere();
+  private lastView = new Float32Array(33);
+  private lastShadow = new Float32Array(16);
 
   update(camera: THREE.PerspectiveCamera, heightPx: number, sun: THREE.DirectionalLight | null) {
     camera.updateMatrixWorld();
     this.eye.setFromMatrixPosition(camera.matrixWorld);
     this.K = heightPx / (2 * Math.tan((camera.fov * Math.PI) / 360));
     this.frustum.setFromProjectionMatrix(this.m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    if (changed(this.lastView, this.m.elements, 0) || this.lastView[32] !== Math.fround(this.K)) { this.lastView[32] = this.K; this.viewVersion++; }
     if (sun && sun.castShadow) {
       sun.updateMatrixWorld();
       sun.target.updateMatrixWorld();
       sun.shadow.updateMatrices(sun);
       this.shadow.copy(sun.shadow.getFrustum());
+      if (changed(this.lastShadow, sun.shadow.matrix.elements, 0)) this.shadowVersion++;
     } else this.shadow.planes.forEach((p) => p.set(new THREE.Vector3(0, 1, 0), -1e9));
   }
 
@@ -158,8 +166,41 @@ export class LodView {
   }
 }
 
+/** Whether 16 values differ from the copy at `at` in `last` (which then takes them). */
+function changed(last: Float32Array, v: ArrayLike<number>, at: number) {
+  let diff = false;
+  for (let i = 0; i < 16; i++) if (last[at + i] !== Math.fround(v[i])) { diff = true; last[at + i] = v[i]; }
+  return diff;
+}
+
 /** The frame's view, updated by the renderer before any instanced renderer runs. */
 export const lodView = new LodView();
+
+/**
+ * Whether an instanced renderer can keep last frame's instances: its own data unchanged (`key`, any
+ * number that changes with it), the view where it was, and the shadow camera either where it was or
+ * moved for fewer than `every` frames (the sun creeps with the time of day; what only casts a shadow
+ * into the view is sorted out again at least that often). Call once a frame; true means skip.
+ */
+export class InstanceKeep {
+  private key = NaN;
+  private view = -1;
+  private shadow = -1;
+  private age = 0;
+  constructor(private every = 30) {}
+  still(key: number): boolean {
+    const V = lodView;
+    if (key === this.key && V.viewVersion === this.view && (V.shadowVersion === this.shadow || this.age < this.every) && V.enabled) {
+      this.age++;
+      return true;
+    }
+    this.key = key;
+    this.view = V.viewVersion;
+    this.shadow = V.shadowVersion;
+    this.age = 0;
+    return false;
+  }
+}
 
 /**
  * THREE.LOD whose switch distances follow the view's pixel density (tuned on a 1440-pixel-high
@@ -341,13 +382,15 @@ export class LodPair {
     at += nS;
     host.count = own;
     uploadFirst(host.instanceMatrix, at);
-    uploadFirst(host.instanceColor, at);
-    uploadFirst(c2, at);
+    // (the colours are each instance's own and stay put while the order of the instances does: sent
+    // only when they are not what the GPU already holds)
+    uploadChanged(host.instanceColor, at);
+    uploadChanged(c2, at);
     if (far) {
       near.count = nN;
       uploadFirst(near.instanceMatrix, nN);
-      uploadFirst(near.instanceColor, nN);
-      uploadFirst(this.nearC2, nN);
+      uploadChanged(near.instanceColor, nN);
+      uploadChanged(this.nearC2, nN);
     }
     // the view draws next (the shadow map and the reflection switch in and out: lodSetPass)
     this.pass('main');
