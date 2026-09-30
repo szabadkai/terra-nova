@@ -124,6 +124,14 @@ export function portable(s: Pick<Signals, 'gpu' | 'width' | 'height' | 'dpr' | '
   return s.dpr >= 1.25 && Math.max(s.width, s.height) <= 1800;
 }
 
+/** A GPU that shades every fragment in the order drawn (desktop and laptop Intel, AMD and NVIDIA
+ * graphics), as against a tile-based one that shades only the frontmost (Apple's, and the phones'). */
+export function immediateMode(name: string): boolean {
+  const n = gpuLabel(name).toLowerCase();
+  if (/apple|mali|adreno|powervr|immortalis|xclipse|videocore|tegra|swiftshader|llvmpipe/.test(n)) return false;
+  return /intel|\biris\b|\barc\b|nvidia|geforce|quadro|\brtx\b|\bgtx\b|radeon|\bamd\b|\bati\b/.test(n);
+}
+
 export interface GpuGuess {
   /** the name, cleaned of the browser's wrapping */
   label: string;
@@ -305,13 +313,19 @@ export function confirmLevel(guess: Guess, timeAt: (q: Quality, ao: boolean) => 
 // ------------------------------------------------------------------ browser side
 
 /** What the browser tells about the machine. */
-export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext): Signals {
+/** The GPU's name as the browser gives it. */
+export function gpuName(gl: WebGLRenderingContext | WebGL2RenderingContext): string {
   let gpu = String(gl.getParameter(gl.RENDERER) ?? '');
   // Chrome and Safari hide the name behind the extension; Firefox gives it here and warns about the extension
   if (!gpu || /^webkit webgl$|^mozilla$/i.test(gpu)) {
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     if (ext) gpu = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) ?? gpu);
   }
+  return gpu;
+}
+
+export function readSignals(gl: WebGLRenderingContext | WebGL2RenderingContext): Signals {
+  const gpu = gpuName(gl);
   const nav = navigator as Navigator & { deviceMemory?: number };
   const s = {
     gpu,

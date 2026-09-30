@@ -42,7 +42,7 @@ import { commitInstances, ownDepth, withInstanceColor } from './instancing';
 import { ScreenLod, lodSetPass, lodView } from './lod';
 import { AUTO_STEPS, LOW_STEPS, framePace, type FrameCap } from './framePace';
 import { COARSE_DIST } from './geom';
-import { QUIET_PR, QUIET_SCALE } from './hardware';
+import { QUIET_PR, QUIET_SCALE, gpuName, immediateMode } from './hardware';
 import { Trails } from './trails';
 import { perf, perfBaseline } from './perf';
 
@@ -241,6 +241,7 @@ export class GameRenderer {
     this.trails = new Trails(game);
     G.tTrail.value = this.trails.tex;
     this.terrain = new TerrainRenderer(game);
+    this.terrain.drawLate(immediateMode(gpuName(r.getContext())));
     this.scene.add(this.terrain.mesh);
     this.water = new WaterRenderer(game.world.W, game.world.H, this.terrain.heightTex);
     this.scene.add(this.water.mesh);

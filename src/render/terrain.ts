@@ -628,10 +628,6 @@ export class TerrainRenderer {
       snowHook: 'coverS *= 1.0 - tTrod * 0.5; snowC *= 1.0 - tTrod * 0.16 - tPrint * 0.3;',
       fragAO: 'reflectedLight.indirectDiffuse *= tAO; reflectedLight.indirectSpecular *= tAO; reflectedLight.directDiffuse *= mix(1.0, tAO, 0.35);',
     });
-    // drawn after the solid things on it (cutOrder), so their pixels are not shaded twice; a tie in
-    // depth goes to what was drawn first, as it did when the ground came first
-    mat.userData.drawLate = 1;
-    mat.depthFunc = THREE.LessDepth;
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = true;
@@ -642,6 +638,19 @@ export class TerrainRenderer {
     this.updateMisc(true);
     this.updateOre();
     this.updateHeightTex();
+  }
+
+  /**
+   * On a GPU that shades every fragment in the order drawn (Intel, AMD, NVIDIA: immediateMode in
+   * hardware.ts), the ground is drawn after the solid things that stand on it (cutOrder), so early-Z
+   * leaves it unshaded under every roof, tree and settler; a tie in depth still goes to what was drawn
+   * first (a strict test), as it did when the ground came first. Not on Apple's GPUs: they shade only
+   * the frontmost fragment anyway, and there the ground drawn last made a High frame 10% dearer.
+   */
+  drawLate(on: boolean) {
+    const m = this.mesh.material as THREE.MeshStandardMaterial;
+    m.userData.drawLate = on ? 1 : 0;
+    m.depthFunc = on ? THREE.LessDepth : THREE.LessEqualDepth;
   }
 
   computeNormals(x0: number, y0: number, x1: number, y1: number) {
