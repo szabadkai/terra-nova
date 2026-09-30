@@ -5,6 +5,8 @@ import { buildingBuilder } from '../render/buildingModels';
 import { getMaterial } from '../render/materials';
 import { buildGoodGeos } from '../render/models';
 import { G } from '../render/shaderPatch';
+import { textureScale } from '../render/textures';
+import { loadIcons, saveIcons } from './iconCache';
 
 export const buildingIcons = new Map<string, string>();
 export const goodIcons = new Map<Good, string>();
@@ -14,6 +16,24 @@ export const goodIcons = new Map<Good, string>();
  * each building builds its model too, which takes a while), until they are all done or `cancelled`.
  */
 export async function generateIcons(owner: number, pause: () => Promise<void> = () => Promise.resolve(), cancelled: () => boolean = () => false) {
+  // (drawn on an earlier page load of this build, in these colours, with these textures)
+  const key = `${BUILD}|${owner}|${textureScale()}|${ICONS_VERSION}`;
+  const kept = await loadIcons(key);
+  if (kept && kept.buildings.length === Object.keys(BUILDINGS).length && kept.goods.length === GOODS.length) {
+    for (const [k, v] of kept.buildings) buildingIcons.set(k, v);
+    for (const [k, v] of kept.goods) goodIcons.set(k as Good, v);
+    return;
+  }
+  if (cancelled()) return;
+  await drawIcons(owner, pause, cancelled);
+  if (!cancelled()) void saveIcons(key, BUILD, { buildings: [...buildingIcons], goods: [...goodIcons] });
+}
+
+/** bump when the icons' own look changes without a new build (a camera, the light) */
+const ICONS_VERSION = 1;
+const BUILD: string = typeof __BUILD__ === 'string' ? __BUILD__ : 'dev';
+
+async function drawIcons(owner: number, pause: () => Promise<void>, cancelled: () => boolean) {
   const size = 144;
   const canvas = document.createElement('canvas');
   canvas.width = size;

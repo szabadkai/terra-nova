@@ -98,6 +98,7 @@ export interface MatTex { map: THREE.DataTexture; normal: THREE.DataTexture; }
  * out at boot and to hold); set before the first material asks for one, as they are made once a page. */
 let texScale = 1;
 export function setTextureScale(s: number) { texScale = s; }
+export const textureScale = () => texScale;
 
 function build(size0: number, fn: (u: number, v: number) => [number, number, number, number], strength0: number, h0 = size0): MatTex {
   const size = Math.max(16, Math.round(size0 * texScale)), h = Math.max(16, Math.round(h0 * texScale));
