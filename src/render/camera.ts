@@ -26,6 +26,14 @@ let pinched = false;
 /** A spot of ground held under a screen point (NDC) while the view moves. */
 interface Pin { p: THREE.Vector3; x: number; y: number }
 
+/** World units (and, relative to the distance, radians) within which an eased value lands on its goal: well under a pixel at the closest zoom. */
+const SNAP = 1e-3;
+const SNAP_REL = 1e-4;
+function ease(v: number, goal: number, a: number, snap: number) {
+  const n = v + (goal - v) * a;
+  return Math.abs(goal - n) < snap ? goal : n;
+}
+
 export class RTSCamera {
   camera: THREE.PerspectiveCamera;
   target = new THREE.Vector3();
@@ -414,16 +422,19 @@ export class RTSCamera {
     const W = this.world.W, H = this.world.H;
     this.goal.x = THREE.MathUtils.clamp(this.goal.x, 4, W - 4);
     this.goal.z = THREE.MathUtils.clamp(this.goal.z, 4, H - 4);
+    // each eased value lands on its goal once it is a fraction of a pixel away: an easing that only
+    // ever halves the gap keeps the view creeping by ever smaller amounts for many seconds, and a view
+    // that never stands quite still can reuse nothing of the last frame (see PostFX.aoHalfRate)
     const a = 1 - Math.exp(-dt * 10);
-    this.target.x += (this.goal.x - this.target.x) * a;
-    this.target.z += (this.goal.z - this.target.z) * a;
+    this.target.x = ease(this.target.x, this.goal.x, a, SNAP);
+    this.target.z = ease(this.target.z, this.goal.z, a, SNAP);
     const gy = this.world.surfaceAt(this.target.x, this.target.z);
-    this.target.y += (gy - this.target.y) * (1 - Math.exp(-dt * 4));
-    this.dist += (this.goalDist - this.dist) * (1 - Math.exp(-dt * 8));
-    this.yaw += (this.goalYaw - this.yaw) * (1 - Math.exp(-dt * 8));
+    this.target.y = ease(this.target.y, gy, 1 - Math.exp(-dt * 4), SNAP);
+    this.dist = ease(this.dist, this.goalDist, 1 - Math.exp(-dt * 8), this.dist * SNAP_REL);
+    this.yaw = ease(this.yaw, this.goalYaw, 1 - Math.exp(-dt * 8), SNAP_REL);
     const [lo, hi] = this.tiltRange(this.dist);
     this.goalTilt = THREE.MathUtils.clamp(this.goalTilt, lo, hi);
-    this.tilt += (this.goalTilt - this.tilt) * (1 - Math.exp(-dt * 10));
+    this.tilt = ease(this.tilt, this.goalTilt, 1 - Math.exp(-dt * 10), SNAP_REL);
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 2);
       this.shakeOff.set((Math.random() - 0.5) * this.shake * 0.3, (Math.random() - 0.5) * this.shake * 0.3);
