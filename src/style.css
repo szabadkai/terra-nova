@@ -61,6 +61,12 @@ button { font-family: var(--font); cursor: pointer; }
 .res .gi { width: 28px; height: 28px; }
 .res.warn span { color: var(--warn); }
 .res .emo { font-size: 16px; width: 28px; text-align: center; }
+.res.resource { color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+.res.resource.active { border-color: var(--gold); background: rgba(226, 184, 87, .16); }
+.res-name { display: none; color: var(--muted); font-size: 10px; font-weight: 500; }
+.res-value { font-variant-numeric: tabular-nums; }
+.res.resource.changed .res-value { animation: res-change .65s ease-out; }
+@keyframes res-change { from { color: #fff4c8; } to { color: inherit; } }
 .sep { width: 1px; height: 26px; background: var(--line); margin: 0 6px; }
 /* the ⚠ stalled-buildings button: muted while nothing is stuck */
 .stallbtn { border: 1px solid transparent; color: var(--muted); font-size: 13px; min-width: 0; }
@@ -89,6 +95,16 @@ button { font-family: var(--font); cursor: pointer; }
 .stall.dot .bubble { left: -5px; bottom: 3px; width: 10px; height: 10px; border: 0; background: var(--bad); box-shadow: 0 0 0 2px rgba(20, 14, 10, 0.7), 0 0 8px rgba(255, 122, 100, 0.6); animation: none; }
 .stall.dot.mild .bubble { background: var(--warn); box-shadow: 0 0 0 2px rgba(20, 14, 10, 0.7), 0 0 8px rgba(255, 198, 90, 0.5); }
 .stall.dot .bubble > *, .stall.dot .bubble::after { display: none; }
+.resource-lens { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+.resource-lens.hidden { display: none; }
+.resource-routes, .resource-pins { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+.resource-routes polyline { fill: none; stroke: rgba(245, 209, 123, .78); stroke-width: 2; stroke-dasharray: 5 4; stroke-linecap: round; stroke-linejoin: round; }
+.resource-pin { position: absolute; left: -13px; top: -13px; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #f3d990; background: rgba(41, 28, 13, .94); color: #f3d990; font-size: 15px; line-height: 1; font-weight: 700; pointer-events: auto; box-shadow: 0 2px 8px #0009; }
+.resource-pin.user { border-color: #a9d5ee; color: #a9d5ee; }
+.resource-pin.store { border-color: #d8d3c5; color: #d8d3c5; font-size: 10px; }
+.resource-pin:hover { scale: 1.15; }
+.resource-legend { position: absolute; top: 56px; left: 254px; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 320px); padding: 7px 10px; font-size: 12px; color: var(--text); pointer-events: auto; }
+.resource-legend button { border: 0; background: none; color: var(--gold); cursor: pointer; }
 @keyframes stallpop { from { opacity: 0; scale: 0.4; } }
 @keyframes stallbob { 50% { translate: 0 -3px; } }
 @media (prefers-reduced-motion: reduce) { .stall .bubble { animation: none; } }
@@ -216,7 +232,7 @@ kbd { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-bot
 .slock { color: var(--warn); font-size: 11px; margin-top: 3px; }
 
 /* ------------------------------------------------ info panel */
-.info { position: fixed; right: 0; bottom: 0; width: 360px; max-height: 60vh; overflow-y: auto; padding: 12px 14px; border-radius: var(--panel-radius) 0 0 0; border-width: 1px 0 0 1px; }
+.info { position: fixed; right: 12px; bottom: 12px; box-sizing: border-box; width: 360px; max-height: 60vh; overflow-y: auto; padding: 12px 14px; border-radius: var(--panel-radius); }
 .ihead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .ihead img { width: 64px; height: 64px; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5)); }
 .ihead h2 { font-family: var(--font-title); font-size: 17px; margin: 0; color: var(--gold); }
@@ -456,6 +472,7 @@ button.linkish { padding: 0; border: 0; background: none; color: var(--gold); fo
 .cp-meta .won .gl { color: var(--good); }
 .cp-quote { margin: 16px 0 0; padding: 12px 16px; border-left: 3px solid var(--gold2); border-radius: 0 8px 8px 0; background: rgba(0, 0, 0, 0.22); font-size: 14px; font-style: italic; line-height: 1.6; color: #efe2c7; }
 .cp-quote cite { display: block; margin-top: 6px; font-size: 10.5px; font-style: normal; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.cp-intro { color: var(--muted); font-size: 13px; margin: 16px 0 0; }
 .cp-goals { margin: 0; padding-left: 22px; font-size: 13.5px; line-height: 1.75; }
 .cp-goals li::marker { color: var(--gold); font-weight: 700; }
 .cp-goals small { margin-left: 4px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -614,7 +631,8 @@ button.linkish { padding: 0; border: 0; background: none; color: var(--gold); fo
   .topbar { left: 0; top: auto; bottom: 0; right: 0; padding-top: 0; overflow-x: auto; border-width: 1px 0 0 0; box-shadow: 0 -6px 22px rgba(0, 0, 0, 0.4); }
   .left { width: 224px; bottom: 48px; }
   .minimap { width: 208px; height: 208px; }
-  .info { width: calc(100vw - 224px); bottom: 48px; }
+  .info { width: calc(100vw - 248px); bottom: 60px; }
+  .resource-legend { top: 56px; left: 240px; max-width: calc(100vw - 300px); }
 }
 .slider-row .ci + label { width: 76px; flex: none; }
 
@@ -640,6 +658,10 @@ button.linkish { padding: 0; border: 0; background: none; color: var(--gold); fo
 /* ------------------------------------------------ narrow screens */
 .panel-toggle { display: none; }
 @media (max-width: 700px) {
+  .topbar .res.resource { min-width: 54px; flex: 0 0 auto; flex-direction: column; gap: 0; padding: 1px 5px 2px; line-height: 1.05; }
+  .topbar .res.resource .gi { width: 23px; height: 23px; }
+  .topbar .res-name { display: block; }
+  .resource-legend { top: calc(62px + env(safe-area-inset-top, 0px)); left: 70px; right: 12px; max-width: none; font-size: 11px; }
   .panel-toggle {
     display: grid; place-items: center; position: fixed; z-index: 20; left: 12px; top: calc(12px + env(safe-area-inset-top, 0px));
     width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line);
@@ -661,7 +683,7 @@ button.linkish { padding: 0; border: 0; background: none; color: var(--gold); fo
   .menu-btn { top: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .msg, .menu, .left, .bcard, .gmenu, .gm-modal, .switch i { transition: none !important; animation: none !important; }
+  .msg, .menu, .left, .bcard, .gmenu, .gm-modal, .switch i, .res.resource.changed .res-value { transition: none !important; animation: none !important; }
 }
 
 /* ------------------------------------------------ menu button (opens the Esc menu) */

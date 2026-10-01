@@ -1,8 +1,8 @@
-// Context cursors over the game view: a gilded arrow, crossed swords where a right-click would
-// storm, a shield where it would man a stronghold, a barred circle where the men cannot go, a
-// reticle while a click picks a target, and turning arrows while the view is being turned.
+// Context cursors over the game view: a gilded arrow, a send arrow for chosen troops, crossed
+// swords where a right-click would storm, a shield where it would man a stronghold, a barred
+// circle where the men cannot go, a reticle while a click picks a target, and turning arrows.
 
-export type CursorKind = 'default' | 'attack' | 'garrison' | 'nogo' | 'target' | 'orbit' | 'grab';
+export type CursorKind = 'default' | 'send' | 'attack' | 'garrison' | 'nogo' | 'target' | 'orbit' | 'grab';
 
 const INK = '#1d1208';
 const GOLD = '#f1d58a';
@@ -19,6 +19,10 @@ const url = (body: string, x: number, y: number, fallback: string) =>
 const SHIELD = `
   <circle cx="24" cy="24" r="7.2" fill="#15283f" stroke="#cfe6ff" stroke-width="1.4"/>
   <path d="M24 19.4 L28 20.9 L28 23.8 C28 26.4 26.2 28.1 24 28.8 C21.8 28.1 20 26.4 20 23.8 L20 20.9 Z" fill="#7ac8ff" stroke="${INK}" stroke-width=".8" stroke-linejoin="round"/>`;
+
+const SEND = `
+  <path d="M18 24 H27 M23 20 L27 24 L23 28" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M18 24 H27 M23 20 L27 24 L23 28" fill="none" stroke="#a9e28b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
 
 const BARRED = `
   <circle cx="24" cy="24" r="6.4" fill="rgba(0,0,0,.35)" stroke="${INK}" stroke-width="4"/>
@@ -60,6 +64,7 @@ const TURN = `
 
 const CSS: Record<CursorKind, string> = {
   default: url(ARROW, 3, 2, 'default'),
+  send: url(ARROW + SEND, 3, 2, 'pointer'),
   attack: url(SWORDS, 16, 16, 'crosshair'),
   garrison: url(ARROW + SHIELD, 3, 2, 'pointer'),
   nogo: url(ARROW + BARRED, 3, 2, 'not-allowed'),
