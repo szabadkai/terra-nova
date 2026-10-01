@@ -1081,7 +1081,8 @@ function refreshHover() {
   const ev = { clientX: pointer.x, clientY: pointer.y } as MouseEvent;
   if (targeting()) {
     o.hover = null;
-    hud.hideTip();
+    if (gr.placing) hud.placementTip(ev, gr.hoverNode);
+    else hud.hideTip();
     hoverCursor = gr.placing ? 'default' : 'target';
     return;
   }
@@ -1138,7 +1139,7 @@ function refreshHover() {
     hud.showTip(ev, `<b>${JOB_NAMES[s.job]}</b><br><span class="muted">${g.players[s.owner].name}</span><br>Health ${Math.ceil(s.hp)} / ${s.maxHp}${act}`);
   } else if (b) {
     const owner = g.players[b.owner];
-    const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : 'Under construction';
+    const st = b.state === 'done' ? (b.def.military ? `Garrison ${b.garrison.length}` : b.status) : b.state === 'burning' ? 'Burning' : `Under construction${b.status ? ` · ${b.status}` : ''}`;
     // with soldiers picked: what a right-click would have them do
     const n = chosen.length;
     let act = n && b.def.military && b.state === 'done' ? (b.owner !== me ? `<br><b class="bad">Right-click: storm it with ${n}</b>` : '<br><b>Right-click: man it</b>') : '';

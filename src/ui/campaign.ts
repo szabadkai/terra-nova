@@ -207,7 +207,7 @@ export function campaignPage(progress: CampaignProgress, o: { kind?: 'tutorial' 
       : done ? `<button class="tm-btn primary" data-act="restart" autofocus>${glyph('redo', 16)}Play again</button>`
       : `<button class="tm-btn primary" data-act="restart" autofocus>${glyph('play', 16)}Begin</button>`;
     detail.innerHTML = `<div class="cp-scroll">${head}${meta}
-      <blockquote class="cp-quote">${esc(m.briefing[0])}<cite>Gaius Sestius, quaestor</cite></blockquote>
+      ${tutorial ? '<p class="cp-intro">Gaius Sestius gives the full briefing when you enter the mission.</p>' : `<blockquote class="cp-quote">${esc(m.briefing[0])}<cite>Gaius Sestius, quaestor</cite></blockquote>`}
       <div class="cp-sect">The Senate asks</div>
       <ol class="cp-goals">${m.goals.map((g) => `<li>${esc(g.text)}${g.optional ? ' <small>optional</small>' : ''}</li>`).join('')}</ol>
       ${grants ? `<div class="cp-sect">New in this mission</div><div class="cp-grants">${grants}</div>` : ''}</div>

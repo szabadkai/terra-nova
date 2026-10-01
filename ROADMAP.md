@@ -50,8 +50,7 @@ The tutorial's own recordings (91 lines, `voice/SCRIPT.md`) are in `public/voice
 
 ## 3. A livelier UI
 
-- Small icons pop out of a building as each good is made ("+1 plank"), using the existing `produced` event.
-- Panels animate in and out, and numbers count up and down.
+- Panels animate in and out.
 
 (The ring build menu was dropped.)
 

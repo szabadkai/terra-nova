@@ -698,7 +698,9 @@ export class GameRenderer {
     w.forRadius(t.x, t.z, R, (i, x, y) => {
       if (n >= 4000) return;
       if (w.owner[i] !== g.local) return;
-      if ((x + y) % 1 !== 0) return;
+      // The ghost follows every ground point; a sparse guide leaves the land readable.
+      // Mines keep every marker because a single node can change the ore result.
+      if (!def.mine && (x % 3 !== 0 || y % 3 !== 0)) return;
       const a = g.anchorFor(type, x, y);
       if (!g.canPlace(type, g.local, a.x, a.y)) return;
       const h = w.h[i];

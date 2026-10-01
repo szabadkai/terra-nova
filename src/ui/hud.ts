@@ -30,6 +30,7 @@ import { StallWatch, type Alert } from '../game/alerts';
 import { aName, causeLine, causeOf, causeSteps, rootCauses } from '../game/causes';
 import { FLOW_WINDOW, flowHistory, flowReport, trend } from '../game/flow';
 import { gameNear } from '../game/wildlife';
+import { knownOre } from '../game/geology';
 import { Minimap } from './minimap';
 import { OBJECTIVES, Objectives } from './objectives';
 import { missionLabel, type FocusSpec, type Tool } from '../game/campaign';
@@ -38,6 +39,7 @@ import { prefs, savePrefs } from './prefs';
 import { framePace } from '../render/framePace';
 import { LowFpsWatch, lowFpsAdvice } from '../render/hardware';
 import { immersiveAvailable, isImmersive, leaveHint, toggleImmersive } from './immersive';
+import { ResourceLens } from './resourceLens';
 
 // corner brackets pointing out (fill the screen) and in (leave it) for the top-bar button
 const IMM_ON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>';
@@ -129,6 +131,7 @@ export class HUD {
   private fpsEl!: HTMLElement;
   /** kept for the counter across the top bar's redraws */
   private fpsText = '';
+  private lastResources = new Map<Good, number>();
   private frames = 0;
   private fpsT = 0;
   /** control groups by number key (0–9) */
@@ -138,6 +141,7 @@ export class HUD {
   private recalled = { slot: -1, at: 0 };
   /** badges over stalled buildings, and the one the ⚠ button went to last */
   stalls: StallBadges;
+  private resourceLens: ResourceLens;
   private stallAt = 0;
   private stallTipAt = -1e9;
   private stallTipHtml = '';
@@ -160,6 +164,7 @@ export class HUD {
     // first, so every panel sits above the badges
     this.stalls = new StallBadges(game, gr, (b) => { this.audio.play('ui'); this.select({ kind: 'building', id: b.id }); });
     this.root.appendChild(this.stalls.layer);
+    this.resourceLens = new ResourceLens(game, gr, this.root, (b) => this.select({ kind: 'building', id: b.id }));
     this.watch = new StallWatch(game.local);
     this.buildTop();
     this.buildLeft();
@@ -199,6 +204,10 @@ export class HUD {
       const t = e.target as HTMLElement;
       if (t.closest('#stalls')) this.nextStall((e as MouseEvent).shiftKey);
       else if (t.closest('#chron')) { this.audio.play('ui'); this.objectives.setHidden(!this.objectives.hidden); this.refreshTop(); }
+      else {
+        const resource = t.closest<HTMLElement>('[data-resource]');
+        if (resource) { this.resourceLens.toggle(resource.dataset.resource as Good); this.audio.play('ui'); this.refreshTop(); }
+      }
     });
     this.top.addEventListener('mousemove', (e) => {
       if ((e.target as HTMLElement).closest('#stalls')) {
@@ -224,11 +233,15 @@ export class HUD {
 
   private refreshTop() {
     const g = this.game;
+    const focusedGood = this.top.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.resource : undefined;
     const st = g.totalStock(g.local);
     const pop = g.population(g.local);
     const food = st.bread + st.fish + st.meat;
     const tools = TOOLS.reduce((a, t) => a + st[t], 0);
-    const item = (ic: string, v: number | string, label: string, warn = false) => `<div class="res${warn ? ' warn' : ''}" title="${label}">${ic}<span>${v}</span></div>`;
+    const resourceValues: [Good, number][] = [['board', st.board], ['stone', st.stone], ['log', st.log], ['bread', food], ['coal', st.coal], ['iron', st.iron], ['gold', st.gold], ['hammer', tools]];
+    const item = (ic: string, v: number | string, label: string, warn = false, good?: Good) => good
+      ? `<button class="res resource${warn ? ' warn' : ''}${this.resourceLens.good === good ? ' active' : ''}${typeof v === 'number' && this.lastResources.has(good) && this.lastResources.get(good) !== v ? ' changed' : ''}" data-resource="${good}" aria-label="${label}: ${v}. Show sources, users and carriers" aria-pressed="${this.resourceLens.good === good}" title="${label} · show sources, users and carriers">${ic}<span class="res-name">${label}</span><span class="res-value">${v}</span></button>`
+      : `<div class="res${warn ? ' warn' : ''}" title="${label}">${ic}<span>${v}</span></div>`;
     const tod = this.gr.sky.timeOfDay;
     const hours = Math.floor(tod * 24), mins = Math.floor((tod * 24 - hours) * 60);
     const isNight = this.gr.sky.sunElev < 0;
@@ -236,15 +249,15 @@ export class HUD {
     const mm = Math.floor(g.time / 60), ss = Math.floor(g.time % 60);
     const season = this.gr.seasons;
     this.top.innerHTML = `
-      ${item(this.icon('board'), st.board, 'Boards', st.board < 4)}
-      ${item(this.icon('stone'), st.stone, 'Stone', st.stone < 4)}
-      ${item(this.icon('log'), st.log, 'Logs')}
-      ${item(this.icon('bread'), food, 'Food (bread, fish, meat)', food < 3)}
-      ${item(this.icon('coal'), st.coal, 'Coal')}
-      ${item(this.icon('iron'), st.iron, 'Iron')}
-      ${item(this.icon('gold'), st.gold, 'Gold — raises soldier morale')}
+      ${item(this.icon('board'), st.board, 'Boards', st.board < 4, 'board')}
+      ${item(this.icon('stone'), st.stone, 'Stone', st.stone < 4, 'stone')}
+      ${item(this.icon('log'), st.log, 'Logs', false, 'log')}
+      ${item(this.icon('bread'), food, 'Food', food < 3, 'bread')}
+      ${item(this.icon('coal'), st.coal, 'Coal', false, 'coal')}
+      ${item(this.icon('iron'), st.iron, 'Iron', false, 'iron')}
+      ${item(this.icon('gold'), st.gold, 'Gold', false, 'gold')}
       ${g.players[g.local].mana > 0 || g.countBuildings(g.local, 'temple') + g.countBuildings(g.local, 'greattemple') > 0 ? item('<span class="emo mana">✦</span>', Math.floor(g.players[g.local].mana), 'Mana — offered wine, spent on divine spells') : ''}
-      ${item(this.icon('hammer'), tools, 'Tools in stock')}
+      ${item(this.icon('hammer'), tools, 'Tools', false, 'hammer')}
       <div class="sep"></div>
       ${item('<span class="emo">⚔</span>', pop.soldiers, 'Soldiers')}
       ${item('<span class="emo">👥</span>', `${pop.idle}/${pop.total}`, 'Idle carriers / total population', pop.idle < 2)}
@@ -264,6 +277,23 @@ export class HUD {
     });
     const imm = this.top.querySelector<HTMLButtonElement>('#imm');
     if (imm) imm.onclick = () => { this.audio.play('ui'); void toggleImmersive(); };
+    for (const [good, value] of resourceValues) {
+      const old = this.lastResources.get(good);
+      this.lastResources.set(good, value);
+      if (old === undefined || old === value || matchMedia('(prefers-reduced-motion: reduce)').matches) continue;
+      const counter = this.top.querySelector<HTMLElement>(`[data-resource="${good}"] .res-value`);
+      if (!counter) continue;
+      const started = performance.now();
+      const step = (now: number) => {
+        if (!counter.isConnected || !this.top.contains(counter)) return;
+        const t = Math.min(1, (now - started) / 180);
+        counter.textContent = String(Math.round(old + (value - old) * t));
+        if (t < 1) requestAnimationFrame(step);
+      };
+      counter.textContent = String(old);
+      requestAnimationFrame(step);
+    }
+    if (focusedGood) this.top.querySelector<HTMLElement>(`[data-resource="${focusedGood}"]`)?.focus({ preventScroll: true });
     this.fpsEl = this.top.querySelector('#fps')!;
   }
 
@@ -374,7 +404,7 @@ export class HUD {
       grid.appendChild(card);
     }
     c.appendChild(grid);
-    c.appendChild(h('p', 'note', 'Pick a building, then click a green marker on your land. <b>Shift</b>+click to place several. Right-click or <b>Esc</b> cancels.'));
+    c.appendChild(h('p', 'note', 'Pick a building and move over your land to inspect a site. Click the ground to build; <b>Shift</b>+click places several. Right-click or <b>Esc</b> cancels.'));
   }
 
   private buildTip(t: BuildingType) {
@@ -392,13 +422,50 @@ export class HUD {
     if (t && this.teach === t) this.teach = null;
     if (t) { this.gr.casting = null; this.gr.expedition = 0; this.gr.prospecting = false; this.gr.pioneering = false; }
     this.gr.placing = t;
+    if (t && this.resourceLens.good) { this.resourceLens.toggle(null); this.refreshTop(); }
     if (t && window.innerWidth <= 700) this.left.classList.remove('open');
     this.audio.play('ui');
     if (t) {
-      this.hint.innerHTML = `Placing <b>${BUILDINGS[t].name}</b> — click a marker to build · <b>Shift</b> keeps placing · <b>Esc</b>/right-click cancels`;
+      this.hint.innerHTML = `Placing <b>${BUILDINGS[t].name}</b> — move to inspect a site, then click the ground · <b>Shift</b> keeps placing · <b>Esc</b>/right-click cancels`;
       this.hint.classList.remove('hidden');
     } else this.hint.classList.add('hidden');
     if (this.tab === 'build') this.renderTab();
+  }
+
+  /** The ground ghost supplies the exact footprint and work radius; this supplies the site's numbers. */
+  placementTip(e: MouseEvent, node: number) {
+    if (node < 0 || !this.gr.placing) { this.hideTip(); return; }
+    const type = this.gr.placing, d = BUILDINGS[type], w = this.game.world;
+    const a = this.game.anchorFor(type, w.nx(node), w.ny(node));
+    const error = this.game.placeError(type, this.game.local, a.x, a.y);
+    const cx = a.x + (d.size - 1) / 2, cz = a.y + (d.size - 1) / 2;
+    let detail = '';
+    if (d.mine) {
+      const ore = knownOre(this.game, this.game.local, d.mine, cx, cz);
+      detail = ore.known < 4 ? 'Ore not fully surveyed here' : `${ore.amount} known ore in reach`;
+    } else if (d.radius) {
+      let trees = 0, rocks = 0, fish = 0;
+      w.forRadius(cx, cz, d.radius, (i) => {
+        const tree = this.game.trees.get(w.tree[i]);
+        if (tree?.state === 'mature') trees++;
+        if (w.stone[i]) rocks++;
+        if (w.fish[i]) fish++;
+      });
+      if (type === 'woodcutter' || type === 'forester') detail = `${trees} mature trees in work radius`;
+      else if (type === 'stonecutter') detail = `${rocks} rock outcrops in work radius`;
+      else if (type === 'fisher') detail = `${fish} fishing spots in work radius`;
+      else if (type === 'hunter') detail = `${[...this.game.animals.values()].filter((a) => (a.x - cx) ** 2 + (a.z - cz) ** 2 <= d.radius! ** 2).length} animals in work radius`;
+      else detail = `Work radius: ${d.radius} tiles`;
+    }
+    const sameLand = (b: Building) => w.region[b.door] === w.region[w.idx(Math.round(cx), Math.round(cz))];
+    const distance = (b: Building) => Math.round(Math.hypot(b.cx - cx, b.cz - cz));
+    const nearest = [...this.game.buildings.values()].filter((b) => b.owner === this.game.local && b.state === 'done' && sameLand(b) && b.def.storage).sort((x, y) => distance(x) - distance(y))[0];
+    if (nearest) detail += `${detail ? '<br>' : ''}Nearest store: ~${distance(nearest)} tiles away`;
+    if (d.inputs) for (const input of d.inputs) {
+      const source = [...this.game.buildings.values()].filter((b) => b.owner === this.game.local && b.state === 'done' && sameLand(b) && b.def.outputs?.some((g) => input.goods.includes(g))).sort((x, y) => distance(x) - distance(y))[0];
+      if (source) detail += `<br>${source.def.name}: ~${distance(source)} tiles away`;
+    }
+    this.showTip(e, `<b>${d.name}</b><br><span class="${error ? 'bad' : 'good'}">${error ?? 'Can build here'}</span>${detail ? `<br><span class="muted">${detail}</span>` : ''}`);
   }
 
   private renderGoods(c: HTMLElement) {
@@ -2081,6 +2148,7 @@ export class HUD {
     this.minimap.update(dt);
     this.objectives.update(dt);
     this.stalls.update(dt);
+    this.resourceLens.update(dt);
     if (this.t <= 0) {
       this.t = 0.5;
       // polled even when alerts are off, so switching them on doesn't bring a burst of old news
