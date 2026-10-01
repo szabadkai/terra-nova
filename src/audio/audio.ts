@@ -230,6 +230,8 @@ export class Audio {
   private playTrack() {
     const el = this.track;
     if (!el) return;
+    // (a track that comes due in a hidden tab waits for the tab to show again: unlock plays it)
+    if (this.hidden) { this.trackBlocked = true; return; }
     this.trackBlocked = false;
     el.play().catch(() => {
       // Safari may reject with AbortError as its audio session changes, not only NotAllowedError.
@@ -315,7 +317,7 @@ export class Audio {
     el.onended = done;
     el.onerror = () => { this.missingVoice.add(id); done(); };
     this.voiceEl = el;
-    if (ctx.state === 'suspended') void ctx.resume();
+    if (ctx.state === 'suspended' && !this.hidden) void ctx.resume();
     return el.play().then(() => true, () => { done(); return false; });
   }
   /**
@@ -384,6 +386,29 @@ export class Audio {
     if (!on) setTimeout(() => { if (!this.musicOn) el.pause(); }, 300);
     else if (el.paused && !el.ended && el.src) this.playTrack();
   }
+  /** the page is hidden and nobody needs to hear it (see setHidden) */
+  private hidden = false;
+  /**
+   * The page was hidden or shown again. Hidden, the context is suspended and the soundtrack and any
+   * line of narration paused, so a tab in the background wakes no audio thread and streams nothing;
+   * shown again, the narration goes on and `unlock` (called on showing) wakes the context, unless the
+   * sound is off, and plays the soundtrack again (its pause marked it held back). Not for a game with
+   * a friend: an audible tab is spared the browser's freezing of background tabs, which keeps it in step.
+   */
+  setHidden(hidden: boolean) {
+    if (hidden === this.hidden) return;
+    this.hidden = hidden;
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (hidden) {
+      if (ctx.state === 'running') void ctx.suspend();
+      this.track?.pause();
+      this.voiceEl?.pause();
+    } else if (this.voiceEl?.paused && !this.voiceEl.ended) {
+      void this.voiceEl.play().catch(() => { /* the next gesture */ });
+      if (ctx.state === 'suspended') void ctx.resume();
+    }
+  }
   /** Wake an interrupted context and restore any music Safari paused or held back. */
   unlock() {
     const retry = () => {
@@ -391,6 +416,7 @@ export class Audio {
       if (this.musicOn && el?.src && !el.ended && (this.trackBlocked || el.paused)) this.playTrack();
     };
     const ctx = this.ctx;
+    if (this.hidden) return;
     // (a context the sound being off put to sleep stays asleep)
     if (ctx && ctx.state !== 'running' && this.volume > 0) {
       // WebKit also exposes an `interrupted` state on iOS. The broad check catches that without

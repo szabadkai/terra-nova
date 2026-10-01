@@ -987,6 +987,9 @@ function setupGlobalInput() {
   window.addEventListener('focus', recoverAudio);
   window.addEventListener('pageshow', recoverAudio);
   document.addEventListener('visibilitychange', () => {
+    // (the title screen and a game alone go silent in a hidden tab; a game with a friend keeps its
+    // sound, which spares the tab the browser's freezing)
+    audio.setHidden(document.hidden && !(state === 'play' && net));
     if (document.visibilityState === 'visible') recoverAudio();
   });
   onImmersiveChange((on) => hud?.immersiveChanged(on));

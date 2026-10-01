@@ -169,6 +169,7 @@ The user answered the six open questions on 2026-10-01. The designs below are wh
 - `Audio.setHidden(hidden)`: on hide, suspend the context and pause the soundtrack element. Its `onpause` marks `trackBlocked`, so `unlock()` (called on `visibilitychange` to visible) plays it again.
 - In `main.ts`'s `visibilitychange` handler: `audio.setHidden(hidden && !(state === 'play' && net))`, keeping `recoverAudio()` on visible. Only resume the context if the volume is above 0 (the mute rule).
 - Check: `rest.mjs` (its PRE wraps `AudioContext`) with a CDP `Page.setWebLifecycleState` or a second tab brought to the front.
+- **Built.** Checked headless with the sound on and the soundtrack playing, the page's visibility faked in-page (`document.hidden` and a `visibilitychange`): hidden 1.5 s, the context goes from running to suspended and the track pauses (on main both kept running); shown again, both run. A track or a narration line that comes due while hidden waits for the page to show. With the sound off the context stays asleep when shown.
 
 **5. Changes that move the simulation baselines: allowed.** Measure first, then re-record the baselines (`scripts/baseline.ts` passive and aivai) in the same commit:
 
