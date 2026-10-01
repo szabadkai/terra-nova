@@ -4,7 +4,7 @@
 // display frame, ignores one-off spikes and pauses, comes back once frames are on time again, and
 // does not thrash when the full resolution is only just too slow. Nothing here touches the game.
 // Usage: npx tsx scripts/framepace.ts
-import { AUTO_STEPS, FramePace, IDLE_FPS, LOW_STEPS, REST_FPS, type FrameCap } from '../src/render/framePace';
+import { AUTO_STEPS, FramePace, IDLE_FPS, LOW_STEPS, PAUSE_FPS, REST_FPS, type FrameCap } from '../src/render/framePace';
 
 let fails = 0;
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) fails++; };
@@ -175,17 +175,30 @@ const P175 = 1000 / 175;
   p.rest = null;
   const r2 = run(p, 2, 1000 / 120, () => 2, 4000);
   check(Math.abs(r2.renders / 2 - 120) <= 2, `the rest lifted, every display frame is drawn again (${(r2.renders / 2).toFixed(0)} a second)`);
+  p.rest = 'pause';
+  const rp = run(p, 4, 1000 / 120, () => 2, 4000 + 2000);
+  check(Math.abs(rp.renders / 4 - PAUSE_FPS) <= 1 && p.resting, `a paused rest (a paused game, the editor) gives about ${PAUSE_FPS} frames a second (${(rp.renders / 4).toFixed(1)})`);
+  p.cap = '30';
+  check(p.resting, '  and is a rest under a cap of about 30 too');
+  p.cap = 'off';
+  const p175 = fresh({ period: 1000 / 175, cap: 'off' });
+  p175.rest = 'pause';
+  const rp175 = run(p175, 4, 1000 / 175, () => 2);
+  check(Math.abs(rp175.renders / 4 - PAUSE_FPS) <= 1, `  on a 175 Hz display too (${(rp175.renders / 4).toFixed(1)}: every ${p175.every()} display frames)`);
+  p175.rest = 'idle';
+  const ri175 = run(p175, 4, 1000 / 175, () => 2, 4000);
+  check(Math.abs(ri175.renders / 4 - IDLE_FPS) <= 0.5, `  and an idle rest there gives ${(ri175.renders / 4).toFixed(1)} (every ${p175.every()} display frames)`);
   p.rest = 'idle';
-  const ri = run(p, 3, 1000 / 120, () => 2, 4000 + 2000);
+  const ri = run(p, 3, 1000 / 120, () => 2, 4000 + 6000);
   check(Math.abs(ri.renders / 3 - IDLE_FPS) <= 1 && p.resting, `an idle rest (the world under the Esc menu) gives about ${IDLE_FPS} frames a second (${(ri.renders / 3).toFixed(1)})`);
   p.cap = '30';
   check(p.resting, 'and is a rest under a cap of about 30 too (Low\'s: the slow rest is not)');
   p.cap = 'off';
   p.rest = 'stop';
-  const r3 = run(p, 2, 1000 / 120, () => 2, 9000);
+  const r3 = run(p, 2, 1000 / 120, () => 2, 13000);
   check(r3.renders === 0 && p.resting, 'a stop draws nothing');
   p.rest = null;
-  const r4 = run(p, 1, 1000 / 120, () => 2, 11000);
+  const r4 = run(p, 1, 1000 / 120, () => 2, 15000);
   check(r4.late === 0 && r4.renders > 100, `the first frame after a stop is not judged late, and frames resume at once (${r4.renders} in a second)`);
   // the automatic resolution is not steered by resting frames
   const a = fresh({ period: 1000 / 60, auto: true });

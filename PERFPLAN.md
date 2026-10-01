@@ -138,9 +138,9 @@ Chrome on the M5 (ANGLE Metal) exposes neither `WEBGL_multisampled_render_to_tex
 
 **A cross-build pixel check that holds** (used for this branch): seed `Math.random` and stub `requestAnimationFrame` in the page's PRE script, grow the same town, then before each view set `gr.time` to a fixed value and hide the particles, pigs, birds and settlers (warm-up frames differ in number between builds, and those draw from `Math.random` or the render clock), and end with 8 frames at `dt` 0. The scripts (`parity.mjs`, `pre-parity.js`, `signed.cjs`, and `ab2.mjs` for the timings) are in the memory folder's `perf-bench/perfplan/`.
 
-## Continue here: decided on 2026-10-01, not built yet
+## Continue here: decided on 2026-10-01, built the same day
 
-The user answered the six open questions on 2026-10-01. Nothing below is built; the designs are what the code reading came to, so a next session can start from them.
+The user answered the six open questions on 2026-10-01. The designs below are what the code reading came to; each item says what was built and measured (branch `szabadkai/perfplan-six-items-5ddafd`, one commit each).
 
 **1. FXAA as an anti-aliasing mode: yes.** Off by default (MSAA stays the default look).
 
@@ -162,6 +162,7 @@ The user answered the six open questions on 2026-10-01. Nothing below is built; 
 - A paused game and the editor, both after 3 s untouched: 15 frames a second. This needs a new rest, `'pause'` with `PAUSE_FPS` 15, in `framePace.every()`.
 - A game alone under the Esc menu: 5 (`IDLE_FPS` 10 → 5). The graphics page keeps 30.
 - `scripts/framepace.ts` gets the new cases; the Rules' "Frames nobody needs are not drawn" names the rates.
+- **Built.** `rest.mjs` (headless, 1600x900, a 60 Hz display): paused and idle 3 s 30 → 15 fps, the Esc menu 10 → 5 fps, its graphics page 30 as before. A rest's frame may take up to 0.25 s of render time (it was clamped at 0.1), so water, smoke and clouds keep their pace at 5 a second. On a 175 Hz display the pause is every 12th frame (14.6 fps), the menu every 35th.
 
 **4. Suspend the audio in a hidden tab with the sound on: yes**, for the title screen and solo games. Not in a game with a friend: an audible tab is exempt from Chrome's tab freezing, which the hidden-tab pump relies on.
 

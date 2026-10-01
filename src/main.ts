@@ -1325,18 +1325,19 @@ for (const t of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']
 
 /**
  * How much of a rest the frames get now (framePace.rest): none at all while the window is not in
- * front; about 10 a second for a game alone under the Esc menu (its veil hides all but the graphics
- * page, which shows its settings live); about 30 on the title screen, in the menu otherwise, and once
- * the player has touched nothing for IDLE_AFTER and the view has come to rest in a paused game, in
- * the editor, or in quiet mode; otherwise the cap alone.
+ * front; about 5 a second for a game alone under the Esc menu (its veil hides all but the graphics
+ * page, which shows its settings live); about 15 once the player has touched nothing for IDLE_AFTER
+ * and the view has come to rest in a paused game or in the editor; about 30 on the title screen, in
+ * the menu otherwise, and in quiet mode once the player and the view rest; otherwise the cap alone.
  */
 function restNow(now: number): Rest {
   if (!focused) return 'stop';
   if (state === 'menu') return 'slow';
   if (state === 'play' && gameMenu) return driver?.solo && gameMenu.current !== 'graphics' ? 'idle' : 'slow';
   const still = now - inputAt > IDLE_AFTER && !!gr?.cam.settled;
-  if (state === 'play' && still && (driver?.speed === 0 || gr.settings.quiet)) return 'slow';
-  if (state === 'edit' && still && !editor?.painting) return 'slow';
+  if (state === 'play' && still && driver?.speed === 0) return 'pause';
+  if (state === 'play' && still && gr.settings.quiet) return 'slow';
+  if (state === 'edit' && still && !editor?.painting) return 'pause';
   return null;
 }
 
@@ -1362,7 +1363,8 @@ function loop() {
     requestAnimationFrame(loop);
     return;
   }
-  const dt = Math.min(0.1, (now - last) / 1000);
+  // (a rest's frames come up to 0.2 s apart: water, smoke and the clouds keep their real pace through them)
+  const dt = Math.min(framePace.resting ? 0.25 : 0.1, (now - last) / 1000);
   last = now;
   // (nothing drawn while a world is being shaped: it is not all there yet)
   if (game && gr && !shaping) {

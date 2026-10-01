@@ -2,22 +2,25 @@
 // measured from requestAnimationFrame, a frame cap that renders every Nth display frame so the frames
 // that are shown arrive evenly, and the automatic resolution that takes the world's render scale
 // down a step while frames keep missing their display frame and brings it back once they don't.
-// A `rest` on top of the cap holds the frame rate down when nothing needs it: the title screen, a
-// paused game and an idle player get about 30 frames a second, a world under the Esc menu's veil about
-// 10, a window that is not in front none at all.
+// A `rest` on top of the cap holds the frame rate down when nothing needs it: the title screen and an
+// idle player in quiet mode get about 30 frames a second, a paused game and the editor left alone about
+// 15, a world under the Esc menu's veil about 5, a window that is not in front none at all.
 // One instance (`framePace`) is shared by the main loop, the renderer, the menu and the counter.
 
 /** off, half or a third of the display's rate, or about 60 / 30 frames a second */
 export type FrameCap = 'off' | 'half' | 'third' | '60' | '30';
 
-/** No rest, about REST_FPS frames a second (the title screen, a paused game, a player who has touched
- * nothing for a while), about IDLE_FPS (a world under the Esc menu), or no frames at all (the window is not in front) */
-export type Rest = null | 'slow' | 'idle' | 'stop';
+/** No rest, about REST_FPS frames a second (the title screen, a player in quiet mode who has touched
+ * nothing for a while), about PAUSE_FPS (a paused game or the editor, left alone), about IDLE_FPS (a
+ * world under the Esc menu), or no frames at all (the window is not in front) */
+export type Rest = null | 'slow' | 'pause' | 'idle' | 'stop';
 /** frames a second a slow rest gives (as near as the display's rate divides) */
 export const REST_FPS = 30;
+/** ...a paused one: nothing moves but water, flags, smoke and the trees in the wind */
+export const PAUSE_FPS = 15;
 /** ...and an idle one: the world only shows through the menu's veil, where water and flags at a few
  * frames a second go unnoticed */
-export const IDLE_FPS = 10;
+export const IDLE_FPS = 5;
 /** ms without any input before an idle player's frames slow down */
 export const IDLE_AFTER = 3000;
 
@@ -98,9 +101,9 @@ export class FramePace {
     return this.steps[this.level];
   }
 
-  /** how many display frames each rendered frame is given under the cap (and a slow or idle rest) */
+  /** how many display frames each rendered frame is given under the cap (and a slow, paused or idle rest) */
   every(period = this.period) {
-    const fps = this.rest === 'slow' ? REST_FPS : this.rest === 'idle' ? IDLE_FPS : 0;
+    const fps = this.rest === 'slow' ? REST_FPS : this.rest === 'pause' ? PAUSE_FPS : this.rest === 'idle' ? IDLE_FPS : 0;
     return Math.max(this.capEvery(period), fps ? Math.max(1, Math.round(1000 / period / fps)) : 1);
   }
 
