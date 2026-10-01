@@ -1071,11 +1071,13 @@ function refreshHover() {
   pointer.at = performance.now();
   const o = gr.orders;
   o.ghost = null;
-  if (!hud || gameMenu || state !== 'play' || !pointer.inside || pointer.buttons || box || gr.cam.drag) {
+  const holdingRight = pointer.buttons === 2;
+  if (!hud || gameMenu || state !== 'play' || !pointer.inside || (pointer.buttons && !holdingRight) || box || (gr.cam.drag && !holdingRight)) {
     o.hover = null;
     if (!pointer.inside || gameMenu) hud?.hideTip();
     return;
   }
+  if (holdingRight) { o.hover = null; hud.hideTip(); }
   const ev = { clientX: pointer.x, clientY: pointer.y } as MouseEvent;
   if (targeting()) {
     o.hover = null;
@@ -1089,12 +1091,12 @@ function refreshHover() {
   const s = gr.pickSettler(pointer.x, pointer.y, b ? 12 : 22);
   const shipId = s ? 0 : gr.pickShip(pointer.x, pointer.y);
   const sh = shipId ? g.ships.get(shipId) : undefined;
-  o.hover = s ? { kind: 'settler', id: s.id, foe: s.owner !== me } : sh ? { kind: 'ship', id: sh.id, foe: sh.owner !== me } : b ? { kind: 'building', id: b.id, foe: b.owner !== me } : null;
+  if (!holdingRight) o.hover = s ? { kind: 'settler', id: s.id, foe: s.owner !== me } : sh ? { kind: 'ship', id: sh.id, foe: sh.owner !== me } : b ? { kind: 'building', id: b.id, foe: b.owner !== me } : null;
 
   // with soldiers picked, the cursor tells what a right-click (or the pending order's click) would do
   const chosen = o.chosen.map((id) => g.settlers.get(id)).filter((x): x is Settler => !!x);
   const cmd = gr.commanding;
-  hoverCursor = cmd ? 'target' : 'default';
+  hoverCursor = cmd ? 'target' : chosen.length ? 'send' : 'default';
   if (chosen.length) {
     const fort = b && b.def.military && b.state === 'done' ? b : null;
     const foeFort = fort && fort.owner !== me;
@@ -1107,8 +1109,8 @@ function refreshHover() {
       const node = gr.hoverNode;
       const reg = node >= 0 ? w.regionAt(node) : 0;
       if (!reg || !chosen.some((x) => regionOf(x) === reg)) hoverCursor = 'nogo';
-      // show where they would form up
-      else if (gr.hoverPoint) o.ghost = planFormation(g, me, o.chosen, gr.hoverPoint.x, gr.hoverPoint.z);
+      // preview their posts only while the right button is held
+      else if (holdingRight && gr.hoverPoint) o.ghost = planFormation(g, me, o.chosen, gr.hoverPoint.x, gr.hoverPoint.z);
     }
   }
 
@@ -1126,6 +1128,7 @@ function refreshHover() {
   }
 
   // tooltips
+  if (holdingRight) return;
   if (sh) {
     const hp = Math.max(0, Math.round((sh.hp / sh.maxHp) * 100));
     const act = fleet.length && sh.owner !== me && afloat(sh) ? '<br><b class="bad">Right-click: hunt her</b>' : '';
@@ -1166,7 +1169,15 @@ function bindCanvas(c: HTMLCanvasElement) {
     active.add(e.pointerId);
     if (active.size > 1) multiTouch = true;
     if (active.size === 1) { downX = e.clientX; downY = e.clientY; downBtn = e.button; multiTouch = false; }
-    if (e.pointerType === 'mouse') { pointer.buttons = e.buttons; gr.orders.hover = null; hud?.hideTip(); }
+    if (e.pointerType === 'mouse') {
+      pointer.x = e.clientX; pointer.y = e.clientY; pointer.inside = true; pointer.buttons = e.buttons;
+      const p = gr.pickGround(e.clientX, e.clientY);
+      gr.hoverNode = gr.pickNode(p);
+      gr.hoverPoint = p;
+      gr.orders.hover = null;
+      hud?.hideTip();
+      refreshHover();
+    }
     if (e.pointerType === 'touch' && state === 'play') {
       // update hover so taps place buildings where the finger is
       const p = gr.pickGround(e.clientX, e.clientY);
@@ -1199,10 +1210,10 @@ function bindCanvas(c: HTMLCanvasElement) {
     if (performance.now() - pointer.at > 50) refreshHover();
     else if (hud && !e.buttons) hud.moveTip(e.clientX, e.clientY);
   });
-  c.addEventListener('pointerleave', () => { pointer.inside = false; gr.orders.hover = null; hud?.hideTip(); });
+  c.addEventListener('pointerleave', () => { pointer.inside = false; gr.orders.hover = null; gr.orders.ghost = null; hud?.hideTip(); });
   const up = (e: PointerEvent) => {
     active.delete(e.pointerId);
-    if (e.pointerType === 'mouse') pointer.buttons = e.buttons;
+    if (e.pointerType === 'mouse') { pointer.buttons = e.buttons; gr.orders.ghost = null; }
     if (box) {
       const r = box.getBoundingClientRect();
       boxEnd();
@@ -1228,7 +1239,7 @@ function bindCanvas(c: HTMLCanvasElement) {
     refreshHover();
   };
   c.addEventListener('pointerup', up);
-  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); pointer.buttons = 0; boxEnd(); });
+  c.addEventListener('pointercancel', (e) => { active.delete(e.pointerId); pointer.buttons = 0; gr.orders.ghost = null; boxEnd(); });
   // double-click a soldier: every one of his kind in view
   c.addEventListener('dblclick', (e) => {
     if (state !== 'play' || !hud || targeting() || gr.commanding) return;
