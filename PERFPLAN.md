@@ -156,6 +156,7 @@ The user answered the six open questions on 2026-10-01. The designs below are wh
 - Thresholds: Low 52 px (exactly Low's 20 units at 1080p and 70%), Medium 35, High 25, Ultra 20. At 3440x1440 High the shadows then go beyond ~80 units, on a quiet laptop beyond ~63, at Medium 1080p beyond ~36.
 - Rename `lowShadowSkip` to `smallCasters` and drop `LOW_SMALL_SHADOWS`; the Rules' paragraph on the three models names both.
 - Check: `glowner.mjs` calls per pass at zooms 60 and 95 before and after; screenshots across the threshold by eye.
+- **Built.** At 3440x1440 High+AO (25-minute town, seed 199; K 2216, so the threshold is at 80 units): zoom 60 and 75 unchanged; at 85 and 95 a frame with the shadow map drawn makes 172 fewer GL calls (2,143 → 1,971 and 2,173 → 2,001), 78 fewer draws and 0.24 M fewer triangles. In-page A/B on the same frames: the frame's JavaScript −0.2 ms (median, shadow map every frame), the GPU-bound frame time unchanged within 0.1 ms (the triangles were cheap for the M5). By eye at a laptop's 900 pixels (a settler 15 px tall): no visible difference, 0.26% of the pixels differ by more than 24 levels.
 
 **3. The rests can go lower than 30 (paused) and 10 (Esc menu).** Proposed:
 

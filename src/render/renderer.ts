@@ -86,8 +86,14 @@ const LEAF_FALL: Record<number, [number, number, number][]> = {
  * shadow then matches what is seen, and the fitted map's texel (about 4e-4 of a unit per unit of
  * distance, shadowFit) has grown to a few centimetres, so the model's error spans only a few texels */
 const SHADOW_COARSE_DIST = COARSE_DIST;
-/** at Low, settlers, animals, lanterns and other small things cast shadows only in a view closer than this */
-const LOW_SMALL_SHADOWS = 20;
+/**
+ * Settlers, animals, lanterns and other small things cast shadows only while a settler at the view's
+ * target stands at least this many pixels tall (0.9 of a unit): a smaller one's shadow is a few
+ * blurred texels, and their pass drew more triangles than the view itself. At Low that is a view
+ * closer than 20 units at 1080p (its 70%); at High on a 1440-pixel screen, closer than about 80.
+ */
+const SMALL_SHADOW_PX: Record<Quality, number> = { low: 52, medium: 35, high: 25, ultra: 20 };
+const SETTLER_HEIGHT = 0.9;
 const NO_SKIP: THREE.Object3D[] = [];
 
 export class GameRenderer {
@@ -188,9 +194,10 @@ export class GameRenderer {
   private staticUpdateT = 0;
   /** the ground's and the stones' close-up detail layers: not at Low */
   private detail: DetailUsers;
-  /** what casts no shadow at Low (hidden while its shadow map is drawn), and whether each was visible */
-  private lowShadowSkip: THREE.Object3D[] = [];
-  private lowShadowWas: boolean[] = [];
+  /** the small things that cast no shadow once they are small on the screen (hidden while the shadow
+   * map is drawn: SMALL_SHADOW_PX), and whether each was visible */
+  private smallCasters: THREE.Object3D[] = [];
+  private smallCastersWas: boolean[] = [];
 
   /** `opts.grass`: the grass will be drawn (else its patches are laid out only when it is first turned on) */
   constructor(private canvas: HTMLCanvasElement, private game: Game, powerPreference: WebGLPowerPreference = 'default', opts: { grass?: boolean } = {}) {
@@ -213,11 +220,11 @@ export class GameRenderer {
       const sm = r.shadowMap;
       if (!lights.length || !sm.enabled || !(sm.autoUpdate || sm.needsUpdate)) return drawShadows(lights, scene, camera);
       lodSetPass('shadow');
-      // Low's map is too coarse for the shadows of small things (a settler's is a few blurred texels):
-      // they stay out of its pass, which drew more triangles than the view itself, unless the view is so
-      // close that there are few of them and they are big
-      const low = this.settings?.quality === 'low';
-      const skip = low && this.cam.dist >= LOW_SMALL_SHADOWS ? this.lowShadowSkip : NO_SKIP, was = this.lowShadowWas;
+      // small things far out cast shadows of a few blurred texels: they stay out of the pass, unless
+      // the view is so close that they are big on the screen
+      const q = this.settings?.quality ?? 'high', low = q === 'low';
+      const small = (lodView.K * SETTLER_HEIGHT) / this.cam.dist < SMALL_SHADOW_PX[q];
+      const skip = small ? this.smallCasters : NO_SKIP, was = this.smallCastersWas;
       for (let i = 0; i < skip.length; i++) { was[i] = skip[i].visible; skip[i].visible = false; }
       try {
         // (the coarse model once the view is out far enough that its error stays under the map's
@@ -320,7 +327,7 @@ export class GameRenderer {
       this.cam.shake = Math.max(this.cam.shake, shake);
     }, (n, x, z, v) => this.sound?.(n, x, z, v));
     this.scene.add(this.demolition.group);
-    this.lowShadowSkip = [this.settlers.group, this.donkeys.group, this.catapults.group, this.animals.group, this.pigs.group, this.birds.group,
+    this.smallCasters = [this.settlers.group, this.donkeys.group, this.catapults.group, this.animals.group, this.pigs.group, this.birds.group,
       this.lanterns.group, this.signs.group, this.borders.posts, this.fields.mesh, this.vines.group, this.piles.group, this.arrows.mesh, this.arrows.stones, this.demolition.group];
     this.reflection = new PlanarReflection(WATER_LEVEL, w / 2, h / 2);
     this.water.uniforms.tReflect.value = this.reflection.rt.texture;
