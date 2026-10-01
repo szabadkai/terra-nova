@@ -89,8 +89,8 @@ if (perfBenchmark) {
 // ---------------------------------------------------------------- saving
 /** Set while a game is being played, so reloading the page picks it up again. */
 const RESUME_KEY = 'terra-nova.resume.v1';
-const AUTOSAVE_EVERY = 30; // seconds of real time
-let autosaveT = AUTOSAVE_EVERY;
+/** seconds of real time to the next autosave (prefs.autosave apart; none at 0) */
+let autosaveT = prefs.autosave || Infinity;
 let autosavedAt = -1; // game time of the last autosave
 
 function setResume(on: boolean) {
@@ -942,7 +942,7 @@ function startGame(resumed?: Record<string, unknown>) {
   // fills the screen when the game was started by a click; a resumed page has no gesture to spend
   if (prefs.immersive) void enterImmersive();
   setResume(!net);
-  autosaveT = AUTOSAVE_EVERY;
+  autosaveT = prefs.autosave || Infinity;
   // a new game replaces the autosave at once, so reloading can never bring back the previous one
   autosavedAt = resumed ? game.time : -1;
   if (!resumed) autosave();
@@ -1377,10 +1377,13 @@ function loop() {
       if (!gameMenu) hud?.update(dt);
       // the world moves under a resting pointer too: soldiers walk by, the view scrolls
       if (pointer.inside && performance.now() - pointer.at > 120) refreshHover();
-      autosaveT -= dt;
-      if (autosaveT <= 0) {
-        autosaveT = AUTOSAVE_EVERY;
-        autosave();
+      // (an interval shortened in the menu takes effect at once)
+      if (prefs.autosave > 0) {
+        autosaveT = Math.min(autosaveT, prefs.autosave) - dt;
+        if (autosaveT <= 0) {
+          autosaveT = prefs.autosave;
+          autosave();
+        }
       }
     } else {
       game.events.length = 0;

@@ -35,6 +35,9 @@ export interface Prefs {
   stallBadges: 'top' | 'all' | 'off';
   /** a toast when a mine runs dry, nobody is free for a job or a tool is missing */
   stallAlerts: boolean;
+  /** seconds of real time between autosaves of a game alone (one of AUTOSAVE_CHOICES; 0 = only when
+   * the page is hidden or left, which it is in every case, so a reload picks the game up again) */
+  autosave: number;
   /** what the graphics detection found: the level it recommends ('' = it never ran), the
    * resolution it went with, the GPU it saw, the ms a frame it timed, and whether the player has
    * been told what it chose */
@@ -42,6 +45,9 @@ export interface Prefs {
 }
 
 const KEY = 'terra-nova.prefs.v1';
+
+/** the autosave intervals the menu offers (seconds; 0 = only when leaving) */
+export const AUTOSAVE_CHOICES = [30, 60, 120, 300, 0];
 
 export const defaultPrefs = (): Prefs => ({
   render: { ...DEFAULT_RENDER_SETTINGS },
@@ -63,6 +69,7 @@ export const defaultPrefs = (): Prefs => ({
   showFps: true,
   stallBadges: 'top',
   stallAlerts: true,
+  autosave: 30,
   hw: { level: '', ao: false, quiet: false, res: '', gpu: '', ms: 0, told: true },
 });
 
@@ -86,6 +93,7 @@ function load(): Prefs {
     const saved = raw ? JSON.parse(raw) : null;
     if (saved) merge(p as unknown as Record<string, unknown>, saved);
     if (!(p.hw.level in PRESETS)) p.hw.level = '';
+    if (!AUTOSAVE_CHOICES.includes(p.autosave)) p.autosave = 30;
     firstRun = !saved?.render;
   } catch { /* storage blocked or corrupt: keep the defaults */ }
   return p;

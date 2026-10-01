@@ -184,5 +184,6 @@ The user answered the six open questions on 2026-10-01. The designs below are wh
 - `prefs.autosave`, seconds of real time: 30 (default), 60, 120, 300, or 0 = only when leaving. `main.ts` reads it in place of `AUTOSAVE_EVERY`, clamping `autosaveT` when the interval is shortened.
 - The save on `pagehide` and on hiding the page stays in every case (the resume feature needs it).
 - The control: a select on the Save page of the Esc menu (`renderSave` in `gameMenu.ts`).
+- **Built.** Checked headless over 65 s of real play (IndexedDB `put`s counted, two to a save): 30 s → 2 saves on main and here, 60 s → 1, the Save page lists "Every 30 s | Every 1 min | Every 2 min | Every 5 min | Only when leaving". A value that is not one of `AUTOSAVE_CHOICES` loads as 30.
 
 After these, the order stays as above: the remaining measurements (the sub-draw cost, the simulation, hitches, boot), then the GPU items, heat, spikes and boot in the ranked tables, and the `?bench=1` page for the first Intel numbers.

@@ -9,7 +9,7 @@ import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
 import type { Objectives } from './objectives';
 import { missionLabel } from '../game/campaign';
-import { applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, defaultRender, detectGraphics, prefs, savePrefs } from './prefs';
+import { AUTOSAVE_CHOICES, applyAudioPrefs, applyControlPrefs, applyRenderPrefs, defaultPrefs, defaultRender, detectGraphics, prefs, savePrefs } from './prefs';
 import { LEVELS, LEVEL_NAMES, QUIET_PR, levelText } from '../render/hardware';
 import type { WheelMode } from '../render/camera';
 import { AUTO, playTime, saveSubtitle, type SaveSummary } from './saveStore';
@@ -319,6 +319,8 @@ export class GameMenu {
       this.confirmButton('Overwrite', 'Overwrite?', () => this.act(status, () => saves.save(sv.name, sv.id), 'Game saved', () => this.show('save'))),
       this.deleteButton(sv, status),
     ], 'No saved games yet.');
+    c.appendChild(h('h3', '', 'Autosave'));
+    c.appendChild(this.select('Save the game by itself', 'Into the Autosave slot. Leaving or switching away from the page saves it too. Not in a game with a friend', AUTOSAVE_CHOICES.map((v) => [String(v), v === 0 ? 'Only when leaving' : v < 60 ? `Every ${v} s` : `Every ${v / 60} min`]), () => String(prefs.autosave), (v) => { prefs.autosave = Number(v); }));
     c.appendChild(h('h3', '', 'Save file'));
     const dl = h('button', 'wide gm-file', '⬇ Download a save file');
     dl.onclick = () => { this.o.audio.play('ui'); void this.act(status, () => saves.exportFile(), 'Save file downloaded'); };
