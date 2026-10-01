@@ -51,9 +51,14 @@ export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 export type Resolution = 'auto' | 'full' | '85' | '70' | '50';
 const RES_SCALE: Record<Resolution, number> = { auto: 1, full: 1, '85': 0.85, '70': 0.7, '50': 0.5 };
 
+/** How edges are smoothed: multisampling the scene (4x, 2x in quiet mode, none at Low), FXAA on the
+ * finished picture instead (cheaper, softer, and thin things shimmer more as the view moves), or not at all. */
+export type Antialias = 'msaa' | 'fxaa' | 'off';
+
 export interface RenderSettings {
   quality: Quality;
   resolution: Resolution;
+  antialias: Antialias;
   /** render every Nth display frame, so that the frames shown arrive evenly */
   frameCap: FrameCap;
   bloom: boolean;
@@ -72,7 +77,7 @@ export interface RenderSettings {
 
 /** Bloom and the tilt-shift blur are off by default, and the frames are capped at about 60: a laptop's fans notice both, the eye hardly. */
 export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
-  quality: 'high', resolution: 'auto', frameCap: '60', bloom: false, dof: false, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true, quiet: true,
+  quality: 'high', resolution: 'auto', antialias: 'msaa', frameCap: '60', bloom: false, dof: false, grass: true, ao: false, grade: true, dayCycle: true, weather: 'auto', borders: true, reflections: true, quiet: true,
 };
 
 /** Falling-leaf colours of the deciduous species (oak, birch, fruit tree). */
@@ -489,7 +494,9 @@ export class GameRenderer {
     this.fx.enableAO(s.ao);
     // Four samples on a dense laptop target spend bandwidth for very little visible gain. Ultra
     // keeps 4x; Quiet uses 2x (and Low none) while the final pass still sharpens scaled output.
-    this.fx.setSamples(perfBaseline ? 4 : s.quality === 'low' ? 0 : s.quality === 'ultra' && !s.quiet ? 4 : s.quiet ? 2 : 4);
+    const msaa = perfBaseline || s.antialias === 'msaa';
+    this.fx.setSamples(perfBaseline ? 4 : !msaa || s.quality === 'low' ? 0 : s.quality === 'ultra' && !s.quiet ? 4 : s.quiet ? 2 : 4);
+    this.fx.setFxaa(!perfBaseline && s.antialias === 'fxaa');
     framePace.auto = s.resolution === 'auto';
     // (Low's automatic resolution starts at 70% and goes down to half)
     framePace.steps = s.quality === 'low' ? LOW_STEPS : AUTO_STEPS;

@@ -3,7 +3,7 @@
 // screen it opens with just the settings pages.
 import { GOODS, PLAYER_COLORS } from '../game/defs';
 import type { Game } from '../game/game';
-import type { GameRenderer, Quality, RenderSettings, Resolution } from '../render/renderer';
+import type { Antialias, GameRenderer, Quality, RenderSettings, Resolution } from '../render/renderer';
 import { IDLE_AFTER, REST_FPS, framePace, type FrameCap } from '../render/framePace';
 import type { Audio } from '../audio/audio';
 import type { SeasonMode } from '../render/seasons';
@@ -345,6 +345,8 @@ export class GameMenu {
       };
       return sv.id === AUTO ? [load] : [load, this.deleteButton(sv, status)];
     }, 'No saved games yet. Your game saves itself as you play, and the Save game page keeps as many as you like.');
+    c.appendChild(h('h3', '', 'Autosave'));
+    c.appendChild(this.select('Save the game by itself', 'Into the Autosave slot. Leaving or switching away from the page saves it too. Not in a game with a friend', AUTOSAVE_CHOICES.map((v) => [String(v), v === 0 ? 'Only when leaving' : v < 60 ? `Every ${v} s` : `Every ${v / 60} min`]), () => String(prefs.autosave), (v) => { prefs.autosave = Number(v); }));
     c.appendChild(h('h3', '', 'Save file'));
     const pick = document.createElement('input');
     pick.type = 'file';
@@ -435,6 +437,8 @@ export class GameMenu {
     c.appendChild(this.toggle('Quiet mode', `For laptops, to keep the fans quiet. Prefers the low-power GPU on the next game, draws Auto resolution at 92% and at most ${QUIET_PR} pixels per point on dense screens, and after ${IDLE_AFTER / 1000} seconds without a touch slows the frames to about ${REST_FPS} a second until the next one (the counter says "resting"). The title screen always rests, and a window that is not in front draws nothing while the game goes on.`, () => s.quiet, set('quiet')));
     c.appendChild(this.seg('Resolution', 'The world is drawn at this share of the screen and scaled up. The biggest saving on large, high-refresh screens. Auto draws at full and drops to 92% or 85% only while frames keep running late (at Low it draws 70% and drops to 60% or 50%), and the counter shows when it does.',
       [['auto', 'Auto'], ['full', 'Full'], ['85', '85%'], ['70', '70%'], ['50', '50%']], () => s.resolution, (v) => set('resolution')(v as Resolution)));
+    c.appendChild(this.seg('Smooth edges', 'Multisampling smooths edges best, for about a tenth of the frame on a large screen (Low draws without it). FXAA smooths the finished picture for half of that or less: a little softer, and thin masts and posts shimmer more while the view moves.',
+      [['msaa', 'Multisampling'], ['fxaa', 'FXAA'], ['off', 'Off']], () => s.antialias, (v) => set('antialias')(v as Antialias)));
     const hz = framePace.hz;
     const fps = (cap: FrameCap) => `${framePace.capFps(cap)} fps`;
     c.appendChild(this.select('Frame cap', `Draws every second or third frame of the ${hz} Hz display, so the frames that are shown come evenly spaced instead of in bursts; the game runs the same.`,

@@ -94,6 +94,7 @@ function load(): Prefs {
     if (saved) merge(p as unknown as Record<string, unknown>, saved);
     if (!(p.hw.level in PRESETS)) p.hw.level = '';
     if (!AUTOSAVE_CHOICES.includes(p.autosave)) p.autosave = 30;
+    if (!['msaa', 'fxaa', 'off'].includes(p.render.antialias)) p.render.antialias = 'msaa';
     firstRun = !saved?.render;
   } catch { /* storage blocked or corrupt: keep the defaults */ }
   return p;

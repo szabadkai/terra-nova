@@ -265,6 +265,83 @@ const BlurShader = {
     }`,
 };
 
+/**
+ * FXAA (Catlike Coding's, as three's FXAAShader has it; the GLSL ES 1.0 style of the other passes):
+ * reads the graded picture in sRGB bytes, finds the pixels on an edge by the contrast of their
+ * neighbours' luminance and blends each across its edge by how far along the edge it lies. Grain
+ * (under 0.02) stays under its contrast threshold of 0.0312, so it is not taken for an edge.
+ */
+const FxaaShader = {
+  uniforms: { tDiffuse: { value: null as THREE.Texture | null }, uTexel: { value: new THREE.Vector2(1, 1) } },
+  vertexShader: QUAD_VS,
+  fragmentShader: /* glsl */ `
+    precision highp float;
+    uniform sampler2D tDiffuse; uniform vec2 uTexel;
+    varying vec2 vUv;
+    const float CONTRAST_THRESHOLD = 0.0312;
+    const float RELATIVE_THRESHOLD = 0.063;
+    const float EDGE_GUESS = 8.0;
+    float lum(vec2 uv) { return dot(texture2D(tDiffuse, uv).rgb, vec3(0.3, 0.59, 0.11)); }
+    float lum(vec2 uv, float du, float dv) { return lum(uv + uTexel * vec2(du, dv)); }
+    // the steps along an edge: 1, 1.5, 2, 2, 2, 4 texels
+    float edgeStep(int i) { return i == 0 ? 1.0 : i == 1 ? 1.5 : i < 5 ? 2.0 : 4.0; }
+    void main() {
+      vec2 uv = vUv;
+      float m = lum(uv), n = lum(uv, 0.0, 1.0), e = lum(uv, 1.0, 0.0), s = lum(uv, 0.0, -1.0), w = lum(uv, -1.0, 0.0);
+      float hi = max(max(max(max(n, e), s), w), m), lo = min(min(min(min(n, e), s), w), m);
+      float contrast = hi - lo;
+      if (contrast < max(CONTRAST_THRESHOLD, RELATIVE_THRESHOLD * hi)) { gl_FragColor = texture2D(tDiffuse, uv); return; }
+      float ne = lum(uv, 1.0, 1.0), nw = lum(uv, -1.0, 1.0), se = lum(uv, 1.0, -1.0), sw = lum(uv, -1.0, -1.0);
+      // the pixel's own blend: how far it stands out of its neighbourhood
+      float f = (2.0 * (n + e + s + w) + ne + nw + se + sw) / 12.0;
+      f = smoothstep(0.0, 1.0, clamp(abs(f - m) / contrast, 0.0, 1.0));
+      float pixelBlend = f * f;
+      // the edge's direction, and which side of the pixel it runs along
+      float horizontal = abs(n + s - 2.0 * m) * 2.0 + abs(ne + se - 2.0 * e) + abs(nw + sw - 2.0 * w);
+      float vertical = abs(e + w - 2.0 * m) * 2.0 + abs(ne + nw - 2.0 * n) + abs(se + sw - 2.0 * s);
+      bool isH = horizontal >= vertical;
+      float pL = isH ? n : e, nL = isH ? s : w;
+      float pG = abs(pL - m), nG = abs(nL - m);
+      float pixelStep = isH ? uTexel.y : uTexel.x;
+      float oppL = pL, gradient = pG;
+      if (pG < nG) { pixelStep = -pixelStep; oppL = nL; gradient = nG; }
+      // walk along the edge both ways to its ends
+      vec2 uvEdge = uv;
+      vec2 stepV;
+      if (isH) { uvEdge.y += pixelStep * 0.5; stepV = vec2(uTexel.x, 0.0); }
+      else { uvEdge.x += pixelStep * 0.5; stepV = vec2(0.0, uTexel.y); }
+      float edgeL = (m + oppL) * 0.5, gThreshold = gradient * 0.25;
+      vec2 puv = uvEdge + stepV;
+      float pD = lum(puv) - edgeL;
+      bool pEnd = abs(pD) >= gThreshold;
+      for (int i = 1; i < 6; i++) {
+        if (pEnd) break;
+        puv += stepV * edgeStep(i);
+        pD = lum(puv) - edgeL;
+        pEnd = abs(pD) >= gThreshold;
+      }
+      if (!pEnd) puv += stepV * EDGE_GUESS;
+      vec2 nuv = uvEdge - stepV;
+      float nD = lum(nuv) - edgeL;
+      bool nEnd = abs(nD) >= gThreshold;
+      for (int i = 1; i < 6; i++) {
+        if (nEnd) break;
+        nuv -= stepV * edgeStep(i);
+        nD = lum(nuv) - edgeL;
+        nEnd = abs(nD) >= gThreshold;
+      }
+      if (!nEnd) nuv -= stepV * EDGE_GUESS;
+      float pDist = isH ? puv.x - uv.x : puv.y - uv.y;
+      float nDist = isH ? uv.x - nuv.x : uv.y - nuv.y;
+      float shortest = min(pDist, nDist);
+      bool deltaSign = pDist <= nDist ? pD >= 0.0 : nD >= 0.0;
+      float edgeBlend = deltaSign == (m - edgeL >= 0.0) ? 0.0 : 0.5 - shortest / (pDist + nDist);
+      float blend = max(pixelBlend, edgeBlend);
+      if (isH) uv.y += pixelStep * blend; else uv.x += pixelStep * blend;
+      gl_FragColor = texture2D(tDiffuse, uv);
+    }`,
+};
+
 const rawPass = (name: string, sh: { uniforms: Record<string, THREE.IUniform>; vertexShader: string; fragmentShader: string }, defines = {}) =>
   new THREE.RawShaderMaterial({
     name,
@@ -692,6 +769,11 @@ export class PostFX {
   private ao: HalfAO | null = null;
   private quad: FullScreenQuad;
   private final: THREE.RawShaderMaterial;
+  /** FXAA instead of multisampling (`setFxaa`): the final pass then draws into `ldrRT`, the canvas's
+   * size in sRGB bytes, and the FXAA pass that to the canvas */
+  private fxaa = false;
+  private fxaaMat: THREE.RawShaderMaterial;
+  private ldrRT: THREE.WebGLRenderTarget;
   settings: FxSettings = { bloom: true, dof: true, ao: false, grade: true };
   /** resolution scale of the world (1 = the canvas's own); takes effect on setSize */
   scale = 1;
@@ -739,8 +821,20 @@ export class PostFX {
       depthTest: false,
       depthWrite: false,
     });
+    this.fxaaMat = rawPass('FXAA', FxaaShader);
+    // (the final pass writes sRGB bytes itself: the target needs no colour space of its own)
+    this.ldrRT = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    this.ldrRT.texture.generateMipmaps = false;
     this.quad = new FullScreenQuad(this.final);
     this.setSize(w, h);
+  }
+
+  /** FXAA on the finished picture (the scene is then best drawn without multisampling: setSamples(0)). */
+  setFxaa(on: boolean) {
+    if (this.fxaa === on) return;
+    this.fxaa = on;
+    // (its target is allocated on the first frame that draws into it)
+    if (!on) this.ldrRT.dispose();
   }
 
   get samples() {
@@ -786,6 +880,11 @@ export class PostFX {
     const W = Math.max(1, Math.round(w * pr)), H = Math.max(1, Math.round(h * pr));
     this.sceneRT.setSize(W, H);
     (this.final.uniforms.uRes.value as THREE.Vector2).set(W, H);
+    // the canvas's own size, which the final pass scales the scene up to
+    const cr = this.renderer.getPixelRatio();
+    const CW = Math.max(1, Math.round(w * cr)), CH = Math.max(1, Math.round(h * cr));
+    this.ldrRT.setSize(CW, CH);
+    (this.fxaaMat.uniforms.uTexel.value as THREE.Vector2).set(1 / CW, 1 / CH);
     // the same size as the bloom's bright pass, so it can read this copy instead of the scene
     const hw = Math.max(1, Math.round(W / 2)), hh = Math.max(1, Math.round(H / 2));
     this.halfRT.setSize(hw, hh);
@@ -872,7 +971,6 @@ export class PostFX {
     u.toneMappingExposure.value = r.toneMappingExposure;
     u.uAmount.value = amount;
     u.uHalfOn.value = blurred ? 1 : 0;
-    this.warm = false;
     u.uBand.value = band;
     u.uTime.value = time;
     u.uRain.value = rain;
@@ -892,11 +990,27 @@ export class PostFX {
       (u.uWarm.value as THREE.Color).setRGB(1, 1, 1);
     }
     u.uFlash.value *= 0.9;
-    r.setRenderTarget(null);
+    const warm = this.warm;
+    this.warm = false;
+    r.setRenderTarget(this.fxaa ? this.ldrRT : null);
     this.quad.material = this.final;
     const finalGpu = perf.beginGpu(r.getContext(), 'final');
     this.quad.render(r);
     perf.endGpu(finalGpu);
+    if (this.fxaa) {
+      this.fxaaMat.uniforms.tDiffuse.value = this.ldrRT.texture;
+      r.setRenderTarget(null);
+      this.quad.material = this.fxaaMat;
+      const fxaaGpu = perf.beginGpu(r.getContext(), 'fxaa');
+      this.quad.render(r);
+      perf.endGpu(fxaaGpu);
+    } else if (warm) {
+      // (compiled on the first frame all the same, so switching FXAA on compiles nothing: drawn from
+      // the scene into the blur's target, which nothing reads before the blur draws it again)
+      this.fxaaMat.uniforms.tDiffuse.value = src.texture;
+      this.pass(this.fxaaMat, this.blurRT);
+      r.setRenderTarget(null);
+    }
   }
 
   private pass(m: THREE.Material, rt: THREE.WebGLRenderTarget) {
@@ -918,6 +1032,8 @@ export class PostFX {
     this.bloom.dispose();
     this.ao?.dispose();
     this.final.dispose();
+    this.fxaaMat.dispose();
+    this.ldrRT.dispose();
     this.quad.dispose();
   }
 }
