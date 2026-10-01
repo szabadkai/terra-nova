@@ -9,7 +9,7 @@ import { RTSCamera } from './camera';
 import { Sky } from './sky';
 import { fitShadow } from './shadowFit';
 import { TerrainRenderer } from './terrain';
-import { DetailUsers } from './terrainDetail';
+import { DetailUsers, detailContextLost } from './terrainDetail';
 import { WaterRenderer } from './water';
 import { AnimalsRenderer, FieldsRenderer, GrassRenderer, PilesRenderer, ProjectilesRenderer, StonesRenderer, TreesRenderer, VinesRenderer, buildGoodGeos } from './entities';
 import { SettlersRenderer } from './settlers';
@@ -21,7 +21,7 @@ import { Particles } from './particles';
 import { RAIN_FALL, Rain } from './rain';
 import { Seasons } from './seasons';
 import { PostFX } from './postfx';
-import { G, MAX_LIGHTS, cacheSharedUniforms, cutOrder, noteLights, patchMaterial, patchedDepthMaterial, uniformCache } from './shaderPatch';
+import { G, MAX_LIGHTS, cacheSharedUniforms, cutOrder, lampReach, lightGrid, noteLights, patchMaterial, patchedDepthMaterial, uniformCache } from './shaderPatch';
 import { buildingBuilder } from './buildingModels';
 import { getClipMaterial, getMaterial, setWindowGlow } from './materials';
 import { PlanarReflection, WaterCells, reflectionReach } from './reflection';
@@ -192,7 +192,8 @@ export class GameRenderer {
   private lowShadowSkip: THREE.Object3D[] = [];
   private lowShadowWas: boolean[] = [];
 
-  constructor(private canvas: HTMLCanvasElement, private game: Game, powerPreference: WebGLPowerPreference = 'default') {
+  /** `opts.grass`: the grass will be drawn (else its patches are laid out only when it is first turned on) */
+  constructor(private canvas: HTMLCanvasElement, private game: Game, powerPreference: WebGLPowerPreference = 'default', opts: { grass?: boolean } = {}) {
     // (the world draws into targets of its own: the canvas only takes the final full-screen pass, so it
     // needs neither depth nor stencil)
     const r = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference, depth: false, stencil: false });
@@ -255,7 +256,7 @@ export class GameRenderer {
     this.scene.add(this.fields.mesh);
     this.vines = new VinesRenderer(game);
     this.scene.add(this.vines.group);
-    this.grass = new GrassRenderer(game);
+    this.grass = new GrassRenderer(game, opts.grass !== false);
     this.scene.add(this.grass.mesh);
     this.settlers = new SettlersRenderer(game, goodGeos);
     this.scene.add(this.settlers.group);
@@ -459,6 +460,8 @@ export class GameRenderer {
     this.reflection.rt.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
+    // (the terrain's detail arrays outlive the context: the next one takes them whole)
+    detailContextLost();
   }
 
   setSound(fn: (name: string, x?: number, z?: number, vol?: number) => void) {
@@ -1226,11 +1229,14 @@ export class GameRenderer {
     const lights = G.uLights.value;
     let n = 0;
     if (night > 0.001) {
-      n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
-      n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night);
+      // (only lamps whose light reaches into the view take one of the shaders' MAX_LIGHTS places)
+      n = this.buildings.lightSources(lights, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night, lodView.frustum);
+      n = this.ships.lightSources(lights, n, this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10, night, lodView.frustum);
     }
     G.uLightCount.value = n;
     noteLights(n);
+    // (the grid that tells each lit pixel which of the lamps reach it; they all stand within this of the target)
+    if (night > 0.001) lightGrid(this.cam.target.x, this.cam.target.z, this.cam.viewSize * 1.5 + 10 + lampReach(2));
     void MAX_LIGHTS;
 
     this.orders.update(dt);
@@ -1283,7 +1289,11 @@ export class GameRenderer {
       if (reflOn && !this.reflectionCull) this.reflRect.set(0, 0, 1, 1);
     }
     if (reflOn) {
-      if (this.reflStale || this.frameNo % this.reflEvery === 0) {
+      // a view that has come to rest keeps its reflection three times as long (twice in quiet mode,
+      // which already keeps it four frames), unless a ship is in view: only the wind in the trees and
+      // the flags would change it, under ripples that hide the step
+      const reflEvery = !perfBaseline && this.cam.settled && !this.ships.anyIn(lodView.frustum) ? this.reflEvery * (this.settings.quiet ? 2 : 3) : this.reflEvery;
+      if (this.reflStale || this.frameNo % reflEvery === 0) {
         const reflectionT = perf.begin();
         const reflectionGpu = perf.beginGpu(this.renderer.getContext(), 'reflection');
         const hide = this.reflHide;

@@ -86,7 +86,12 @@ const isPlain = (v: unknown): boolean => {
 };
 
 // ------------------------------------------------------------------ snapshot
-export function snapshot(g: Game, ui?: Record<string, unknown>): SaveData {
+/**
+ * The game as a save. `detach` (the default) deep-copies it, so it stays as it was while the game
+ * runs on; without it the save shares the game's own records and arrays, which is only right for a
+ * writer that copies it before the game moves again (IndexedDB's `put` does, as it is called).
+ */
+export function snapshot(g: Game, ui?: Record<string, unknown>, detach = true): SaveData {
   const w = g.world;
   const arrays: Record<string, TypedArray> = {};
   for (const [k, v] of Object.entries(w)) {
@@ -126,7 +131,7 @@ export function snapshot(g: Game, ui?: Record<string, unknown>): SaveData {
     ui,
   };
   // one deep copy detaches the snapshot from the live game
-  return structuredClone(data);
+  return detach ? structuredClone(data) : data;
 }
 
 export function describe(g: Game): SaveMeta {

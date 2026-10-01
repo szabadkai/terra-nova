@@ -21,9 +21,9 @@ import { afloat, canBombard } from './game/naval';
 import type { Settler } from './game/types';
 import { G } from './render/shaderPatch';
 import { lodReady } from './render/lod';
-import { IDLE_AFTER, framePace } from './render/framePace';
+import { IDLE_AFTER, framePace, type Rest } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
-import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, timeAgo, warmUp } from './ui/saveStore';
+import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, timeAgo, warmUp, writesNow } from './ui/saveStore';
 import { columnOf, missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
 import { markDone, progress, saveProgress } from './ui/campaignStore';
 import { beginProvince, dispatchesSeen, markDispatchesSeen, province, provinceLost, provinceWon, regionOfMission } from './ui/provinceStore';
@@ -103,8 +103,12 @@ function wantsResume() {
   try { return localStorage.getItem(RESUME_KEY) === '1'; } catch { return false; }
 }
 
-/** The running game as a save, with the view and chronicle so it looks the same when loaded. */
-function capture(): { data: SaveData; meta: SaveMeta } {
+/**
+ * The running game as a save, with the view and chronicle so it looks the same when loaded. Kept
+ * attached to the live game when it goes straight to the database (which copies it as it is handed
+ * over): one copy of the whole game instead of two, on the frame that saves.
+ */
+function capture(detach = !writesNow()): { data: SaveData; meta: SaveMeta } {
   const ui = {
     cam: { x: gr.cam.target.x, z: gr.cam.target.z, dist: gr.cam.dist, yaw: gr.cam.yaw, tilt: gr.cam.tilt },
     tod: gr.sky.timeOfDay,
@@ -117,7 +121,7 @@ function capture(): { data: SaveData; meta: SaveMeta } {
   };
   const meta = describe(game);
   meta.thumb = thumbnail();
-  return { data: snapshot(game, ui), meta };
+  return { data: snapshot(game, ui, detach), meta };
 }
 
 /** The explored part of the minimap, squared up, as a small picture for the save list. */
@@ -178,7 +182,8 @@ async function loadGame(data: SaveData) {
 }
 
 async function exportSave() {
-  const { data } = capture();
+  // (the file is packed over several tasks while the game runs on)
+  const { data } = capture(true);
   const bytes = await encodeSave(data);
   const a = document.createElement('a');
   const mins = Math.floor(game.time / 60);
@@ -293,7 +298,8 @@ async function shapeWorld(from: SaveData | undefined, loading: HTMLElement | nul
     // Quiet asks the browser not to wake a discrete/high-power adapter. Ultra keeps the explicit
     // high-performance request; other modes let the browser choose.
     const power: WebGLPowerPreference = params.has('perfBaseline') ? 'high-performance' : prefs.render.quiet ? 'low-power' : prefs.render.quality === 'ultra' ? 'high-performance' : 'default';
-    gr = new GameRenderer(canvas, game, power);
+    // (Low draws no grass: its patches are not laid out unless it is turned on)
+    gr = new GameRenderer(canvas, game, power, { grass: prefs.render.grass && prefs.render.quality !== 'low' });
   } catch (e) {
     loading?.remove();
     throw e;
@@ -663,6 +669,7 @@ function markMissionDone() {
 
 // ---------------------------------------------------------------- playing with a friend
 function leaveRoom() {
+  stopPumper();
   room?.leave();
   room = null;
   net = null;
@@ -784,6 +791,8 @@ async function startNetGame(s: StartMsg) {
   const mine = s.seats.find((x) => x.peer === r.me);
   if (!mine) { lobby?.status('There is no seat for you in this game', true); return; }
   net = { seats: s.seats, local: mine.slot, delay: s.delay };
+  // (before the world is built: the tab may already be hidden by the time the game starts)
+  startPumper();
   Object.assign(opts, { seed: s.opts.seed, size: s.opts.size, players: s.opts.players, ai: s.opts.aiLevel });
   islands = s.opts.islands !== false;
   lobby?.remove();
@@ -1304,20 +1313,31 @@ for (const t of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']
 
 /**
  * How much of a rest the frames get now (framePace.rest): none at all while the window is not in
- * front, about 30 a second on the title screen, in the Esc menu and (in quiet mode) once the player
- * has touched nothing for IDLE_AFTER and the view has come to rest; otherwise the cap alone.
+ * front; about 10 a second for a game alone under the Esc menu (its veil hides all but the graphics
+ * page, which shows its settings live); about 30 on the title screen, in the menu otherwise, and once
+ * the player has touched nothing for IDLE_AFTER and the view has come to rest in a paused game, in
+ * the editor, or in quiet mode; otherwise the cap alone.
  */
-function restNow(now: number) {
+function restNow(now: number): Rest {
   if (!focused) return 'stop';
-  if (state === 'menu' || (state === 'play' && gameMenu)) return 'slow';
-  if (state === 'play' && gr?.settings.quiet && now - inputAt > IDLE_AFTER && gr.cam.settled) return 'slow';
+  if (state === 'menu') return 'slow';
+  if (state === 'play' && gameMenu) return driver?.solo && gameMenu.current !== 'graphics' ? 'idle' : 'slow';
+  const still = now - inputAt > IDLE_AFTER && !!gr?.cam.settled;
+  if (state === 'play' && still && (driver?.speed === 0 || gr.settings.quiet)) return 'slow';
+  if (state === 'edit' && still && !editor?.painting) return 'slow';
   return null;
 }
 
 let last = performance.now();
+/** the interface is told when the frames rest, so its own endless animations rest with them (style.css) */
+let restingShown = false;
 function loop() {
   const now = performance.now();
   framePace.rest = restNow(now);
+  if (framePace.resting !== restingShown) {
+    restingShown = framePace.resting;
+    uiRoot.classList.toggle('resting', restingShown);
+  }
   // under a frame cap most display frames are let by; the time they took goes into the next one
   if (!framePace.due(now)) {
     // (a game in a window that is not in front goes on unseen, as it does in a hidden tab with a friend)
@@ -1371,16 +1391,26 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('pagehide', () => autosave(true));
 
 // a hidden tab gets no animation frames; in a networked game a worker's timer steps it instead, so the
-// others never wait on someone who looked away (the page's own timers are throttled in a hidden tab)
-try {
-  const pumper = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 50)'], { type: 'text/javascript' })));
-  pumper.onmessage = () => {
-    if (!document.hidden || state !== 'play' || !driver || driver.solo) return;
-    driver.pump(performance.now());
-    gr.handleEvents(game.events.splice(0));
-  };
-} catch (e) {
-  console.warn('No worker for hidden tabs:', e);
+// others never wait on someone who looked away (the page's own timers are throttled in a hidden tab).
+// It runs only from the start of a game with a friend until the room is left: alone, its twenty
+// wakeups a second would be for nothing.
+let pumper: Worker | null = null;
+function startPumper() {
+  if (pumper) return;
+  try {
+    pumper = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 50)'], { type: 'text/javascript' })));
+    pumper.onmessage = () => {
+      if (!document.hidden || state !== 'play' || !driver || driver.solo) return;
+      driver.pump(performance.now());
+      gr.handleEvents(game.events.splice(0));
+    };
+  } catch (e) {
+    console.warn('No worker for hidden tabs:', e);
+  }
+}
+function stopPumper() {
+  pumper?.terminate();
+  pumper = null;
 }
 
 // debug helper: advance the game manually (used when the tab is not animating)

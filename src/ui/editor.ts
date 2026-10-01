@@ -491,6 +491,9 @@ export class MapEditor {
     this.checkT = 0.4;
   }
 
+  /** a tool is held down (a stroke goes on even while the pointer stands still) */
+  get painting() { return !!this.stroke; }
+
   /** Once a frame from the main loop: a held tool works on, the brush ring follows the pointer. */
   update(dt: number) {
     if (!this.gr) return;

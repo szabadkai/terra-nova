@@ -409,17 +409,23 @@ const ROCK_MAP = /* glsl */ `
     float rc = 1.0, rr = 0.5;
     sDetG = vec3(0.0);
 #else
-    // close-up detail: the mountain's rock layer, a little denser to suit boulders
-    vec3 q = vWPos * 0.45;
-    vec4 ax = texture(tDetail, vec3(q.zy, 4.0)), ay = texture(tDetail, vec3(q.xz, 4.0)), az = texture(tDetail, vec3(q.xy, 4.0));
-    vec4 mx = texture(tDetailN, vec3(q.zy, 4.0)), my = texture(tDetailN, vec3(q.xz, 4.0)), mz = texture(tDetailN, vec3(q.xy, 4.0));
-    vec4 ra = ax * tw.x + ay * tw.y + az * tw.z;
-    float rc = mx.b * tw.x + my.b * tw.y + mz.b * tw.z;
-    float rr = mx.a * tw.x + my.a * tw.y + mz.a * tw.z;
-    sDetG = (vec3(0.0, mx.g, mx.r) * 2.0 - vec3(0.0, 1.0, 1.0)) * tw.x
-          + (vec3(my.r, 0.0, my.g) * 2.0 - vec3(1.0, 0.0, 1.0)) * tw.y
-          + (vec3(mz.r, mz.g, 0.0) * 2.0 - vec3(1.0, 1.0, 0.0)) * tw.z;
-    sDetG *= 1.05 * detK;
+    // close-up detail: the mountain's rock layer, a little denser to suit boulders (not looked up
+    // past the distance where detK is 0: there every use of it below fades it out to nothing)
+    vec4 ra = vec4(0.4, 0.4, 0.4, 0.5);
+    float rc = 1.0, rr = 0.5;
+    sDetG = vec3(0.0);
+    if (detK > 0.0) {
+      vec3 q = vWPos * 0.45;
+      vec4 ax = texture(tDetail, vec3(q.zy, 4.0)), ay = texture(tDetail, vec3(q.xz, 4.0)), az = texture(tDetail, vec3(q.xy, 4.0));
+      vec4 mx = texture(tDetailN, vec3(q.zy, 4.0)), my = texture(tDetailN, vec3(q.xz, 4.0)), mz = texture(tDetailN, vec3(q.xy, 4.0));
+      ra = ax * tw.x + ay * tw.y + az * tw.z;
+      rc = mx.b * tw.x + my.b * tw.y + mz.b * tw.z;
+      rr = mx.a * tw.x + my.a * tw.y + mz.a * tw.z;
+      sDetG = (vec3(0.0, mx.g, mx.r) * 2.0 - vec3(0.0, 1.0, 1.0)) * tw.x
+            + (vec3(my.r, 0.0, my.g) * 2.0 - vec3(1.0, 0.0, 1.0)) * tw.y
+            + (vec3(mz.r, mz.g, 0.0) * 2.0 - vec3(1.0, 1.0, 0.0)) * tw.z;
+      sDetG *= 1.05 * detK;
+    }
 #endif
     // patchy moss and lichen on the tops
     float mossN = r2.g * 0.45 + r3.r * 0.15 + r4.r * 0.2 + mix(0.5, ra.a, detK) * 0.3 + (vRockR - 0.5) * 0.25;
@@ -599,8 +605,11 @@ export class GrassRenderer {
   private chunks: { mesh: THREE.InstancedMesh | null; sig: number }[] = [];
   /** patches whose ground changed and wait for their tufts */
   private queue: number[] = [];
+  /** the patches have been laid out once (only when grass is first on: Low never draws it) */
+  private built = false;
 
-  constructor(private game: Game) {
+  /** `now`: lay every patch out at once (the grass will show); otherwise on the first frame it is on */
+  constructor(private game: Game, now = true) {
     this.mat = vcMat({ roughness: 0.95 }, 'grass', 0.5, {
       key: 'tuft', snow: 1, ao: 0,
       // trodden down where people walk (trails.ts): shorter and splayed beside a path, flat on it and
@@ -631,6 +640,11 @@ export class GrassRenderer {
     this.cols = Math.ceil(w.W / GRASS_CHUNK);
     const rows = Math.ceil(w.H / GRASS_CHUNK);
     for (let c = 0; c < this.cols * rows; c++) this.chunks.push({ mesh: null, sig: NaN });
+    if (now) this.buildAll();
+  }
+
+  private buildAll() {
+    this.built = true;
     this.scan();
     while (this.queue.length) this.build(this.queue.pop()!);
   }
@@ -705,6 +719,7 @@ export class GrassRenderer {
   update(dt: number) {
     this.mesh.visible = this.enabled;
     if (!this.enabled) return;
+    if (!this.built) this.buildAll();
     this.t -= dt;
     if (this.t <= 0) {
       this.t = 6;

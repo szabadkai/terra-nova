@@ -703,13 +703,17 @@ export class PostFX {
   /** the first frame (behind the loading screen) runs the bloom and half-size passes both ways, compiling them */
   private warm = true;
   /**
-   * The occlusion is worked out every other frame while the view stands still (the camera's matrices
-   * equal to those it was last worked out with): the ground and the buildings keep theirs, and a
-   * settler walking on is a pixel or two ahead of his for one frame. Off: every frame (for comparisons).
+   * The occlusion is worked out once every `aoHold` frames while the view stands still (the camera's
+   * matrices equal to those it was last worked out with): the ground and the buildings keep theirs,
+   * and a settler walking on is a few pixels ahead of his for up to aoHold - 1 frames. Off: every
+   * frame (for comparisons).
    */
   aoHalfRate = true;
+  /** frames one working-out of the occlusion serves while the view stands still (2: every other frame) */
+  aoHold = 4;
   private aoView = new THREE.Matrix4();
-  private aoHeld = false;
+  /** frames the last working-out has been reused for */
+  private aoHeld = 0;
   private aoValid = false;
 
   constructor(private renderer: THREE.WebGLRenderer, private scene: THREE.Scene, private camera: THREE.PerspectiveCamera, w: number, h: number, samples = 4) {
@@ -808,14 +812,14 @@ export class PostFX {
     if (!ao) this.aoValid = false;
     if (ao) {
       const view = _view.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
-      if (this.aoHalfRate && this.aoValid && !this.aoHeld && view.equals(this.aoView)) this.aoHeld = true;
+      if (this.aoHalfRate && this.aoValid && this.aoHeld < this.aoHold - 1 && view.equals(this.aoView)) this.aoHeld++;
       else {
         const aoGpu = perf.beginGpu(r.getContext(), 'ao');
         ao.render(r, this.sceneRT.depthTexture!, this.camera);
         perf.endGpu(aoGpu);
         this.aoView.copy(view);
         this.aoValid = true;
-        this.aoHeld = false;
+        this.aoHeld = 0;
       }
       u.tDepth.value = this.sceneRT.depthTexture;
       u.tAO.value = ao.outRT.texture;
@@ -838,8 +842,9 @@ export class PostFX {
     // (no pixel blurs past HALF_FROM while warming up, so the half-size blur is still not seen then)
     const blurred = rMax > HALF_FROM || this.warm;
     let half: THREE.Texture | null = null;
-    // (with the occlusion the bloom always takes its bright parts from the copy, which has it)
-    if (blurred || ao) {
+    // (with the occlusion the bloom always takes its bright parts from the copy, which has it; with
+    // neither the blur nor the bloom on, nothing reads the copy)
+    if (blurred || (ao && this.settings.bloom)) {
       this.halfMat.uniforms.tScene.value = src.texture;
       this.pass(this.halfMat, this.halfRT);
       half = this.halfRT.texture;

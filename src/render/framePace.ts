@@ -2,17 +2,22 @@
 // measured from requestAnimationFrame, a frame cap that renders every Nth display frame so the frames
 // that are shown arrive evenly, and the automatic resolution that takes the world's render scale
 // down a step while frames keep missing their display frame and brings it back once they don't.
-// A `rest` on top of the cap holds the frame rate down when nothing needs it: the title screen and
-// an idle player get about 30 frames a second, a window that is not in front none at all.
+// A `rest` on top of the cap holds the frame rate down when nothing needs it: the title screen, a
+// paused game and an idle player get about 30 frames a second, a world under the Esc menu's veil about
+// 10, a window that is not in front none at all.
 // One instance (`framePace`) is shared by the main loop, the renderer, the menu and the counter.
 
 /** off, half or a third of the display's rate, or about 60 / 30 frames a second */
 export type FrameCap = 'off' | 'half' | 'third' | '60' | '30';
 
-/** No rest, about REST_FPS frames a second (the title screen, a player who has touched nothing for a while), or no frames at all (the window is not in front) */
-export type Rest = null | 'slow' | 'stop';
+/** No rest, about REST_FPS frames a second (the title screen, a paused game, a player who has touched
+ * nothing for a while), about IDLE_FPS (a world under the Esc menu), or no frames at all (the window is not in front) */
+export type Rest = null | 'slow' | 'idle' | 'stop';
 /** frames a second a slow rest gives (as near as the display's rate divides) */
 export const REST_FPS = 30;
+/** ...and an idle one: the world only shows through the menu's veil, where water and flags at a few
+ * frames a second go unnoticed */
+export const IDLE_FPS = 10;
 /** ms without any input before an idle player's frames slow down */
 export const IDLE_AFTER = 3000;
 
@@ -93,9 +98,10 @@ export class FramePace {
     return this.steps[this.level];
   }
 
-  /** how many display frames each rendered frame is given under the cap (and a slow rest) */
+  /** how many display frames each rendered frame is given under the cap (and a slow or idle rest) */
   every(period = this.period) {
-    return Math.max(this.capEvery(period), this.rest === 'slow' ? Math.max(1, Math.round(1000 / period / REST_FPS)) : 1);
+    const fps = this.rest === 'slow' ? REST_FPS : this.rest === 'idle' ? IDLE_FPS : 0;
+    return Math.max(this.capEvery(period), fps ? Math.max(1, Math.round(1000 / period / fps)) : 1);
   }
 
   private capEvery(period: number) {
@@ -110,7 +116,7 @@ export class FramePace {
 
   /** a rest is holding frames back below what the cap alone would give */
   get resting() {
-    return this.rest === 'stop' || (this.rest === 'slow' && this.every() > this.capEvery(this.period));
+    return this.rest === 'stop' || (this.rest !== null && this.every() > this.capEvery(this.period));
   }
 
   /** the frame rate frames that are on time give under the cap, at most 60 (for the low frame rate message) */

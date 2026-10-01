@@ -8,7 +8,7 @@ import { buildingBuilder } from './buildingModels';
 import type { Anchors } from './geom';
 import { getClipMaterial, getMaterial } from './materials';
 import type { PilesRenderer } from './entities';
-import { patchedDepthMaterial } from './shaderPatch';
+import { lampReach, patchedDepthMaterial } from './shaderPatch';
 import { Seaworks, buildSeaworks, showHullProgress } from './seaworks';
 import { lanternLit, lanternSpot } from './lanterns';
 import { hash2 } from '../core/rng';
@@ -431,11 +431,16 @@ export class BuildingsRenderer {
   }
   private wv: WorkView = { y: 0, anchors: null!, movers: [], visible: false };
 
-  /** World-space anchor positions of lit windows / fires for night lights. */
-  lightSources(out: THREE.Vector4[], camX: number, camZ: number, maxDist: number, night: number): number {
-    const cands: { d: number; x: number; y: number; z: number; w: number }[] = [];
+  /**
+   * World-space anchor positions of lit windows / fires for night lights, nearest the view's target
+   * first. With `view`, a lamp whose light cannot reach anything inside it is left out, so it takes
+   * none of the shader's few slots and none of every lit pixel's time.
+   */
+  lightSources(out: THREE.Vector4[], camX: number, camZ: number, maxDist: number, night: number, view: THREE.Frustum | null = null): number {
     const g = this.game;
-    const spot = new THREE.Vector3();
+    const spot = this.lampSpot;
+    this.lampView = view;
+    this.nLamps = 0;
     for (const v of this.views.values()) {
       const b = g.buildings.get(v.id);
       if (!b || b.state !== 'done' || !v.group.visible) continue;
@@ -444,20 +449,21 @@ export class BuildingsRenderer {
       if (d > maxDist) continue;
       const inhabited = b.worker || b.def.military || b.def.residence || b.def.storage;
       if (!inhabited && !b.working) continue;
-      for (const a of v.anchors.fires) cands.push({ d, x: b.cx + a.x, y: v.group.position.y + a.y, z: b.cz + a.z, w: b.working ? 1.6 : 0.8 });
+      for (const a of v.anchors.fires) this.lamp(d, b.cx + a.x, v.group.position.y + a.y, b.cz + a.z, b.working ? 1.6 : 0.8);
       const wins = v.anchors.windows;
       if (night > 0.05 && lanternLit(b) && lanternSpot(g, b, spot)) {
         // the door lantern lights the path, the facade and its windows
-        cands.push({ d, x: spot.x, y: spot.y, z: spot.z, w: 1.25 });
+        this.lamp(d, spot.x, spot.y, spot.z, 1.25);
       } else if (wins.length && night > 0.05) {
         // one light per building for windows (at the front)
         let sx = 0, sy = 0, sz = 0;
         for (const a of wins) { sx += a.x; sy += a.y; sz += a.z; }
         sx /= wins.length; sy /= wins.length; sz /= wins.length;
-        cands.push({ d, x: b.cx + sx, y: v.group.position.y + sy, z: b.cz + sz + 0.4, w: 0.9 + Math.min(0.8, wins.length * 0.1) });
+        this.lamp(d, b.cx + sx, v.group.position.y + sy, b.cz + sz + 0.4, 0.9 + Math.min(0.8, wins.length * 0.1));
       }
-      if (b.state === 'done' && b.def.military) {
-        for (const a of v.anchors.flags.slice(0, 1)) cands.push({ d, x: b.cx + a.x, y: v.group.position.y + a.y - 0.4, z: b.cz + a.z + 0.3, w: 1.2 });
+      if (b.state === 'done' && b.def.military && v.anchors.flags.length) {
+        const a = v.anchors.flags[0];
+        this.lamp(d, b.cx + a.x, v.group.position.y + a.y - 0.4, b.cz + a.z + 0.3, 1.2);
       }
     }
     for (const b of g.buildings.values()) {
@@ -466,11 +472,33 @@ export class BuildingsRenderer {
       const p = burnPose(b.burnT, collapseAt(b.id));
       const h = this.views.get(b.id)?.height ?? 1.5;
       const flick = 0.85 + 0.15 * Math.sin(b.burnT * 23 + b.id);
-      cands.push({ d: 0, x: b.cx, y: b.targetH + 0.6 + h * 0.4 * (1 - p.drop), z: b.cz, w: (1 + 4.5 * p.fire) * flick });
+      this.lamp(0, b.cx, b.targetH + 0.6 + h * 0.4 * (1 - p.drop), b.cz, (1 + 4.5 * p.fire) * flick);
     }
-    cands.sort((a, b) => a.d - b.d);
-    const n = Math.min(out.length, cands.length);
-    for (let i = 0; i < n; i++) out[i].set(cands[i].x, cands[i].y, cands[i].z, cands[i].w);
+    const sorted = this.lampOrder;
+    sorted.length = 0;
+    for (let i = 0; i < this.nLamps; i++) sorted.push(this.lamps[i]);
+    sorted.sort((a, b) => a.d - b.d);
+    const n = Math.min(out.length, sorted.length);
+    for (let i = 0; i < n; i++) out[i].set(sorted[i].x, sorted[i].y, sorted[i].z, sorted[i].w);
     return n;
   }
+  /** the night lights' candidates this frame (reused records: lamps[0 .. nLamps)) and their order */
+  private lamps: Lamp[] = [];
+  private nLamps = 0;
+  private lampOrder: Lamp[] = [];
+  private lampView: THREE.Frustum | null = null;
+  private lampSpot = new THREE.Vector3();
+  private lamp(d: number, x: number, y: number, z: number, w: number) {
+    if (this.lampView) {
+      lampSphere.center.set(x, y, z);
+      lampSphere.radius = lampReach(w);
+      if (!this.lampView.intersectsSphere(lampSphere)) return;
+    }
+    const l = this.lamps[this.nLamps] ?? (this.lamps[this.nLamps] = { d: 0, x: 0, y: 0, z: 0, w: 0 });
+    l.d = d; l.x = x; l.y = y; l.z = z; l.w = w;
+    this.nLamps++;
+  }
 }
+
+interface Lamp { d: number; x: number; y: number; z: number; w: number }
+const lampSphere = new THREE.Sphere();

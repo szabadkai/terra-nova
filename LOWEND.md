@@ -43,7 +43,7 @@ High is unchanged (−3% at the play zoom, from the sky). Per-frame JavaScript i
 - R11G11B10F instead of RGBA16F: no difference.
 - Removing chromatic aberration, grain and sharpening from the final pass: no difference on the M5.
 
-**Left:**
+**Left** (the research of 2026-10-01 in `PERFPLAN.md` supersedes the GL-call items here: the families are done, and settlers as one batched mesh would be dearer, not cheaper):
 
 - **Confirm on a real Intel UHD 6xx / Iris Xe laptop:**
   - the ground-last early-Z gain;

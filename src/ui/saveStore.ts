@@ -99,6 +99,8 @@ export function putSave(id: string, name: string, meta: SaveMeta, data: SaveData
   return open ? write(open) : db().then((d) => { openDb = d; return write(d); });
 }
 let openDb: IDBDatabase | null = null;
+/** A save handed to putSave now is copied before it returns (the database is open): it need not be detached first. */
+export const writesNow = () => openDb !== null;
 
 export async function deleteSave(id: string): Promise<void> {
   const d = await db();

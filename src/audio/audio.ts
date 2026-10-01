@@ -116,6 +116,7 @@ export class Audio {
     this.ctx = ctx;
     this.master = ctx.createGain();
     this.master.gain.value = this.volume;
+    if (this.volume <= 0) this.sleepIfMuted();
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14;
     comp.ratio.value = 4;
@@ -305,6 +306,7 @@ export class Audio {
       if (this.voiceEl !== el) return;
       this.voiceEl = null;
       this.speaking = false;
+      if (this.volume <= 0) this.sleepIfMuted();
       this.ramp(this.musicGain, this.musicLevel());
       this.ramp(this.amb, this.ambLevel());
       src.disconnect();
@@ -356,6 +358,22 @@ export class Audio {
   setVolume(v: number) {
     this.volume = v;
     this.ramp(this.master, v);
+    if (v <= 0) this.sleepIfMuted();
+    else if (this.ctx?.state === 'suspended') void this.ctx.resume();
+  }
+  /**
+   * With the sound off the context is suspended once its fade is over, so its audio thread stops
+   * waking a hundred times a second for silence; turning the sound on (or a line of narration)
+   * wakes it again.
+   */
+  private muteT: ReturnType<typeof setTimeout> | null = null;
+  private sleepIfMuted() {
+    if (this.muteT) clearTimeout(this.muteT);
+    this.muteT = setTimeout(() => {
+      this.muteT = null;
+      const ctx = this.ctx;
+      if (ctx && ctx.state === 'running' && this.volume <= 0 && !this.voiceEl) void ctx.suspend();
+    }, 400);
   }
   setMusic(on: boolean) {
     this.musicOn = on;
@@ -373,7 +391,8 @@ export class Audio {
       if (this.musicOn && el?.src && !el.ended && (this.trackBlocked || el.paused)) this.playTrack();
     };
     const ctx = this.ctx;
-    if (ctx && ctx.state !== 'running') {
+    // (a context the sound being off put to sleep stays asleep)
+    if (ctx && ctx.state !== 'running' && this.volume > 0) {
       // WebKit also exposes an `interrupted` state on iOS. The broad check catches that without
       // relying on its non-standard type. Retry now to spend the gesture on the media element, and
       // again after resume because WebKit can resolve it a tick later.
@@ -753,6 +772,8 @@ export class Audio {
   }
 
   // ------------------------------------------------------------ ambience & music
+  private windSet = -1;
+  private rainSet = -1;
   private gullT = 4;
   private surfT = 2;
   private scale = [146.8, 164.8, 174.6, 196, 220, 246.9, 261.6, 293.7, 329.6, 349.2, 392, 440];
@@ -761,8 +782,10 @@ export class Audio {
 
   update(dt: number, night: number, rain: number, nearWater: number) {
     if (!this.ctx || this.ctx.state !== 'running') return;
-    this.windGain.gain.value = 0.08 + rain * 0.1;
-    this.rainGain.gain.value = rain * 0.18;
+    // (each write is a message to the audio thread: only when the weather has changed)
+    const wind = 0.08 + rain * 0.1, wet = rain * 0.18;
+    if (wind !== this.windSet) { this.windSet = wind; this.windGain.gain.value = wind; }
+    if (wet !== this.rainSet) { this.rainSet = wet; this.rainGain.gain.value = wet; }
     const t = this.ctx.currentTime;
     // birds by day
     this.birdT -= dt;

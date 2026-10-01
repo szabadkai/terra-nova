@@ -10,7 +10,7 @@ import { WATER_LEVEL } from '../game/world';
 import { DECK_H, SHIP_SCALE, cargoCount, shipDeckY } from '../game/sea';
 import { SINK_TIME } from '../game/naval';
 import { BANNER_COLORS, getMaterial, PENNANT } from './materials';
-import { patchMaterial } from './shaderPatch';
+import { lampReach, patchMaterial } from './shaderPatch';
 import { HULL_L, Sail, sailTexture, shipParts } from './shipModels';
 import { WAR_L, WarshipParts, warSailTexture, warshipParts } from './warshipModels';
 import type { PilesRenderer } from './entities';
@@ -47,6 +47,8 @@ export const MAX_WAKES = 8;
 const ARM_COCKED = -1.35, ARM_THROWN = 0.62;
 
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(0, 0, 0, 'YZX'), tmpV = new THREE.Vector3(), ONE = new THREE.Vector3(1, 1, 1);
+const lanternSphere = new THREE.Sphere();
+const shipSphere = new THREE.Sphere(new THREE.Vector3(), WAR_L * SHIP_SCALE * 0.6 + 1.5);
 const CIVIL_FIRE_SPOTS = [new THREE.Vector3(0.05, 0.3, -0.2), new THREE.Vector3(-0.08, 0.3, 0.45)];
 
 export class ShipsRenderer {
@@ -328,7 +330,20 @@ export class ShipsRenderer {
   }
 
   /** Stern lanterns light the water at night. */
-  lightSources(out: THREE.Vector4[], start: number, camX: number, camZ: number, maxDist: number, night: number) {
+  /** Some ship's hull or rig lies inside `view` (its reflection would show it moving). */
+  anyIn(view: THREE.Frustum): boolean {
+    for (const v of this.views.values()) {
+      if (!v.group.visible) continue;
+      // (a sphere round the hull, the masts and the sails, as long as the longest ship)
+      shipSphere.center.copy(v.group.position);
+      shipSphere.center.y += 1;
+      if (view.intersectsSphere(shipSphere)) return true;
+    }
+    return false;
+  }
+
+  /** The ships' lanterns after `start` in `out`; with `view`, only those whose light can reach something in it (see BuildingsRenderer.lightSources). */
+  lightSources(out: THREE.Vector4[], start: number, camX: number, camZ: number, maxDist: number, night: number, view: THREE.Frustum | null = null) {
     if (night < 0.05) return start;
     let n = start;
     for (const v of this.views.values()) {
@@ -338,7 +353,13 @@ export class ShipsRenderer {
       if (!sh || sh.state === 'sinking' || Math.hypot(sh.x - camX, sh.z - camZ) > maxDist) continue;
       const t = v.war ? v.war.parts.lantern : shipParts(0).lantern;
       const c = Math.cos(sh.heading), s = Math.sin(sh.heading);
-      out[n++].set(sh.x + t.z * SHIP_SCALE * s, v.group.position.y + t.y * SHIP_SCALE, sh.z + t.z * SHIP_SCALE * c, 0.9);
+      const x = sh.x + t.z * SHIP_SCALE * s, y = v.group.position.y + t.y * SHIP_SCALE, z = sh.z + t.z * SHIP_SCALE * c;
+      if (view) {
+        lanternSphere.center.set(x, y, z);
+        lanternSphere.radius = lampReach(0.9);
+        if (!view.intersectsSphere(lanternSphere)) continue;
+      }
+      out[n++].set(x, y, z, 0.9);
     }
     return n;
   }

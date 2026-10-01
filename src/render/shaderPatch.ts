@@ -4,6 +4,19 @@ import * as THREE from 'three';
 import { getNoiseTexture } from './textures';
 
 export const MAX_LIGHTS = 32;
+/** How far a night light of strength w reaches (nightLights below): past it its light is exactly nothing. */
+export const lampReach = (w: number) => 3.2 + w * 1.6;
+/** Cells across the lamps' grid (lightGrid below). */
+export const LIGHT_GRID = 64;
+
+/** A texel a cell: one bit for each of the MAX_LIGHTS lamps, set for those whose light reaches into it. */
+function lightGridTexture() {
+  const t = new THREE.DataTexture(new Uint8Array(LIGHT_GRID * LIGHT_GRID * 4), LIGHT_GRID, LIGHT_GRID, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+}
 
 export const G = {
   uTime: { value: 0 },
@@ -15,6 +28,10 @@ export const G = {
   uLights: { value: Array.from({ length: MAX_LIGHTS }, () => new THREE.Vector4(0, -100, 0, 0)) },
   uLightCount: { value: 0 },
   uLightColor: { value: new THREE.Color(1.0, 0.55, 0.22) },
+  // which lamps light which part of the ground (lightGrid): xy the grid's corner (world x, z), z its
+  // cells per world unit, w its cells across
+  tLightGrid: { value: lightGridTexture() },
+  uLightGrid: { value: new THREE.Vector4(0, 0, 0, 0) },
   tFog: { value: null as THREE.Texture | null },
   uMapSize: { value: new THREE.Vector2(128, 128) },
   uFogOn: { value: 1 },
@@ -59,6 +76,48 @@ export function noteLights(count: number) {
   lightsSent[0] = count;
   for (let i = 0; i < count; i++) L[i].toArray(lightsSent, 1 + i * 4);
   lightsVersion++;
+}
+
+// The lamps' grid: a square of LIGHT_GRID cells round the view's target, each marking the lamps whose
+// light reaches into it, so a pixel works out only the few it can feel rather than every lamp of the
+// frame (2 ms of a 10 ms night frame at 3440x1440 for 32 lamps). The sum is the same to the bit: the
+// lamps left out add exactly nothing, and the rest are added in the same order. (A bit for every lamp,
+// not a short list: a dozen and more reach the cells in the middle of a town.)
+let gridVersion = -1;
+const gridKey = new Float64Array(3);
+
+/**
+ * Lay the frame's lamps (after noteLights) into the grid: a square round (cx, cz), at least `half`
+ * world units each way and as wide as every lamp's reach needs.
+ */
+export function lightGrid(cx: number, cz: number, half: number) {
+  if (gridVersion === lightsVersion && gridKey[0] === cx && gridKey[1] === cz && gridKey[2] === half) return;
+  gridVersion = lightsVersion;
+  gridKey[0] = cx; gridKey[1] = cz; gridKey[2] = half;
+  const tex = G.tLightGrid.value, data = tex.image.data as Uint8Array;
+  data.fill(0);
+  const n = lightsSent[0], N = LIGHT_GRID;
+  // (a burning building is a lamp wherever it stands: the grid widens to take it in)
+  for (let i = 0; i < n; i++) {
+    const o = 1 + i * 4, r = lampReach(lightsSent[o + 3]) + 1;
+    half = Math.max(half, Math.abs(lightsSent[o] - cx) + r, Math.abs(lightsSent[o + 2] - cz) + r);
+  }
+  const ox = cx - half, oz = cz - half, inv = N / (2 * half);
+  G.uLightGrid.value.set(ox, oz, inv, N);
+  for (let i = 0; i < n; i++) {
+    const o = 1 + i * 4, x = lightsSent[o], z = lightsSent[o + 2], r = lampReach(lightsSent[o + 3]);
+    const c0 = Math.max(0, Math.floor((x - r - ox) * inv)), c1 = Math.min(N - 1, Math.floor((x + r - ox) * inv));
+    const r0 = Math.max(0, Math.floor((z - r - oz) * inv)), r1 = Math.min(N - 1, Math.floor((z + r - oz) * inv));
+    for (let gz = r0; gz <= r1; gz++)
+      for (let gx = c0; gx <= c1; gx++) {
+        // (only cells the lamp's reach touches: the nearest point of the cell to the lamp is within it)
+        const nx = Math.max(ox + gx / inv, Math.min(x, ox + (gx + 1) / inv)) - x;
+        const nz = Math.max(oz + gz / inv, Math.min(z, oz + (gz + 1) / inv)) - z;
+        if (nx * nx + nz * nz > r * r) continue;
+        data[(gz * N + gx) * 4 + (i >> 3)] |= 1 << (i & 7);
+      }
+  }
+  tex.needsUpdate = true;
 }
 
 type UniformSetter = (gl: WebGL2RenderingContext, v: unknown, textures: unknown) => void;
@@ -145,8 +204,9 @@ uniform float uNight;
 uniform float uCloud;
 uniform vec2 uCloudSpeed;
 uniform vec4 uLights[${MAX_LIGHTS}];
-uniform int uLightCount;
 uniform vec3 uLightColor;
+uniform sampler2D tLightGrid;
+uniform vec4 uLightGrid;
 uniform sampler2D tFog;
 uniform sampler2D tNoise;
 uniform vec2 uMapSize;
@@ -175,16 +235,28 @@ float cloudShadow(vec3 wp) {
 }
 
 vec3 nightLights(vec3 wp) {
+  // the lamps that reach this part of the ground (lightGrid in shaderPatch.ts): a bit for each, taken
+  // in the lamps' own order (the same for every pixel of a cell, so the branches stay together)
+  vec2 g = (wp.xz - uLightGrid.xy) * uLightGrid.z;
+  if (g.x < 0.0 || g.y < 0.0 || g.x >= uLightGrid.w || g.y >= uLightGrid.w) return vec3(0.0);
+  uvec4 mask = uvec4(texelFetch(tLightGrid, ivec2(g), 0) * 255.0 + 0.5);
   vec3 acc = vec3(0.0);
-  for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-    if (i >= uLightCount) break;
-    vec4 L = uLights[i];
-    vec3 d = wp - L.xyz;
-    float dist2 = dot(d, d);
-    float r = 3.2 + L.w * 1.6;
-    float att = L.w / (1.0 + dist2 * 1.1);
-    att *= 1.0 - smoothstep(0.0, r * r, dist2);
-    acc += att;
+  for (int b = 0; b < ${MAX_LIGHTS / 8}; b++) {
+    uint bits = mask[b];
+    for (int j = 0; j < 8; j++) {
+      if (bits == 0u) break;
+      if ((bits & 1u) != 0u) {
+        vec4 L = uLights[b * 8 + j];
+        vec3 d = wp - L.xyz;
+        float dist2 = dot(d, d);
+        // (a lamp's reach, as lampReach() has it: past it the light is exactly nothing)
+        float r = 3.2 + L.w * 1.6;
+        float att = L.w / (1.0 + dist2 * 1.1);
+        att *= 1.0 - smoothstep(0.0, r * r, dist2);
+        acc += att;
+      }
+      bits >>= 1u;
+    }
   }
   return acc * uLightColor;
 }
@@ -319,7 +391,7 @@ export function patchMaterial<T extends THREE.Material>(mat: T, opts: PatchOpts 
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, {
       uTime: G.uTime, uNight: G.uNight, uCloud: G.uCloud, uCloudSpeed: G.uCloudSpeed, uWind: G.uWind,
-      uWindStrength: G.uWindStrength, uLights: G.uLights, uLightCount: G.uLightCount, uLightColor: G.uLightColor,
+      uWindStrength: G.uWindStrength, uLights: G.uLights, uLightColor: G.uLightColor, tLightGrid: G.tLightGrid, uLightGrid: G.uLightGrid,
       tFog: G.tFog, uMapSize: G.uMapSize, uFogOn: G.uFogOn, uShroudCut: G.uShroudCut, uWet: G.uWet, tNoise: G.tNoise, uSunDir: G.uSunDir,
       uSnow: G.uSnow, uSeasonA: G.uSeasonA, uSeasonB: G.uSeasonB, uFlash: G.uFlash, uFlashCol: G.uFlashCol, uClip, uWindAmp, tHeight: G.tHeight, uGrime: G.uGrime,
       ...(o.uniforms ?? {}),

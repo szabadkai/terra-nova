@@ -160,6 +160,8 @@ export class GameMenu {
   private descEl: HTMLElement;
   private body: HTMLElement;
   private page: Page;
+  /** the page open now (the graphics page shows its settings live on the world behind it) */
+  get current(): Page { return this.page; }
   private returnFocus: HTMLElement | null;
   private inerted: Element[] = [];
 

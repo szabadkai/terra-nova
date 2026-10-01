@@ -70,6 +70,18 @@ const tmp = new THREE.Vector3();
   else console.warn('shadowFit: three\'s shadow lookup has changed, its taps are left as they are');
 }
 
+// A pixel that faces away from the sun takes none of its direct light (RE_Direct scales it by the
+// clamped N.L of the same normal), so the five taps of the sun's shadow are not looked up there: the
+// sunless sides of walls, roofs and slopes. The picture is the same to the bit. (Every lit material
+// here is a MeshStandardMaterial without clearcoat or sheen, the only extras that light past N.L.)
+{
+  const line = 'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ],';
+  const src = THREE.ShaderChunk.lights_fragment_begin;
+  if (src.includes(line))
+    THREE.ShaderChunk.lights_fragment_begin = src.replace(line, 'directLight.color *= ( directLight.visible && receiveShadow && dot( geometryNormal, directLight.direction ) > 0.0 ) ? getShadow( directionalShadowMap[ i ],');
+  else console.warn('shadowFit: three\'s directional light code has changed, its shadow is looked up on every pixel');
+}
+
 /** How far from the target shadows are drawn, in view sizes (the square reached 0.75-1.06). */
 const REACH = 1.1;
 /** Texels of room around the footprint: the soft filter's radius and the normal offset. */

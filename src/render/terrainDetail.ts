@@ -6,6 +6,22 @@ export { DETAIL_SIZE, DETAIL } from './terrainDetailData';
 const S = DETAIL_SIZE, N = S * S, LAYERS = DETAIL_LAYERS;
 
 let cache: { albedo: THREE.DataArrayTexture; normal: THREE.DataArrayTexture } | null = null;
+/** the arrays whose whole data the current WebGL context has: later layers go up one at a time */
+const onGpu = new Set<THREE.Texture>();
+
+/**
+ * The WebGL context the arrays were uploaded to is gone (a new world's renderer): the next one must
+ * take them whole. Without this a world built while the worker still paints got only the layers
+ * painted since, and the rest of each array stayed empty on its GPU.
+ */
+export function detailContextLost() {
+  onGpu.clear();
+  if (!cache) return;
+  for (const t of [cache.albedo, cache.normal]) {
+    t.clearLayerUpdates();
+    t.needsUpdate = true;
+  }
+}
 
 function arrayTex(data: Uint8Array): THREE.DataArrayTexture {
   const t = new THREE.DataArrayTexture(data, S, S, LAYERS);
@@ -33,7 +49,6 @@ export function getTerrainDetail(immediate = false) {
   }
   const c = (cache = { albedo: arrayTex(alb), normal: arrayTex(nrm) });
   // Keep uploads limited to the new layer once the initial neutral arrays are on the GPU.
-  const onGpu = new Set<THREE.Texture>();
   for (const t of [c.albedo, c.normal]) t.onUpdate = () => onGpu.add(t);
   const accept = ({ layer, albedo, normal }: DetailLayer) => {
     alb.set(albedo, layer * N * 4);
