@@ -88,6 +88,8 @@ export function canPrioritise(b: Building): boolean {
 export class Game {
   world: World;
   path: PathFinder;
+  /** the path finder's expansions when this step began (SOLDIER_PATH_BUDGET in settlers.ts) */
+  pathMark = 0;
   /** who stands where, so idle settlers each find a spot of their own; rebuilt every step */
   spots: Spots;
   rng: RNG;
@@ -318,6 +320,7 @@ export class Game {
     this.stones.set(s.id, s);
     this.world.stone[node] = s.id;
     this.world.blocked[node] = 1;
+    this.world.walkVersion++;
     this.stonesVersion++;
     return s;
   }
@@ -326,6 +329,7 @@ export class Game {
     this.stones.delete(s.id);
     this.world.stone[s.node] = 0;
     if (!this.world.building[s.node]) this.world.blocked[s.node] = 0;
+    this.world.walkVersion++;
     this.stonesVersion++;
   }
   addField(node: number, owner: number, farm: number, kind: Field['kind'] = 'grain'): Field {
@@ -493,6 +497,7 @@ export class Game {
       b.levelTotal = 0;
       b.state = 'building';
       for (const i of fp) w.blocked[i] = 1;
+      w.walkVersion++;
       this.evictAnimals(new Set(fp), door);
     } else {
       this.computeLevelWork(b);
@@ -560,6 +565,7 @@ export class Game {
     }
     // soften door
     w.h[b.door] = w.h[b.door] * 0.3 + b.targetH * 0.7;
+    w.walkVersion++;
     // nobody may stand inside the now solid footprint
     const fpSet = new Set(fp);
     for (const s of this.settlers.values()) {
@@ -660,6 +666,7 @@ export class Game {
       if (w.building[i] === b.id) w.building[i] = 0;
       w.blocked[i] = w.stone[i] ? 1 : 0;
     }
+    w.walkVersion++;
     if (w.reserve[b.door] === b.id) w.reserve[b.door] = 0;
     this.buildings.delete(b.id);
     this.emit({ type: 'removed', b: b.id, x: b.cx, z: b.cz });
@@ -754,6 +761,7 @@ export class Game {
 
   step(dt: number) {
     this.time += dt;
+    this.pathMark = this.path.expansions;
     // trees growth
     this.updateNature(dt);
     // buildings

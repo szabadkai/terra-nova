@@ -172,6 +172,7 @@ export function restore(saved: SaveData): Game {
   }
   w.seaSize = d.world.seaSize;
   w.regionSize = d.world.regionSize;
+  w.walkVersion++;
   w.oreDirty = w.splatDirty = w.ownerDirty = w.exploredDirty = true;
   w.heightDirty = null;
 

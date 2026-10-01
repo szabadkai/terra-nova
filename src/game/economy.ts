@@ -805,7 +805,9 @@ export function diggerThink(g: Game, s: Settler, dt: number) {
       if (!g.buildings.has(b.id) || b.state !== 'leveling') return false;
       const diff = b.targetH - w.h[node];
       const stepH = Math.sign(diff) * Math.min(Math.abs(diff), 0.3);
+      const wet = w.isWater(node);
       w.h[node] += stepH;
+      if (w.isWater(node) !== wet) w.walkVersion++;
       // feather neighbours outside footprint slightly
       const x = w.nx(node), y = w.ny(node);
       w.markHeightDirty(x - 1, y - 1, x + 1, y + 1);

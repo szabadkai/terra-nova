@@ -14,7 +14,7 @@ export class World {
   terrain: Uint8Array; // dominant terrain material
   owner: Int8Array;
   building: Int32Array; // building id occupying (footprint), 0 none
-  blocked: Uint8Array; // 1 if impassable because of a building/stone
+  blocked: Uint8Array; // 1 if impassable because of a building/stone (a change bumps walkVersion)
   tree: Int32Array; // tree id at node
   stone: Int32Array; // stone id at node
   field: Int32Array; // field id at node
@@ -27,6 +27,9 @@ export class World {
   seen: Uint8Array; // bit p set once player p has explored the node (the game's own view, the same on every machine)
   region: Int32Array; // connected landmass id (1..), 0 on water
   sea: Int32Array; // connected navigable water body id (1..), 0 elsewhere
+  /** bumped whenever a node's walkability may have changed (blocked, or land into water): the path
+   * finder's reach labels are worked out afresh after it (not saved: a loaded game's are fresh) */
+  walkVersion = 0;
   seaSize: number[] = [0];
   regionSize: number[] = [0];
   shoreDist: Uint8Array; // water nodes: steps to the nearest land (capped)

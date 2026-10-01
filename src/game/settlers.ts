@@ -128,6 +128,14 @@ function atGoal(g: Game, s: Settler, act: { to: number; adj: boolean }) {
   return Math.abs(w.nx(s.node) - w.nx(act.to)) <= 1 && Math.abs(w.ny(s.node) - w.ny(act.to)) <= 1;
 }
 
+/**
+ * Nodes the path finder may have searched in one step before a soldier starts a new walk: an army
+ * ordered at once (all of them in one tick, each search ~1,000 nodes on a long march) then walks off
+ * over a few ticks instead of searching 50-70 paths in one (15-19 ms on a fast machine). A count, so
+ * every machine in a game with a friend holds back the same men.
+ */
+const SOLDIER_PATH_BUDGET = 12000;
+
 /** Runs the current action. Returns false if the plan failed. */
 function runAction(g: Game, s: Settler, dt: number): boolean {
   const act = s.actions[0];
@@ -136,6 +144,8 @@ function runAction(g: Game, s: Settler, dt: number): boolean {
     case 'walk': {
       if (!act.started) {
         if (s.next >= 0) return true; // finish current step first
+        // (the step has searched enough: he sets off on a later one)
+        if (isSoldier(s) && g.path.expansions - g.pathMark > SOLDIER_PATH_BUDGET) return true;
         act.started = true;
         if (atGoal(g, s, act)) {
           s.actions.shift();

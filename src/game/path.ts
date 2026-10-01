@@ -12,6 +12,16 @@ export class PathFinder {
   private gen = 1;
   private heap = new MinHeap(4096);
   expansions = 0;
+  /**
+   * Which walkable nodes reach one another: one label for each area of them joined side by side (a
+   * diagonal step needs both of its corners walkable, so the 8-way search keeps to these areas), 0
+   * where nothing can stand. A walk to a target in another area fails at once instead of flooding
+   * the whole of its own (a tree or a hare walled in by rocks). Worked out again on the first search
+   * after the world's walkVersion moves.
+   */
+  private reach: Int32Array;
+  private reachVersion = -1;
+  private reachStack: number[] = [];
 
   constructor(private world: World) {
     const N = world.N;
@@ -19,6 +29,30 @@ export class PathFinder {
     this.from = new Int32Array(N);
     this.seen = new Uint32Array(N);
     this.closed = new Uint32Array(N);
+    this.reach = new Int32Array(N);
+  }
+
+  private labels() {
+    const w = this.world;
+    if (this.reachVersion === w.walkVersion) return this.reach;
+    this.reachVersion = w.walkVersion;
+    const W = w.W, H = w.H, N = w.N, out = this.reach, stack = this.reachStack;
+    out.fill(0);
+    let id = 0;
+    for (let i = 0; i < N; i++) {
+      if (out[i] || !w.walkable(i)) continue;
+      out[i] = ++id;
+      stack.push(i);
+      while (stack.length) {
+        const c = stack.pop()!;
+        const cx = c % W, cy = (c / W) | 0;
+        if (cx > 0 && !out[c - 1] && w.walkable(c - 1)) { out[c - 1] = id; stack.push(c - 1); }
+        if (cx < W - 1 && !out[c + 1] && w.walkable(c + 1)) { out[c + 1] = id; stack.push(c + 1); }
+        if (cy > 0 && !out[c - W] && w.walkable(c - W)) { out[c - W] = id; stack.push(c - W); }
+        if (cy < H - 1 && !out[c + W] && w.walkable(c + W)) { out[c + W] = id; stack.push(c + W); }
+      }
+    }
+    return out;
   }
 
   /**
@@ -53,6 +87,19 @@ export class PathFinder {
     if (!adj && !walk(goal)) {
       // allow walking into non walkable goal only if it's a building door etc: treat as adj fallback
       return null;
+    }
+    // (from a walkable node the search keeps to its area: no node of it at or beside the goal, no path)
+    if (!walkFn && !startB && w.walkable(start)) {
+      const lab = this.labels(), ls = lab[start];
+      if (!adj) { if (lab[goal] !== ls) return null; }
+      else {
+        let near = false;
+        for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = gx + dx, y = gy + dy;
+          if (x >= 0 && y >= 0 && x < W && y < H && lab[y * W + x] === ls) { near = true; break; }
+        }
+        if (!near) return null;
+      }
     }
     // An adjacent walk may target a cell covered by a building. With no legal
     // endpoint, searching the entire island only proves what these nine cells already tell
