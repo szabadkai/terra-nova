@@ -24,7 +24,7 @@ import { lodReady } from './render/lod';
 import { IDLE_AFTER, framePace, type Rest } from './render/framePace';
 import { decodeSave, describe, encodeSave, restore, snapshot, type SaveData, type SaveMeta } from './game/save';
 import { AUTO, deleteSave, getSave, getSummary, listSaves, playTime, putSave, timeAgo, warmUp, writesNow } from './ui/saveStore';
-import { columnOf, missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
+import { columnOf, deedsOf, missionById, missionIndex, nextMission, numeralOf } from './game/campaign';
 import { markDone, progress, saveProgress } from './ui/campaignStore';
 import { beginProvince, dispatchesSeen, markDispatchesSeen, province, provinceLost, provinceWon, regionOfMission } from './ui/provinceStore';
 import { provincePage } from './ui/province';
@@ -663,7 +663,8 @@ function markMissionDone() {
   if (!game.opts.mission) return;
   markDone(game.opts.mission, game.time);
   // a region won (or a defence held): its best men and a share of its stores march on, and Varro moves
-  if (regionOfMission(game.opts.mission)) provinceWon(game.opts.mission, columnOf(game));
+  // (with the optional goals it met: a boon's deed, the Ninth fed rather than stormed)
+  if (regionOfMission(game.opts.mission)) provinceWon(game.opts.mission, columnOf(game), deedsOf(game));
   autosave();
 }
 

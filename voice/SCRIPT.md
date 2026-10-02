@@ -21,7 +21,7 @@ Aquila (AH-kwi-la) and Lupa (LOO-pa).
 Each line below is one recording, saved as `public/voice/<id>.mp3` (mono, 128 kbps; `scripts/voicesynth.ts` makes them with ElevenLabs). The
 game plays whichever recordings are there and leaves the rest to the text on screen, so the lines can
 arrive in any order. This file is generated from `src/game/missions.ts` by `scripts/voicelines.ts`;
-edit the missions, not this file. 309 lines, about 9043 words.
+edit the missions, not this file. 311 lines, about 9080 words.
 
 ## Everywhere
 
@@ -1271,6 +1271,10 @@ edit the missions, not this file. 309 lines, about 9043 words.
 
   Silva is lost. We will have to take it again, and he will have fortified it.
 
+- `dispatch.won.silva.without` — *A dispatch on the province page (the quaestor)*
+
+  Silva is ours. 40 boards and 20 logs to every start. The Ninth died at their posts.
+
 - `dispatch.held.silva` — *A dispatch on the province page (the quaestor)*
 
   Silva held. His legion went home lighter than it came.
@@ -1370,6 +1374,10 @@ edit the missions, not this file. 309 lines, about 9043 words.
 - `dispatch.lost.collis` — *A dispatch on the province page (the quaestor)*
 
   Collis is lost. We will have to take it again, and he will have fortified it.
+
+- `dispatch.won.collis.without` — *A dispatch on the province page (the quaestor)*
+
+  Collis is ours. No tribal raids anywhere. Their war band will not march for the men who stormed their hills.
 
 - `dispatch.held.collis` — *A dispatch on the province page (the quaestor)*
 

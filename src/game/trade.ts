@@ -5,10 +5,15 @@
 // export pile; donkeys bred at the ranch wait at the markets, pick the goods up two at a time and
 // walk them over; at the far end carriers take them on to a storehouse or straight to whoever
 // needs them. Nothing here crosses water: that is what ships are for.
+//
+// A mission can open a rival's building to gifts (`ms.gifts`: the Ninth's camp, a hill fort): it is
+// then a destination for the giver's markets, for the goods it wants, and what donkeys bring it is
+// counted as given rather than stocked.
 import { DONKEYS_PER_MARKET, DONKEY_LOAD, GOODS, GOOD_NAMES, Good, MAX_DONKEYS, emptyStock } from './defs';
 import type { Game } from './game';
 import { A, claim, park, parkable, plan } from './settlers';
 import type { Building, Settler, TradeOrder } from './types';
+import type { Gift } from './campaign';
 import { atan2, hypot, sq } from '../core/fmath';
 
 /** How many of a good one click in the market panel adds to (or takes off) an order. */
@@ -31,21 +36,47 @@ export function marketsOf(g: Game, owner: number): Building[] {
   return out;
 }
 
-/** Markets a route from `from` may lead to: the same player's other markets on the same landmass. */
-export function destinationsOf(g: Game, from: Building): Building[] {
-  return marketsOf(g, from.owner).filter((b) => b.id !== from.id && reg(g, b) === reg(g, from));
+/** The gift a mission has opened at a building for `owner` to give to, while it still stands and is not his. */
+export function giftOf(g: Game, id: number, owner: number): Gift | null {
+  const gift = g.ms?.gifts?.[id];
+  if (!gift || gift.giver !== owner) return null;
+  const b = g.buildings.get(id);
+  return b && b.state === 'done' && b.owner !== owner ? gift : null;
+}
+export function giftAt(g: Game, id: number, owner: number): Building | null {
+  return giftOf(g, id, owner) ? g.buildings.get(id)! : null;
+}
+/** How much more of a good a gift wants. */
+export function giftWants(gift: Gift, gd: Good): number {
+  return Math.max(0, (gift.wants[gd] ?? 0) - (gift.got[gd] ?? 0));
+}
+/** Where a route of `owner`'s may end: one of his markets, or a building open to his gifts. */
+export function destAlive(g: Game, id: number, owner: number): Building | null {
+  return marketAlive(g, id, owner) ?? giftAt(g, id, owner);
 }
 
-/** Markets have no names: describe one by where it lies from a spot ("Market 18 to the NE"). */
+/** Where a route from `from` may lead: the same player's other markets on the same landmass, and the buildings open to his gifts there. */
+export function destinationsOf(g: Game, from: Building): Building[] {
+  const out = marketsOf(g, from.owner).filter((b) => b.id !== from.id && reg(g, b) === reg(g, from));
+  for (const k of Object.keys(g.ms?.gifts ?? {})) {
+    const b = giftAt(g, Number(k), from.owner);
+    if (b && reg(g, b) === reg(g, from)) out.push(b);
+  }
+  return out;
+}
+
+/** Markets have no names: describe one by where it lies from a spot ("Market 18 to the NE"); a gift's
+ *  building goes by its own ("The Ninth’s camp, 64 to the NW"). */
 export function marketLabel(g: Game, b: Building, fromX: number, fromZ: number): string {
+  const gift = g.ms?.gifts?.[b.id];
   const dx = b.cx - fromX, dz = b.cz - fromZ;
   const d = Math.round(hypot(dx, dz));
-  if (d < 2) return 'Market here';
+  if (d < 2) return gift ? gift.name : 'Market here';
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   // north is -z on the map
   const a = atan2(dx, -dz);
   const k = ((Math.round((a / (Math.PI * 2)) * 8) % 8) + 8) % 8;
-  return `Market ${d} to the ${dirs[k]}`;
+  return gift ? `${gift.name}, ${d} to the ${dirs[k]}` : `Market ${d} to the ${dirs[k]}`;
 }
 
 // ------------------------------------------------------------------ orders
@@ -61,7 +92,7 @@ export function ordersFrom(g: Game, from: Building): TradeOrder[] {
 /** Why goods can't be sent from `from` to market `to`, or null. */
 export function routeError(g: Game, from: Building, to: number): string | null {
   if (from.type !== 'market' || from.state !== 'done') return 'Trade routes start at a finished market place';
-  const dest = marketAlive(g, to, from.owner);
+  const dest = destAlive(g, to, from.owner);
   if (!dest) return 'Choose one of your other market places first';
   if (dest.id === from.id) return 'A market cannot trade with itself';
   if (reg(g, dest) !== reg(g, from)) return 'Donkeys cannot cross water — use harbours and ships for that';
@@ -74,14 +105,35 @@ export function placeOrder(g: Game, from: Building, to: number, gd: Good, n: num
   if (err) return err;
   const o = openOrder(g, from, to, gd);
   if (n > 0) {
-    if (o) o.n = Math.min(o.delivered + ORDER_MAX, o.n + n);
-    else g.tradeOrders.push({ id: g.id(), owner: from.owner, from: from.id, to, good: gd, n, loaded: 0, delivered: 0, t: g.time });
+    let cap = ORDER_MAX;
+    const gift = giftOf(g, to, from.owner);
+    if (gift) {
+      // a gift takes only what is wanted, and no more of it than is still wanted (less what is on order from elsewhere)
+      const left = giftWants(gift, gd) - onOrderTo(g, from.owner, to, gd, o);
+      if (!gift.wants[gd]) return `${gift.name} wants only ${wantList(gift)}`;
+      if (left - (o ? o.n - o.delivered : 0) <= 0) return giftWants(gift, gd) ? `All the ${GOOD_NAMES[gd].toLowerCase()} ${gift.name.replace(/^The /, 'the ')} wants is on order` : `${gift.name} has all the ${GOOD_NAMES[gd].toLowerCase()} it wants`;
+      cap = left;
+    }
+    if (o) o.n = Math.min(o.delivered + cap, o.n + n);
+    else g.tradeOrders.push({ id: g.id(), owner: from.owner, from: from.id, to, good: gd, n: Math.min(cap, n), loaded: 0, delivered: 0, t: g.time });
     return null;
   }
   if (!o) return `Nothing of ${GOOD_NAMES[gd].toLowerCase()} is on order`;
   // what donkeys already carry is on its way regardless
   o.n = Math.max(o.delivered + o.loaded, o.n + n);
   return null;
+}
+
+/** What other open orders still have on the road or to send to `to` (not `except`). */
+function onOrderTo(g: Game, owner: number, to: number, gd: Good, except?: TradeOrder): number {
+  let n = 0;
+  for (const o of g.tradeOrders) if (o !== except && o.owner === owner && o.to === to && o.good === gd) n += Math.max(0, o.n - o.delivered);
+  return n;
+}
+/** "bread and meat" */
+export function wantList(gift: Gift): string {
+  const names = GOODS.filter((gd) => gift.wants[gd]).map((gd) => GOOD_NAMES[gd].toLowerCase());
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? 'nothing';
 }
 
 export function cancelOrder(g: Game, o: TradeOrder) {
@@ -135,7 +187,7 @@ function readyAt(g: Game, m: Building): Map<number, { order: TradeOrder; good: G
   for (const gd of GOODS) left[gd] = m.stock[gd] - m.outgoing[gd];
   for (const o of g.tradeOrders) {
     if (o.owner !== m.owner || o.from !== m.id) continue;
-    if (!marketAlive(g, o.to, m.owner)) continue;
+    if (!destAlive(g, o.to, m.owner)) continue;
     let rem = o.n - o.loaded - o.delivered;
     while (rem > 0 && left[o.good] > 0) {
       let arr = out.get(o.to);
@@ -161,7 +213,7 @@ function findLoad(g: Game, s: Settler): Load | null {
     let pick: { order: TradeOrder; good: Good }[] | null = null, pn = 0, to = 0;
     for (const [dest, arr] of ready) if (arr.length > pn) { pn = arr.length; pick = arr; to = dest; }
     if (!pick) continue;
-    const dest = marketAlive(g, to, s.owner)!;
+    const dest = destAlive(g, to, s.owner)!;
     bd = d;
     best = { from: m, to: dest, picks: pick.slice(0, DONKEY_LOAD) };
   }
@@ -223,14 +275,16 @@ function dropIncoming(g: Game, s: Settler) {
 
 function deliverActions(g: Game, s: Settler, to: Building) {
   return [
-    A.do(() => { s.task = `Carrying goods to the market`; }),
+    A.do(() => { const gift = giftOf(g, to.id, s.owner); s.task = gift ? `Carrying a gift to ${gift.name}` : `Carrying goods to the market`; }),
     A.walk(to.door),
     A.wait(0.6),
     A.do(() => {
-      if (!marketAlive(g, to.id, s.owner)) return false;
+      if (!destAlive(g, to.id, s.owner)) return false;
+      const gift = giftOf(g, to.id, s.owner);
       for (const gd of holding(s)) {
         to.incoming[gd] = Math.max(0, to.incoming[gd] - 1);
-        to.stock[gd]++;
+        if (gift) gift.got[gd] = (gift.got[gd] ?? 0) + 1;
+        else to.stock[gd]++;
         credit(g, s.owner, to.id, gd);
         g.players[s.owner].traded++;
       }
@@ -246,7 +300,7 @@ function deliverActions(g: Game, s: Settler, to: Building) {
 
 /** A donkey with goods on its back but no plan finishes the trip, or takes the goods to a storehouse. */
 function deliverOrDump(g: Game, s: Settler) {
-  const to = s.target ? marketAlive(g, s.target, s.owner) : null;
+  const to = s.target ? destAlive(g, s.target, s.owner) : null;
   if (to && s.fails < 4) {
     s.idle = false;
     for (const gd of holding(s)) to.incoming[gd]++;
@@ -346,13 +400,13 @@ export function updateTrade(g: Game, dt: number) {
     const markets = marketsOf(g, p.id);
     g.tradeOrders = g.tradeOrders.filter((o) => {
       if (o.owner !== p.id) return true;
-      // a lost market ends its routes once nothing is left on the road
-      if (!marketAlive(g, o.from, p.id) || !marketAlive(g, o.to, p.id)) return o.loaded > 0;
+      // a lost market (or a gift's building taken or gone) ends its routes once nothing is left on the road
+      if (!marketAlive(g, o.from, p.id) || !destAlive(g, o.to, p.id)) return o.loaded > 0;
       return o.n - o.delivered > 0 || o.loaded > 0;
     });
     for (const m of markets) {
       m.seaWant = null;
-      if (m.tradeTo && !marketAlive(g, m.tradeTo, p.id)) m.tradeTo = 0;
+      if (m.tradeTo && !destAlive(g, m.tradeTo, p.id)) m.tradeTo = 0;
     }
     for (const o of g.tradeOrders) {
       if (o.owner !== p.id) continue;

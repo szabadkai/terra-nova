@@ -4,8 +4,9 @@ import { BUILDINGS, GOODS, GOOD_NAMES, TOOLS, type BuildingType, type Good } fro
 import type { Game } from '../game/game';
 import { MISSIONS } from '../game/missions';
 import { REGIONS } from '../game/regions';
-import { columnOf, missionIndex, missionLabel, numeralOf, toolUnlockedIn, unlockedIn, type Carry, type Mission, type Tool } from '../game/campaign';
+import { columnOf, deedsOf, missionIndex, missionLabel, numeralOf, toolUnlockedIn, unlockedIn, type Carry, type Mission, type Tool } from '../game/campaign';
 import type { CampaignProgress } from './campaignStore';
+import { REGION_INFO } from '../game/province';
 import { glyph } from './glyphs';
 import { buildingIcons, goodIcons } from './icons';
 import type { MenuPage } from './menu';
@@ -96,6 +97,15 @@ export function briefingOverlay(m: Mission, o: { onBegin: () => void; onReplay?:
   return ov;
 }
 
+/** A region whose boon is earned one way only: whether this game earned it. */
+function deedNote(m: Mission, g: Game): string {
+  const deed = Object.values(REGION_INFO).find((r) => r.mission === m.id)?.boon.deed;
+  if (!deed) return '';
+  return deedsOf(g).includes(deed.id)
+    ? `<p class="colnote"><b>Earned:</b> ${esc(deed.gives)}.</p>`
+    : `<p class="colnote"><b>Not earned:</b> ${esc(deed.gives)} (${esc(deed.if)}).</p>`;
+}
+
 /** The quaestor's word after a mission, with the figures he counted. */
 export function debriefOverlay(m: Mission, g: Game, o: { next?: () => void; keep: () => void; menu: () => void }): HTMLElement {
   const ov = h('div', 'overlay brief-ov');
@@ -113,7 +123,7 @@ export function debriefOverlay(m: Mission, g: Game, o: { next?: () => void; keep
     <div class="kv"><span>Time</span><b>${playTime(g.time)}</b></div>
     <div class="kv"><span>Goods produced</span><b>${produced}</b></div>
     <div class="kv"><span>Population</span><b>${g.population(g.local).total}</b></div>
-    ${tutorial ? '' : `<div class="goalhead">Marching on</div>${columnChips(columnOf(g))}<p class="colnote">The best twelve of your soldiers march to the next region, each a rank higher for what they came through, with a share of the stores.</p>`}
+    ${tutorial ? '' : `<div class="goalhead">Marching on</div>${columnChips(columnOf(g))}<p class="colnote">The best twelve of your soldiers march to the next region, each a rank higher for what they came through, with a share of the stores.</p>${deedNote(m, g)}`}
     <div class="row"><button class="tm-btn" data-act="keep">Keep playing</button><button class="tm-btn" data-act="menu">${tutorial ? 'Tutorial' : 'The Province'}</button>${o.next && !last ? `<button class="tm-btn primary" data-act="next">Next mission${glyph('next', 16)}</button>` : ''}</div>
   </div>`;
   ov.querySelector<HTMLElement>('[data-act=keep]')!.onclick = () => { ov.remove(); o.keep(); };

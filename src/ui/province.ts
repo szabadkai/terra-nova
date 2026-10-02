@@ -6,7 +6,7 @@
 // the hooks do.
 import { missionById } from '../game/campaign';
 import {
-  REGION_INFO, REGION_IDS, TO_THE_FINALE, beyond, frontier, holds, startOf,
+  REGION_INFO, REGION_IDS, TO_THE_FINALE, beyond, boonText, frontier, holds, startOf,
   type Difficulty, type ProvinceState, type RegionId,
 } from '../game/province';
 import { QUAESTOR_ICON, VARRO_ICON, columnChips, type SavedMission } from './campaign';
@@ -261,7 +261,7 @@ export function provincePage(o: ProvinceHooks): MenuPage {
       : R.holder === 'tribes' ? '<span class="pv-chip tribes">The tribes’</span>' : '<span class="pv-chip varro">Varro’s</span>';
     const fort = s.fortified[sel] ? `<span class="pv-chip varro">${glyph('tower', 14)}Fortified ×${s.fortified[sel]}</span>` : '';
     const head = `<div class="cp-kicker">${esc(R.kind)}</div><h3 class="cp-title">${esc(R.name)}</h3><div class="pv-chips">${status}${fort}</div><p class="pv-line">${esc(R.line)}</p>`;
-    const boon = `<div class="cp-sect">${holds(s, sel) ? 'It gives us' : 'Holding it gives'}</div><p class="pv-p">${esc(R.boon.text)}.</p>`;
+    const boon = `<div class="cp-sect">${holds(s, sel) ? 'It gives us' : 'Holding it gives'}</div><p class="pv-p">${esc(boonText(s, sel))}.</p>`;
     let actions = '', more = '';
     const savedHere = (id: string) => o.saved?.id === id;
     // Varro's strike: the defence first

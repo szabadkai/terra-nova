@@ -13,6 +13,15 @@ export type RegionId =
 /** Who a region belongs to at the start of the campaign. */
 export type Holder = 'you' | 'varro' | 'tribes';
 
+type Men = { sword: number; bow: number; level: number };
+/**
+ * The part of a region's boon that is earned only one way: by an optional goal (`id`) met in the game
+ * that won it - the Ninth fed, not stormed. `text` (the recorded one) promises it; `gives` names the
+ * part, `if` says what it takes, before the region is ours; `without` is what the region gives when it
+ * was won the other way.
+ */
+export interface Deed { id: string; men: Men; gives: string; if: string; without: string }
+
 export interface RegionInfo {
   id: RegionId;
   name: string;
@@ -26,7 +35,7 @@ export interface RegionInfo {
   roads: RegionId[];
   holder: Holder;
   /** what holding it gives every later mission */
-  boon: { text: string; goods?: Partial<Record<Good, number>>; men?: { sword: number; bow: number; level: number }; ships?: { trade?: number; war?: number }; peace?: People };
+  boon: { text: string; goods?: Partial<Record<Good, number>>; men?: Men; ships?: { trade?: number; war?: number }; peace?: People; deed?: Deed };
   /** the mission that wins it (regions.ts), once it has been drawn */
   mission?: string;
 }
@@ -35,7 +44,8 @@ export const REGION_INFO: Record<RegionId, RegionInfo> = {
   castra: { id: 'castra', name: 'Castra', kind: 'The legate’s coast', at: [205, 330], line: 'Where the tutorial’s camp became a town. Home.', roads: ['silva', 'saltus', 'aestuarium'], holder: 'you',
     boon: { text: 'The capital: the column rests here between seasons', goods: { board: 20, stone: 20 } } },
   silva: { id: 'silva', name: 'Silva', kind: 'The forest', at: [285, 175], line: 'Old woods, an older grove, and the Ninth hiding in them.', roads: ['castra', 'saltus', 'collis'], holder: 'varro', mission: 'silva',
-    boon: { text: '40 boards and 20 logs to every start; the Ninth’s veterans', goods: { board: 40, log: 20 }, men: { sword: 2, bow: 1, level: 1 } } },
+    boon: { text: '40 boards and 20 logs to every start; the Ninth’s veterans', goods: { board: 40, log: 20 },
+      deed: { id: 'fed', men: { sword: 2, bow: 1, level: 1 }, gives: 'the Ninth’s veterans in every start', if: 'the veterans only if the Ninth are won with bread, not the sword', without: '40 boards and 20 logs to every start. The Ninth died at their posts' } } },
   saltus: { id: 'saltus', name: 'Saltus', kind: 'The pass', at: [420, 300], line: 'A wall of mountains, one road through it, and a fort on the far side.', roads: ['castra', 'silva', 'vallis', 'metalla'], holder: 'varro', mission: 'saltus',
     boon: { text: '12 iron and 12 coal to every start: the pass’s mines', goods: { iron: 12, coal: 12 } } },
   aestuarium: { id: 'aestuarium', name: 'Aestuarium', kind: 'The estuary', at: [245, 470], line: 'A harbour up a long water, and pirates on the tide.', roads: ['castra', 'insulae', 'litus'], holder: 'varro', mission: 'aestuarium',
@@ -45,7 +55,8 @@ export const REGION_INFO: Record<RegionId, RegionInfo> = {
   metalla: { id: 'metalla', name: 'Metalla', kind: 'The gold plateau', at: [590, 160], line: 'Gold under a high plateau, and one path up.', roads: ['saltus', 'vallis', 'collis'], holder: 'varro', mission: 'aurum',
     boon: { text: '10 gold to every start: morale from the first minute', goods: { gold: 10 } } },
   collis: { id: 'collis', name: 'Collis', kind: 'The tribes’ upland', at: [430, 85], line: 'Three hill forts of the tribes, who owe nobody anything.', roads: ['silva', 'metalla'], holder: 'tribes', mission: 'collis',
-    boon: { text: 'The tribes’ war band in every fight, four veterans, and no tribal raids anywhere', men: { sword: 2, bow: 2, level: 2 }, peace: 'tribes' } },
+    boon: { text: 'The tribes’ war band in every fight, four veterans, and no tribal raids anywhere', peace: 'tribes',
+      deed: { id: 'feast', men: { sword: 2, bow: 2, level: 2 }, gives: 'the tribes’ war band in every fight', if: 'the war band only if a hill is won with a feast', without: 'No tribal raids anywhere. Their war band will not march for the men who stormed their hills' } } },
   insulae: { id: 'insulae', name: 'Insulae', kind: 'The archipelago', at: [95, 520], line: 'Islands, colonies to found, and Varro’s fleet among them.', roads: ['aestuarium', 'litus'], holder: 'varro', mission: 'insulae',
     boon: { text: 'The islands’ gold and iron: 8 of each', goods: { gold: 8, iron: 8 } } },
   litus: { id: 'litus', name: 'Litus', kind: 'The pirate coast', at: [440, 535], line: 'Where the pirates Varro hired keep the ships he paid for.', roads: ['aestuarium', 'insulae', 'ara'], holder: 'varro', mission: 'litus',
@@ -83,6 +94,8 @@ export interface ProvinceState {
   end?: 'won' | 'recalled';
   /** the quaestor's count: regions won, strikes beaten off, regions lost */
   ledger?: { won: number; held: number; lost: number };
+  /** the optional goals met in the game that won each region (what its boon's deed asks for) */
+  deeds?: Partial<Record<RegionId, string[]>>;
 }
 
 export function newProvince(seed: number, difficulty: Difficulty = 1): ProvinceState {
@@ -90,6 +103,19 @@ export function newProvince(seed: number, difficulty: Difficulty = 1): ProvinceS
 }
 
 export const holds = (s: ProvinceState, r: RegionId) => s.held.includes(r);
+
+/** Whether a region's boon is whole: it asks for no deed, or the game that won it did the deed. */
+export function earned(s: ProvinceState, r: RegionId): boolean {
+  const d = REGION_INFO[r].boon.deed;
+  return !d || !!s.deeds?.[r]?.includes(d.id);
+}
+/** What a region gives, as the province page says it: the whole boon (and what its deed takes, while it is not ours), or the lesser one. */
+export function boonText(s: ProvinceState, r: RegionId): string {
+  const b = REGION_INFO[r].boon;
+  if (!b.deed) return b.text;
+  if (!holds(s, r)) return `${b.text} (${b.deed.if})`;
+  return earned(s, r) ? b.text : b.deed.without;
+}
 
 /** The regions a campaign can go to this season: Varro's or the tribes', on a road from one we hold, with a mission drawn for it. */
 export function frontier(s: ProvinceState, drawn: (id: string) => boolean): RegionId[] {
@@ -120,9 +146,10 @@ export function boonsOf(s: ProvinceState): Carry {
   for (const r of s.held) {
     const b = REGION_INFO[r].boon;
     for (const [k, n] of Object.entries(b.goods ?? {})) goods[k as Good] = (goods[k as Good] ?? 0) + (n ?? 0);
-    if (b.men) {
-      for (let k = 0; k < b.men.sword; k++) veterans.push({ job: 'swordsman', level: b.men.level });
-      for (let k = 0; k < b.men.bow; k++) veterans.push({ job: 'bowman', level: b.men.level });
+    const men = b.men ?? (b.deed && earned(s, r) ? b.deed.men : undefined);
+    if (men) {
+      for (let k = 0; k < men.sword; k++) veterans.push({ job: 'swordsman', level: men.level });
+      for (let k = 0; k < men.bow; k++) veterans.push({ job: 'bowman', level: men.level });
     }
     trade += b.ships?.trade ?? 0;
     war += b.ships?.war ?? 0;
@@ -171,11 +198,14 @@ const OPENING = { who: 'varro' as const, voice: 'dispatch.appointed', text: 'The
 
 export type DispatchKind = 'won' | 'held' | 'lost' | 'fortify' | 'strike';
 export interface Dispatch { who: 'quaestor' | 'varro'; text: string; voice: string }
-/** What the log says of a region at one turn of the war, who says it, and the id of its recording. */
-export function dispatchOf(kind: DispatchKind, r: RegionId): Dispatch {
-  const name = REGION_INFO[r].name, voice = `dispatch.${kind}.${r}`;
+/** What the log says of a region at one turn of the war, who says it, and the id of its recording
+ *  (a region won without its boon's deed has a 'won' line of its own). */
+export function dispatchOf(kind: DispatchKind, r: RegionId, whole = true): Dispatch {
+  const name = REGION_INFO[r].name, voice = `dispatch.${kind}.${r}`, deed = REGION_INFO[r].boon.deed;
   switch (kind) {
-    case 'won': return { who: 'quaestor', voice, text: `${name} is ours. ${REGION_INFO[r].boon.text}.` };
+    case 'won':
+      if (deed && !whole) return { who: 'quaestor', voice: `${voice}.without`, text: `${name} is ours. ${deed.without}.` };
+      return { who: 'quaestor', voice, text: `${name} is ours. ${REGION_INFO[r].boon.text}.` };
     case 'held': return { who: 'quaestor', voice, text: `${name} held. His legion went home lighter than it came.` };
     case 'lost': return { who: 'quaestor', voice, text: `${name} is lost. We will have to take it again, and he will have fortified it.` };
     case 'fortify': return { who: 'quaestor', voice, text: `Varro has fortified ${name}: more men in its towers, and more of them on the roads out of it. It will cost more to take.` };
@@ -189,6 +219,7 @@ export function allDispatches(): Dispatch[] {
   const out: Dispatch[] = [{ ...OPENING }];
   for (const r of REGION_IDS) {
     if (r !== 'castra' && r !== 'novaostia') out.push(dispatchOf('won', r), dispatchOf('lost', r));
+    if (REGION_INFO[r].boon.deed) out.push(dispatchOf('won', r, false));
     if (r !== 'novaostia') out.push(dispatchOf('held', r), dispatchOf('strike', r));
     if (REGION_INFO[r].holder === 'varro') out.push(dispatchOf('fortify', r));
   }
@@ -217,14 +248,15 @@ function nextSeason(s: ProvinceState) {
   }
 }
 
-/** A region won: it is ours, its column marches on, and the season turns. */
-export function regionWon(s: ProvinceState, r: RegionId, column: Carry) {
+/** A region won: it is ours, its column marches on, and the season turns. `deeds`: the optional goals the game met. */
+export function regionWon(s: ProvinceState, r: RegionId, column: Carry, deeds: string[] = []) {
   if (!holds(s, r)) s.held.push(r);
+  (s.deeds ??= {})[r] = deeds;
   s.column = column;
   delete s.fortified[r];
   count(s, 'won');
   if (r === 'novaostia') { s.end = 'won'; say(s, { who: 'quaestor', text: 'Nova Ostia has opened its gates. The Senate’s ship came in on the same tide, with a new appointment for the governor of Terra Nova. It is addressed to you.' }); return; }
-  say(s, dispatchOf('won', r));
+  say(s, dispatchOf('won', r, earned(s, r)));
   nextSeason(s);
 }
 

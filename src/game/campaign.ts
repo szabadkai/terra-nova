@@ -209,6 +209,19 @@ export interface MissionState {
   fleets?: Record<string, { order: Exclude<FleetOrder, 'guard'>; at: Pt }>;
   /** why the mission was lost, once it is */
   lost?: string;
+  /** rivals' buildings open to the player's gifts, by building id: his markets can send them what they want (trade.ts) */
+  gifts?: Record<number, Gift>;
+}
+
+/** A rival's building a mission lets the player give goods to (the Ninth's camp, a hill fort's feast). */
+export interface Gift {
+  /** the player whose markets may send it */
+  giver: number;
+  /** what the market panel calls it: "The Ninth’s camp" */
+  name: string;
+  wants: Partial<Record<Good, number>>;
+  /** what donkeys have brought so far */
+  got: Partial<Record<Good, number>>;
 }
 
 export const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'];
@@ -676,6 +689,35 @@ export function revealAround(g: Game, x: number, z: number, r: number) {
   const w = g.world, bit = 1 << g.local;
   w.forRadius(x, z, r, (i) => { w.seen[i] |= bit; w.explored[i] = 1; });
   w.exploredDirty = true;
+}
+
+/** A rival's building opened to the player's gifts: his markets can choose it as a destination for the goods it wants. */
+export function openGift(g: Game, b: Building, name: string, wants: Partial<Record<Good, number>>) {
+  if (g.ms) (g.ms.gifts ??= {})[b.id] ??= { giver: g.local, name, wants: { ...wants }, got: {} };
+}
+/** How much of a good the player has given a building. */
+export function given(g: Game, b: Building | undefined, gd: Good): number {
+  return (b && g.ms?.gifts?.[b.id]?.got[gd]) || 0;
+}
+/** Whether a building has been given all it wants. */
+export function gaveAll(g: Game, b: Building | undefined): boolean {
+  const gift = b && g.ms?.gifts?.[b.id];
+  return !!gift && Object.entries(gift.wants).every(([gd, n]) => (gift.got[gd as Good] ?? 0) >= (n ?? 0));
+}
+/** Goods of the player's on donkeys' backs bound for a building. */
+export function onTheRoad(g: Game, b: Building | undefined, gd: Good): number {
+  let n = 0;
+  if (b) for (const o of g.tradeOrders) if (o.owner === g.local && o.to === b.id && o.good === gd) n += o.loaded;
+  return n;
+}
+/** A gift that is settled: its building is no longer a destination. */
+export function closeGift(g: Game, b: Building | undefined) {
+  if (b && g.ms?.gifts) delete g.ms.gifts[b.id];
+}
+
+/** The optional goals a won mission met: the deeds a region's boon may ask for (province.ts). */
+export function deedsOf(g: Game): string[] {
+  return g.mission?.goals.filter((x) => x.optional && x.done(g)).map((x) => x.id) ?? [];
 }
 
 /** Soldiers inside a stronghold, so it stands manned (and, for a rival's, keeps its land). */

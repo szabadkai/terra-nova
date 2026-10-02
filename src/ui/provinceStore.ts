@@ -69,12 +69,12 @@ export const regionOfMission = (id: string): { region: RegionId; defence: boolea
   return r ? { region: r, defence: false } : null;
 };
 
-/** A campaign mission won: the region is ours (or kept), the column marches on, Varro moves. */
-export function provinceWon(missionId: string, col: Carry) {
+/** A campaign mission won: the region is ours (or kept), the column marches on, Varro moves. `deeds`: the optional goals it met. */
+export function provinceWon(missionId: string, col: Carry, deeds: string[] = []) {
   const at = regionOfMission(missionId);
   if (!province || !at) return;
   if (at.defence) { if (province.strike === at.region) strikeHeld(province, col); }
-  else regionWon(province, at.region, col);
+  else regionWon(province, at.region, col, deeds);
   save();
 }
 

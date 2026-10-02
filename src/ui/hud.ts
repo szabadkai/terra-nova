@@ -22,7 +22,7 @@ import { catapultCap, catapultsOf, siegeHits } from '../game/siege';
 import { PROBES, geologistsAtWork } from '../game/geology';
 import { pioneersAtWork } from '../game/pioneers';
 import { FORMATIONS, commandable, drillOf, fieldSoldiers, type Formation } from '../game/orders';
-import { ORDER_STEP, destinationsOf, donkeyCap, donkeysOf, marketAlive, marketLabel, marketTraffic, openOrder } from '../game/trade';
+import { ORDER_STEP, destAlive, destinationsOf, donkeyCap, donkeysOf, giftOf, giftWants, marketLabel, marketTraffic, openOrder, wantList } from '../game/trade';
 import { buildingIcons, goodIcons } from './icons';
 import { StallBadges, TOP_BADGES } from './stallBadges';
 import { stalled } from '../game/status';
@@ -1489,15 +1489,25 @@ export class HUD {
         if (tr.incoming) body += `<div class="kv"><span>Expected from other markets</span><b>${tr.incoming}</b></div>`;
         const to = this.field(b, 'tradeTo');
         const opts = dests.map((d) => `<option value="${d.id}"${to === d.id ? ' selected' : ''}>${marketLabel(g, d, b.cx, b.cz)}</option>`).join('');
-        body += `<div class="kv"><span>Send goods to</span><b><select data-act="dest"><option value="0">${dests.length ? '— choose a market —' : 'no other market on this land'}</option>${opts}</select></b></div>`;
-        if (to && marketAlive(g, to, g.local)) {
+        body += `<div class="kv"><span>Send goods to</span><b><select data-act="dest"><option value="0">${dests.length ? (dests.some((d) => d.type !== 'market') ? '— choose a destination —' : '— choose a market —') : 'no other market on this land'}</option>${opts}</select></b></div>`;
+        const gift = to ? giftOf(g, to, g.local) : null;
+        if (gift) {
+          // a gift's building: only what it wants, counted as given
+          const wanted = GOODS.filter((gd) => gift.wants[gd]);
+          body += `<div class="tgrid">${wanted.map((gd) => {
+            const o = openOrder(g, b, to, gd), got = gift.got[gd] ?? 0, want = gift.wants[gd] ?? 0;
+            return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${got} of ${want} given, ${b.stock[gd]} here${o?.loaded ? `, ${o.loaded} on the road` : ''}">${this.icon(gd, 'ci')}<span>${got}/${want}</span><div class="tbtn"><button class="mini" data-act="ord-|${gd}" title="Send ${ORDER_STEP} fewer">−</button><button class="mini" data-act="ord+|${gd}" title="Send ${ORDER_STEP} more">+</button></div></div>`;
+          }).join('')}</div>`;
+          const left = wanted.map((gd) => giftWants(gift, gd)).reduce((x, y) => x + y, 0);
+          body += `<p class="note">${gift.name} wants ${wantList(gift)}${left ? `: ${left} more to give` : ', and has it all'}. Each <b>+</b> sends ${ORDER_STEP} more; carriers stock them here${tr.ready ? ` (${tr.ready} ready)` : ''} and donkeys carry them over, two at a time${g.countBuildings(g.local, 'donkeyfarm') ? '' : ' (a Donkey Ranch breeds them)'}.</p>`;
+        } else if (to && destAlive(g, to, g.local)) {
           body += `<div class="tgrid">${GOODS.map((gd) => {
             const o = openOrder(g, b, to, gd);
             const here = b.stock[gd];
             return `<div class="tcell${o ? ' on' : ''}" title="${GOOD_NAMES[gd]}: ${here} here${o ? `, ${o.delivered} of ${o.n} delivered${o.loaded ? `, ${o.loaded} on the road` : ''}` : ''}">${this.icon(gd, 'ci')}<span>${o ? `${o.delivered}/${o.n}` : here || ''}</span><div class="tbtn"><button class="mini" data-act="ord-|${gd}" title="Send ${ORDER_STEP} fewer">−</button><button class="mini" data-act="ord+|${gd}" title="Send ${ORDER_STEP} more">+</button></div></div>`;
           }).join('')}</div>`;
           body += `<p class="note">Each <b>+</b> orders ${ORDER_STEP} more of a good. Carriers stock them here${tr.ready ? ` (${tr.ready} ready)` : ''}; donkeys carry two at a time.</p>`;
-        } else if (dests.length) body += `<div class="status">Choose a market to trade with</div>`;
+        } else if (dests.length) body += `<div class="status">${dests.some((d) => d.type !== 'market') ? 'Choose where to send goods' : 'Choose a market to trade with'}</div>`;
         else body += `<div class="status">Build another Market Place on this land to trade with${g.countBuildings(g.local, 'donkeyfarm') ? '' : ', and a Donkey Ranch for the donkeys'}</div>`;
       }
       if (b.type === 'donkeyfarm' && mine) {
@@ -1614,7 +1624,7 @@ export class HUD {
         }
         else if (act.startsWith('ord')) {
           const gd = act.slice(5) as Good;
-          this.issue({ t: 'order', from: b.id, to: this.field(b, 'tradeTo'), good: gd, n: act[3] === '+' ? ORDER_STEP : -ORDER_STEP });
+          this.issue({ t: 'order', from: b.id, to: this.field(b, 'tradeTo'), good: gd, n: act[3] === '+' ? ORDER_STEP : -ORDER_STEP }, (e) => { if (!e.ok) this.oops(e, undefined, b.cx, b.cz); });
         }
         else if (act === 'attack') {
           this.issue({ t: 'launch', b: b.id, n: this.attackCount }, (e) => {

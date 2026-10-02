@@ -13,8 +13,9 @@ import { BUILDINGS, type BuildingType } from '../src/game/defs';
 import { MISSIONS } from '../src/game/missions';
 import { REGIONS } from '../src/game/regions';
 import { recomputeTerritory, turnCoat } from '../src/game/military';
-import { REGION_IDS, REGION_INFO, TO_THE_FINALE, frontier, strikeWeight, newProvince, regionWon, startOf, strikeHeld, strikeLost, varrosTurn, type ProvinceState, type RegionId } from '../src/game/province';
-import { COLUMN_MEN, TOP_LEVEL, allRivalsDefeated, allowedTypes, applyCarry, bandLeft, colonySpot, columnOf, fleetLeft, fort, garrison, hqOf, missionById, placeNear, ship, tally, unlockedIn, type Mission } from '../src/game/campaign';
+import { REGION_IDS, REGION_INFO, TO_THE_FINALE, boonText, frontier, strikeWeight, newProvince, regionWon, startOf, strikeHeld, strikeLost, varrosTurn, type ProvinceState, type RegionId } from '../src/game/province';
+import { COLUMN_MEN, TOP_LEVEL, allRivalsDefeated, allowedTypes, applyCarry, bandLeft, colonySpot, columnOf, deedsOf, fleetLeft, fort, garrison, given, hqOf, missionById, placeNear, ship, tally, unlockedIn, type Mission } from '../src/game/campaign';
+import { destinationsOf, openOrder, placeOrder, routeError, spawnDonkey } from '../src/game/trade';
 import { placeShipOrder } from '../src/game/sea';
 import { decodeSave, describe, encodeSave, restore, snapshot } from '../src/game/save';
 import { AIController } from '../src/game/ai';
@@ -63,7 +64,8 @@ if (mode === 'time') {
   // `late`: the start a player would have late in a campaign (every other region held, a column of twelve veterans of the second rank)
   const late = process.argv.includes('late');
   const seedArg = process.argv[4] && process.argv[4] !== 'late' ? Number(process.argv[4]) : m.map.seed;
-  const lateRun: ProvinceState = { ...newProvince(1, 1), held: REGION_IDS.filter((r) => r !== regionOf(m.id)), column: { veterans: Array.from({ length: COLUMN_MEN }, (_, k) => ({ job: k < 8 ? 'swordsman' : 'bowman', level: 2 })), goods: { board: 30, stone: 30, iron: 12, coal: 12, sword: 6, bow: 4, bread: 10 } } };
+  const lateHeld = REGION_IDS.filter((r) => r !== regionOf(m.id));
+  const lateRun: ProvinceState = { ...newProvince(1, 1), held: lateHeld, deeds: Object.fromEntries(lateHeld.map((r) => [r, REGION_INFO[r].boon.deed ? [REGION_INFO[r].boon.deed!.id] : []])), column: { veterans: Array.from({ length: COLUMN_MEN }, (_, k) => ({ job: k < 8 ? 'swordsman' : 'bowman', level: 2 })), goods: { board: 30, stone: 30, iron: 12, coal: 12, sword: 6, bow: 4, bread: 10 } } };
   const g = new Game({ ...m.map, seed: seedArg, mission: m.id, ...(late ? { carry: startOf(lateRun), difficulty: 1 as const } : {}) });
   // the AI as the player: the building gate in placeError holds it to what the mission has granted
   g.ai.push(new AIController(g, g.local, 1));
@@ -421,6 +423,45 @@ if (!only || only === 'scripts') {
     check(store.stock.bread === 0, 'silva: and the bread is eaten');
     run(g, 6);
     check(m.goals.find((x) => x.id === 'ninth')!.done(g), 'silva: the Ninth are won over');
+    check(m.goals.find((x) => x.id === 'fed')!.done(g) && deedsOf(g).includes('fed'), 'silva: with bread, which the province will remember');
+  }
+  // Silva: the loaves go to their camp by donkey, from a market at home; the Ninth are veterans, should it come to swords
+  {
+    const m = byId('silva');
+    let g = mk(m);
+    const ninth = hqOf(g, 2);
+    const theirs = [...g.settlers.values()].filter((x) => x.owner === 2 && (x.job === 'swordsman' || x.job === 'bowman'));
+    check(theirs.length >= 13 && theirs.every((x) => x.level === 2), `silva: all ${theirs.length} of the Ninth are veterans of the second rank`);
+    const hq = hqOf(g);
+    const a = placeNear(g, g.local, 'market', hq.cx + 2, hq.cz - 7, 8)!;
+    const market = g.addBuilding('market', g.local, a.x, a.y, true);
+    for (let k = 0; k < 3; k++) spawnDonkey(g, market);
+    hq.stock.bread = 30;
+    check(destinationsOf(g, market).some((d) => d.id === ninth.id) && routeError(g, market, ninth.id) === null, 'silva: a market of ours can send goods to the Ninth’s camp');
+    const co = hqOf(g, 1), ca = placeNear(g, 1, 'market', co.cx, co.cz + 6, 8)!;
+    const theirMarket = g.addBuilding('market', 1, ca.x, ca.y, true);
+    check(!destinationsOf(g, theirMarket).some((d) => d.id === ninth.id) && routeError(g, theirMarket, ninth.id) !== null, 'silva: the timber company’s markets cannot');
+    const boards = placeOrder(g, market, ninth.id, 'board', 4);
+    check(boards !== null, `silva: they want bread, not boards ("${boards}")`);
+    check(placeOrder(g, market, ninth.id, 'bread', 40) === null && openOrder(g, market, ninth.id, 'bread')?.n === 20, 'silva: an order of 40 loaves is held to the 20 they want');
+    check(placeOrder(g, market, ninth.id, 'bread', 4) !== null, 'silva: and no more is taken on order');
+    market.tradeTo = ninth.id;
+    const half = runUntil(g, 900, () => given(g, ninth, 'bread') >= 6);
+    note(`silva: ${given(g, ninth, 'bread')} loaves given at ${(g.time / 60).toFixed(1)} min`);
+    check(half && !g.ms!.fired!.includes('fed'), 'silva: the donkeys carry the loaves to their camp, and six are not enough');
+    // a save half way: the donkeys on the road finish the trip
+    g = await roundTrip(g);
+    const camp = g.buildings.get(ninth.id)!;
+    const towers = strongholdsOf(g, 2).filter((b) => b.type !== 'hq');
+    const done = runUntil(g, 1200, () => !!g.ms!.fired?.includes('fed'));
+    note(`silva: fed at ${(g.time / 60).toFixed(1)} min, ${hqOf(g).stock.bread} loaves left at home`);
+    check(done, 'silva: twenty loaves given, after a save, and the Ninth come over');
+    check(towers.every((b) => b.owner === g.local && b.occupied && b.garrison.every((id) => g.settlers.get(id)!.level === 2)), 'silva: their towers are ours, manned by veterans of the second rank');
+    check(camp.state === 'burning' || !g.buildings.has(camp.id), 'silva: they burn their camp behind them');
+    check(!destinationsOf(g, g.buildings.get(market.id)!).some((d) => d.id === ninth.id), 'silva: and it is no longer a destination');
+    run(g, 6);
+    check(m.goals.find((x) => x.id === 'ninth')!.done(g) && deedsOf(g).includes('fed'), 'silva: the Ninth won over with bread');
+    check(!g.ms!.fired!.includes('ninth'), 'silva: and the quaestor does not tell us to feed them after they have eaten');
   }
   // Collis: a feast wins a hill; two won, the third yields
   {
@@ -442,6 +483,27 @@ if (!only || only === 'scripts') {
     run(g, 4);
     check(forts.every((b) => b.owner === g.local), 'collis: two won, the third yields');
     check(m.goals[0].done(g) && m.goals[1].done(g), 'collis: the hills are won, one of them with a feast');
+  }
+  // Collis: a feast sent to a hill fort by donkey
+  {
+    const m = byId('collis');
+    const g = mk(m);
+    const hq = hqOf(g);
+    const forts = g.ms!.forts.map((id) => g.buildings.get(id)!);
+    const k = forts.map((b, i) => [Math.hypot(b.cx - hq.cx, b.cz - hq.cz), i]).sort((x, y) => x[0] - y[0])[0][1];
+    const hill = forts[k];
+    const a = placeNear(g, g.local, 'market', hq.cx + 2, hq.cz - 7, 8)!;
+    const market = g.addBuilding('market', g.local, a.x, a.y, true);
+    for (let n = 0; n < 3; n++) spawnDonkey(g, market);
+    hq.stock.bread = 30; hq.stock.meat = 20;
+    check(destinationsOf(g, market).filter((d) => forts.includes(d)).length === 3, 'collis: every hill fort is a destination for our markets');
+    check(placeOrder(g, market, hill.id, 'bread', 16) === null && placeOrder(g, market, hill.id, 'meat', 12) === null, 'collis: a feast ordered');
+    check(openOrder(g, market, hill.id, 'bread')?.n === 15 && openOrder(g, market, hill.id, 'meat')?.n === 10, 'collis: held to the fifteen loaves and ten joints it takes');
+    market.tradeTo = hill.id;
+    const done = runUntil(g, 1500, () => !!g.ms!.fired?.includes(`feast${k}`));
+    note(`collis: ${m.goals.find((x) => x.id === 'feast')!.progress?.(g)}; feast at ${(g.time / 60).toFixed(1)} min`);
+    check(done && hill.owner === g.local && hill.occupied, 'collis: the feast carried up by donkey, and the hill comes over');
+    check(deedsOf(g).includes('feast'), 'collis: which the province will remember');
   }
   // Ara: the temple goes over with the hill, standing; burn it and the mission is lost
   {
@@ -683,13 +745,26 @@ if (!only || only === 'province') {
   check(frontier(s, drawn).includes('vallis'), 'the pass opens the road to the valley');
   const b = startOf(s)!;
   check(b.goods.iron === 12 && b.goods.coal === 12 && b.goods.board === 30 && b.veterans.length === 1, 'the next start: the column, the capital\'s stores and the pass\'s iron and coal');
-  regionWon(s, 'silva', col);
+  regionWon(s, 'silva', col, ['fed']);
   check(s.season === 3 && !!s.strike && s.held.includes(s.strike) && s.strike !== 'castra', `in season III he strikes a region we hold (${s.strike})`);
   check(frontier(s, drawn).length === 0, 'no campaign elsewhere while his legion is on the road');
   const struck = s.strike!;
   strikeHeld(s, col);
   check(!s.strike && s.held.includes(struck) && s.season === 4, 'a strike beaten off: the region stays ours and the season turns');
-  check(startOf(s)!.veterans.filter((v) => v.level === 1).length === 1 + 3, 'the Ninth\'s three veterans march with every column once the forest is ours');
+  check(startOf(s)!.veterans.filter((v) => v.level === 1).length === 1 + 3, 'the Ninth\'s three veterans march with every column once the forest is ours, won with bread');
+  check(s.log.some((l) => l.voice === 'dispatch.won.silva'), 'and the quaestor says so, in the recorded line');
+  // won by the sword: the forest's boards and logs, and no Ninth
+  const sword = newProvince(77, 1);
+  check(boonText(sword, 'silva').includes('only if the Ninth are won with bread'), `before the forest is ours, its boon says what the veterans take ("${boonText(sword, 'silva')}")`);
+  regionWon(sword, 'silva', col, []);
+  const ss = startOf(sword)!;
+  check(ss.veterans.length === 1 && ss.goods.board === 10 + 20 + 40 && ss.goods.log === 20, `the forest won by the sword: its boards and logs, and none of the Ninth (${ss.veterans.length} veterans)`);
+  check(sword.log.some((l) => l.voice === 'dispatch.won.silva.without' && /died at their posts/.test(l.text)) && /died at their posts/.test(boonText(sword, 'silva')), 'and the dispatch and the province page say so');
+  // Collis: the war band only for a feast; the peace either way
+  const storm = newProvince(79, 1), feast = newProvince(79, 1);
+  regionWon(storm, 'collis', col, ['chief']); regionWon(feast, 'collis', col, ['feast']);
+  check(startOf(storm)!.veterans.length === 1 && startOf(storm)!.peace?.includes('tribes') === true, 'Collis stormed: peace with the tribes, but no war band');
+  check(startOf(feast)!.veterans.filter((v) => v.level === 2).length === 4 && startOf(feast)!.peace?.includes('tribes') === true, 'Collis won with a feast: the war band too');
   const won: ProvinceState = { ...newProvince(5, 1), held: ['castra', 'collis', 'litus', 'aestuarium'] };
   const st = startOf(won)!;
   check(st.peace?.join() === 'collis,litus'.split(',').map((r) => REGION_INFO[r as RegionId].boon.peace).join() && st.ships?.war === 2 && st.ships?.trade === 1, `Collis and Litus held: peace with the tribes and the pirates, and their ships, in every start (${JSON.stringify({ peace: st.peace, ships: st.ships })})`);
@@ -700,7 +775,7 @@ if (!only || only === 'province') {
   check(strikeWeight(late2) === 2 && strikeWeight({ ...late2, held: ['castra', 'saltus', 'vallis'] }) === 4, 'and his strikes come at half the weight');
   // determinism: the same run from the same seed moves the same way
   const again = newProvince(12345, 1);
-  regionWon(again, 'saltus', col); regionWon(again, 'silva', col); strikeHeld(again, col);
+  regionWon(again, 'saltus', col); regionWon(again, 'silva', col, ['fed']); strikeHeld(again, col);
   check(JSON.stringify(again) === JSON.stringify(s), 'the same seed, the same moves: Varro\'s turn is deterministic');
   // a strike lost: the region is his again, fortified; the capital lost ends the campaign
   const t: ProvinceState = { ...newProvince(7, 2), held: ['castra', 'silva', 'saltus'], season: 5 };

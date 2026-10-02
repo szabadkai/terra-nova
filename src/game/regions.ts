@@ -15,7 +15,7 @@ import type { Building } from './types';
 import { recomputeTerritory, turnCoat } from './military';
 import { REGION_INFO, type RegionId } from './province';
 import { recipeById } from './recipes';
-import { addCarriers, fillResidence, nearestFish, nearestWater, stockUp } from './campaign';
+import { addCarriers, closeGift, fillResidence, gaveAll, given, nearestFish, nearestWater, onTheRoad, openGift, stockUp } from './campaign';
 import { hypot, sq } from '../core/fmath';
 
 const fortOf = (g: Game, k: number): Building | undefined => g.buildings.get(g.ms?.forts[k] ?? 0);
@@ -63,11 +63,17 @@ const landNear = (g: Game, x: number, z: number, r: number) => {
   return found;
 };
 
-// the places on Saltus's map (recipes.ts)
+// the places on Silva's map (recipes.ts)
 const GROVE = { x: 80, z: 80 }, NINTH = { x: 48, z: 46 }, NEAR_NINTH = 26;
+/** Silva: the Ninth's camp (their headquarters), while it stands; and the loaves that win them over. */
+const ninthCamp = (g: Game) => (g.players[2] ? g.buildings.get(g.players[2].hq) : undefined);
+const LOAVES = 20;
 // Metalla, Collis, Ara (recipes.ts)
 const RAMP_FOOT = { x: 58, z: 110 }, RAMP_TOP = { x: 90, z: 76 };
 const HILLS = [{ x: 42, z: 58 }, { x: 118, z: 58 }, { x: 80, z: 92 }];
+const HILL_NAMES = ['The west hill', 'The east hill', 'The south hill'];
+/** What a hill's feast takes. */
+const FEAST = { bread: 15, meat: 10 };
 const TEMPLE = { x: 82, z: 78 }, PILGRIMS = { x: 58, z: 102 };
 /** A store of the player's within r of a spot holding what a feast takes. */
 const feastAt = (g: Game, x: number, z: number, r: number) =>
@@ -288,16 +294,23 @@ export const REGIONS: Mission[] = [
           do: [{ a: 'say', who: 'quaestor', title: 'The old grove.', text: 'The men say it is haunted. I say it is flat, it has water, and nobody has built on it yet.' }],
         },
         {
-          id: 'ninth', when: { test: (g) => landNear(g, NINTH.x, NINTH.z, 24) },
+          // (not once they are fed: the loaves can reach their camp by donkey before our land does)
+          id: 'ninth', when: { test: (g) => !!g.players[2]?.alive && !g.ms?.fired?.includes('fed') && landNear(g, NINTH.x, NINTH.z, 24) },
           do: [{ a: 'say', who: 'quaestor', title: 'The Ninth.', text: 'Cold, hungry and ashamed of it. Twenty loaves in a store of ours near their camp and they might remember whose soldiers they were.' }],
         },
         {
-          // twenty loaves in a store near their camp: the Ninth come over, towers and all, and burn their camp behind them
-          id: 'fed', when: { test: (g) => !!g.players[2]?.alive && !!storeWith(g, NINTH.x, NINTH.z, NEAR_NINTH, 'bread', 20) },
+          // twenty loaves given at their camp (donkeys from a market of ours), or in a store of ours near it: the
+          // Ninth come over, towers and all, and burn their camp behind them
+          id: 'fed', when: { test: (g) => !!g.players[2]?.alive && (given(g, ninthCamp(g), 'bread') >= LOAVES || !!storeWith(g, NINTH.x, NINTH.z, NEAR_NINTH, 'bread', LOAVES)) },
           do: [
-            { a: 'do', run: (g) => { const b = storeWith(g, NINTH.x, NINTH.z, NEAR_NINTH, 'bread', 20); if (b) b.stock.bread -= 20; } },
-            { a: 'flip', to: 0, pick: (g) => strongholdsOf(g, 2).filter((b) => b.type !== 'hq'), men: { sword: 2, bow: 1, level: 1 } },
-            { a: 'join', men: { sword: 4, bow: 2, level: 1 } },
+            {
+              a: 'do', run: (g) => {
+                if (given(g, ninthCamp(g), 'bread') < LOAVES) { const b = storeWith(g, NINTH.x, NINTH.z, NEAR_NINTH, 'bread', LOAVES); if (b) b.stock.bread -= LOAVES; }
+                closeGift(g, ninthCamp(g));
+              },
+            },
+            { a: 'flip', to: 0, pick: (g) => strongholdsOf(g, 2).filter((b) => b.type !== 'hq'), men: { sword: 2, bow: 1, level: 2 } },
+            { a: 'join', men: { sword: 4, bow: 2, level: 2 } },
             { a: 'do', run: (g) => { const hq = g.buildings.get(g.players[2].hq); if (hq) g.destroyBuilding(hq, true); } },
             { a: 'say', who: 'quaestor', title: 'The Ninth have eaten our bread.', text: 'And taken our side. Their centurion says he would like a word with Varro, when it is convenient, and a sword when it is not.' },
           ],
@@ -316,9 +329,12 @@ export const REGIONS: Mission[] = [
       // the timber company's stockade, pushed into the wood towards the grove
       fortAt(g, 'tower_l', 1, 106, 62, 7, { sword: 3, bow: 1 });
       fortAt(g, 'tower_s', 1, 96, 72, 7, { sword: 2, bow: 0 });
-      // the Ninth's camp: their headquarters and two towers, manned
+      // the Ninth's camp: their headquarters and two towers, manned, every man of them a veteran of Prima Pugna
       const n = hqOf(g, 2);
       for (const [dx, dz] of [[9, 3], [-3, 10]]) garrison(g, prebuilt(g, 'tower_s', n.cx + dx, n.cz + dz, 6, 2), { sword: 2, bow: 1 });
+      for (const s of g.settlers.values()) if (s.owner === 2 && (s.job === 'swordsman' || s.job === 'bowman')) s.level = 2;
+      // their camp takes gifts: a market of ours can send it the loaves
+      openGift(g, n, 'The Ninth’s camp', { bread: LOAVES });
       recomputeTerritory(g);
       knowOre(g, g.local, 27, 129, 8);
       revealAround(g, 27, 129, 8);
@@ -334,10 +350,15 @@ export const REGIONS: Mission[] = [
       },
       {
         id: 'ninth', text: 'Win over the Ninth, with bread or with the sword',
-        hint: 'Carry twenty loaves into a storehouse of ours near their camp in the north-west, or take their towers.',
+        hint: 'Send twenty loaves to their camp in the north-west: in a Market Place of ours choose the Ninth’s camp as the destination and click + on bread; a Donkey Ranch breeds the donkeys that carry it. Or storm their towers, which are full of veterans.',
         done: (g) => !g.players[2]?.alive || strongholdsOf(g, 2).length === 0,
-        progress: (g) => { const s = storeWith(g, NINTH.x, NINTH.z, NEAR_NINTH, 'bread', 0); return s ? `${Math.min(20, s.stock.bread)}/20 loaves near their camp` : `${strongholdsOf(g, 2).length} strongholds of theirs stand`; },
-        focus: { build: 'storehouse', spot: () => ({ x: NINTH.x, z: NINTH.z, r: 6 }) },
+        progress: (g) => {
+          const camp = ninthCamp(g), gift = given(g, camp, 'bread'), road = onTheRoad(g, camp, 'bread');
+          if (gift || road) return `${Math.min(LOAVES, gift)}/${LOAVES} loaves given${road ? ` · ${road} on the road` : ''}`;
+          const s = storeWith(g, NINTH.x, NINTH.z, NEAR_NINTH, 'bread', 1);
+          return s ? `${Math.min(LOAVES, s.stock.bread)}/${LOAVES} loaves near their camp` : `${strongholdsOf(g, 2).length} strongholds of theirs stand`;
+        },
+        focus: { spot: () => ({ x: NINTH.x, z: NINTH.z, r: 6 }) },
         satisfy: (g) => { for (const b of strongholdsOf(g, 2)) g.destroyBuilding(b, false); },
       },
       {
@@ -347,6 +368,12 @@ export const REGIONS: Mission[] = [
         progress: (g) => `${(fortTaken(g, 0) ? 1 : 0) + (fortTaken(g, 1) ? 1 : 0)}/2`,
         focus: { spot: () => ({ x: 104, z: 64, r: 5 }) },
         satisfy: (g) => { for (const k of [0, 1]) { const b = fortOf(g, k); if (b) g.destroyBuilding(b, false); } },
+      },
+      {
+        id: 'fed', text: 'Win the Ninth with bread, not the sword', optional: true,
+        hint: 'Fed, their veterans march with us into every region of the province. Stormed, they die at their posts.',
+        done: (g) => !!g.ms?.fired?.includes('fed'),
+        satisfy: (g) => { (g.ms!.fired ??= []).push('fed'); },
       },
       {
         id: 'boards', text: 'Stack 60 boards', optional: true,
@@ -606,9 +633,14 @@ REGIONS.push(
       ],
       script: [
         ...[0, 1, 2].map((k) => ({
-          id: `feast${k}`, when: { test: (g: Game) => !fortTaken(g, k) && !!feastAt(g, HILLS[k].x, HILLS[k].z, 18) },
+          id: `feast${k}`, when: { test: (g: Game) => !fortTaken(g, k) && (gaveAll(g, fortOf(g, k)) || !!feastAt(g, HILLS[k].x, HILLS[k].z, 18)) },
           do: [
-            { a: 'do' as const, run: (g: Game) => { const b = feastAt(g, HILLS[k].x, HILLS[k].z, 18); if (b) { b.stock.bread -= 15; b.stock.meat -= 10; } } },
+            {
+              a: 'do' as const, run: (g: Game) => {
+                if (!gaveAll(g, fortOf(g, k))) { const b = feastAt(g, HILLS[k].x, HILLS[k].z, 18); if (b) { b.stock.bread -= FEAST.bread; b.stock.meat -= FEAST.meat; } }
+                closeGift(g, fortOf(g, k));
+              },
+            },
             { a: 'flip' as const, to: 0, pick: (g: Game) => { const b = fortOf(g, k); return b && b.owner !== g.local ? [b] : []; }, men: { sword: 2, bow: 2, level: 1 } },
             { a: 'say' as const, who: 'quaestor' as const, title: 'A feast.', text: 'The hill ate our bread and our meat, and its men came down singing. They are ours now, and they sing worse sober.' },
           ],
@@ -628,6 +660,8 @@ REGIONS.push(
       if (r) prebuilt(g, 'stonecutter', r.x, r.z, 10);
       prebuilt(g, 'sawmill', hq.cx + 6, hq.cz - 1, 10);
       for (const h of HILLS) fortAt(g, 'tower_l', 1, h.x, h.z, 7, { sword: 3, bow: 2 });
+      // each hill fort takes a feast: a market of ours can send it the bread and the meat
+      HILL_NAMES.forEach((name, k) => openGift(g, fortOf(g, k)!, name, FEAST));
       recomputeTerritory(g);
       knowOre(g, g.local, 25, 139, 7);
       for (const h of HILLS) revealAround(g, h.x, h.z, 8);
@@ -635,7 +669,7 @@ REGIONS.push(
     goals: [
       {
         id: 'hills', text: 'Win the three hill forts',
-        hint: 'Storm them up their one path each, or feast one: a storehouse below a hill with 15 loaves and 10 joints of meat. Two won, the third will talk.',
+        hint: 'Storm them up their one path each, or feast one: in a Market Place of ours choose its fort as the destination and send 15 loaves and 10 joints of meat (a Donkey Ranch breeds the donkeys). Two won, the third will talk.',
         done: (g) => [0, 1, 2].every((k) => fortTaken(g, k)),
         progress: (g) => `${[0, 1, 2].filter((k) => fortTaken(g, k)).length}/3`,
         focus: { spot: () => ({ x: HILLS[2].x, z: HILLS[2].z, r: 5 }) },
@@ -643,8 +677,16 @@ REGIONS.push(
       },
       {
         id: 'feast', text: 'Win a hill with a feast', optional: true,
-        hint: 'Fifteen loaves and ten joints of meat in a storehouse of ours below it.',
+        hint: 'Feast one and the tribes’ war band marches with us into every region of the province; storm them all and it never will. Fifteen loaves and ten joints of meat, sent to its fort by donkey.',
         done: (g) => [0, 1, 2].some((k) => g.ms?.fired?.includes(`feast${k}`)),
+        progress: (g) => {
+          // the hill nearest its feast
+          let best = -1, most = 0;
+          for (const k of [0, 1, 2]) { const n = given(g, fortOf(g, k), 'bread') + given(g, fortOf(g, k), 'meat'); if (!fortTaken(g, k) && n > most) { most = n; best = k; } }
+          if (best < 0) return 'no feast sent yet';
+          const b = fortOf(g, best);
+          return `${HILL_NAMES[best]}: ${Math.min(FEAST.bread, given(g, b, 'bread'))}/${FEAST.bread} bread · ${Math.min(FEAST.meat, given(g, b, 'meat'))}/${FEAST.meat} meat`;
+        },
         satisfy: (g) => { (g.ms!.fired ??= []).push('feast0'); },
       },
       {
